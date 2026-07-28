@@ -586,26 +586,7 @@ def _launch_next_queued_download(force: bool = False):
             task = asyncio.create_task(download_from_1fichier(url, platform, game_name, is_zip_non_supported, task_id))
         else:
             task = asyncio.create_task(download_rom(url, platform, game_name, is_zip_non_supported, task_id))
-        
-        config.download_tasks[task_id] = (task, url, game_name, platform)
-        
-        # Callback invoqué quand la tâche est terminée
-        def on_task_done(t):
-            try:
-                # Récupérer le résultat (si erreur, elle sera levée ici)
-                result = t.result()
-            except asyncio.CancelledError:
-                logger.info(f"Tâche annulée pour {game_name} (task_id={task_id})")
-            except Exception as e:
-                logger.error(f"Erreur tâche download {game_name}: {e}")
-            finally:
-                # Décrémenter le compteur et lancer le prochain si queue non vide
-                config.active_download_count = max(0, getattr(config, 'active_download_count', 1) - 1)
-                config.download_active = config.active_download_count > 0
-                _launch_next_queued_download()
-        
-        # Ajouter le callback à la tâche
-        task.add_done_callback(on_task_done)
+        _register_download_task(task_id, task, url, game_name, platform)
         
     except Exception as e:
         logger.error(f"Erreur lancement queue download: {e}")
@@ -620,6 +601,92 @@ def _launch_next_queued_download(force: bool = False):
                 break
         # Relancer le suivant
         _launch_next_queued_download()
+
+
+def _register_download_task(task_id: str, task, url: str, game_name: str, platform: str, increment_slot: bool = False):
+    """Enregistre une tâche de téléchargement et branche la relance de queue à la fin."""
+    if increment_slot:
+        config.active_download_count = getattr(config, 'active_download_count', 0) + 1
+        config.download_active = True
+
+    config.download_tasks[task_id] = (task, url, game_name, platform)
+
+    def on_task_done(t):
+        try:
+            t.result()
+        except asyncio.CancelledError:
+            logger.info(f"Tâche annulée pour {game_name} (task_id={task_id})")
+        except Exception as e:
+            logger.error(f"Erreur tâche download {game_name}: {e}")
+        finally:
+            # Le décrément des slots est géré dans network.notify_download_finished().
+            config.download_active = getattr(config, 'active_download_count', 0) > 0
+            _launch_next_queued_download()
+
+    task.add_done_callback(on_task_done)
+
+
+def _queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None) -> str:
+    """Ajoute un téléchargement à la file d'attente et l'historique."""
+    task_id = str(pygame.time.get_ticks())
+    queue_item = {
+        'url': url,
+        'platform': platform,
+        'game_name': game_name,
+        'is_zip_non_supported': is_zip_non_supported,
+        'is_1fichier': is_1fichier_url(url),
+        'task_id': task_id,
+        'status': 'Queued'
+    }
+    config.download_queue.append(queue_item)
+
+    shown_name = display_name or get_clean_display_name(game_name, platform)
+    config.history.append({
+        'platform': platform,
+        'game_name': game_name,
+        'display_name': shown_name,
+        'status': 'Queued',
+        'url': url,
+        'progress': 0,
+        'message': _("download_queued"),
+        'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'downloaded_size': 0,
+        'total_size': 0,
+        'task_id': task_id
+    })
+    save_history(config.history)
+    show_toast(f"{shown_name}\n{_('download_queued')}")
+    config.needs_redraw = True
+    logger.info(f"{game_name} ajouté à la file d'attente. Queue size: {len(config.download_queue)}")
+    return task_id
+
+
+def start_or_queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None, force_start: bool = False) -> tuple[str, str]:
+    """Démarre un téléchargement si un slot est libre, sinon le place en queue."""
+    max_dl = getattr(config, 'max_simultaneous_downloads', 5)
+    active = getattr(config, 'active_download_count', 0)
+
+    if not force_start and active >= max_dl:
+        task_id = _queue_download(url, platform, game_name, is_zip_non_supported, display_name)
+        _launch_next_queued_download()
+        return ("queued", task_id)
+
+    if is_1fichier_url(url):
+        ensure_download_provider_keys(False)
+        if missing_all_provider_keys():
+            logger.warning("Aucune clé API - Mode gratuit 1fichier sera utilisé (attente requise)")
+        task_id = str(pygame.time.get_ticks())
+        task = asyncio.create_task(download_from_1fichier(url, platform, game_name, is_zip_non_supported, task_id))
+    else:
+        task_id = str(pygame.time.get_ticks())
+        task = asyncio.create_task(download_rom(url, platform, game_name, is_zip_non_supported, task_id))
+
+    _register_download_task(task_id, task, url, game_name, platform, increment_slot=True)
+    shown_name = display_name or get_clean_display_name(game_name, platform)
+    show_toast(f"{_('download_started')}: {shown_name}")
+    config.needs_redraw = True
+    logger.info(f"Téléchargement démarré: {game_name} pour {platform}, task_id={task_id}")
+    return ("started", task_id)
 
 def filter_games_by_search_query() -> list[Game]:
     base_games = config.games
@@ -968,91 +1035,11 @@ def trigger_global_search_download(queue_only: bool = False) -> None:
         return
 
     if queue_only:
-        task_id = str(pygame.time.get_ticks())
-        queue_item = {
-            'url': url,
-            'platform': platform,
-            'game_name': game_name,
-            'is_zip_non_supported': pending_download[3],
-            'is_1fichier': is_1fichier_url(url),
-            'task_id': task_id,
-            'status': 'Queued'
-        }
-        config.download_queue.append(queue_item)
-
-        config.history.append({
-            'platform': platform,
-            'game_name': game_name,
-            'display_name': display_name,
-            'status': 'Queued',
-            'url': url,
-            'progress': 0,
-            'message': _("download_queued"),
-            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'downloaded_size': 0,
-            'total_size': 0,
-            'task_id': task_id
-        })
-        save_history(config.history)
-        show_toast(f"{display_name}\n{_('download_queued')}")
-        config.needs_redraw = True
-        logger.debug(f"{game_name} ajoute a la file d'attente depuis la recherche globale. Queue size: {len(config.download_queue)}")
-
+        _queue_download(url, platform, game_name, pending_download[3], display_name)
         _launch_next_queued_download()
         return
 
-    # Téléchargement direct, démarrer immédiatement,
-    # sinon mettre automatiquement en queue (même comportement que queue_only).
-    max_dl = getattr(config, 'max_simultaneous_downloads', 5)
-    active = getattr(config, 'active_download_count', 0)
-    if active >= max_dl:
-        # Plus de slots disponibles → auto-queue
-        task_id = str(pygame.time.get_ticks())
-        queue_item = {
-            'url': url,
-            'platform': platform,
-            'game_name': game_name,
-            'is_zip_non_supported': pending_download[3],
-            'is_1fichier': is_1fichier_url(url),
-            'task_id': task_id,
-            'status': 'Queued'
-        }
-        config.download_queue.append(queue_item)
-        config.history.append({
-            'platform': platform,
-            'game_name': game_name,
-            'display_name': display_name,
-            'status': 'Queued',
-            'url': url,
-            'progress': 0,
-            'message': _("download_queued"),
-            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'downloaded_size': 0,
-            'total_size': 0,
-            'task_id': task_id
-        })
-        save_history(config.history)
-        show_toast(f"{display_name}\n{_('download_queued')}")
-        config.needs_redraw = True
-        logger.info(f"{game_name} auto-queue (slots {active}/{max_dl} utilisés)")
-        return
-
-    if is_1fichier_url(url):
-        ensure_download_provider_keys(False)
-        if missing_all_provider_keys():
-            logger.warning("Aucune cle API - Mode gratuit 1fichier sera utilise (attente requise)")
-        task_id = str(pygame.time.get_ticks())
-        task = asyncio.create_task(download_from_1fichier(url, platform, game_name, pending_download[3], task_id))
-    else:
-        task_id = str(pygame.time.get_ticks())
-        task = asyncio.create_task(download_rom(url, platform, game_name, pending_download[3], task_id))
-
-    config.active_download_count = getattr(config, 'active_download_count', 0) + 1
-    config.download_active = True
-    config.download_tasks[task_id] = (task, url, game_name, platform)
-    show_toast(f"{_('download_started')}: {display_name}")
-    config.needs_redraw = True
-    logger.debug(f"Telechargement demarre depuis la recherche globale: {game_name} pour {platform}, task_id={task_id}")
+    start_or_queue_download(url, platform, game_name, pending_download[3], display_name)
 
 def handle_controls(event, sources, joystick, screen):
     """Gère un événement clavier/joystick/souris et la répétition automatique.
@@ -1646,58 +1633,11 @@ def handle_controls(event, sources, joystick, screen):
                         is_queue_action = getattr(config, 'pending_download_is_queue', False)
                         
                         if is_queue_action:
-                            # Ajouter à la queue au lieu de télécharger immédiatement
-                            task_id = str(pygame.time.get_ticks())
-                            queue_item = {
-                                'url': url,
-                                'platform': platform,
-                                'game_name': game_name,
-                                'is_zip_non_supported': is_zip_non_supported,
-                                'is_1fichier': is_1fichier_url(url),
-                                'task_id': task_id,
-                                'status': 'Queued'
-                            }
-                            config.download_queue.append(queue_item)
-                            
-                            # Ajouter une entrée à l'historique avec status "Queued"
-                            config.history.append({
-                                'platform': platform,
-                                'game_name': game_name,
-                                'display_name': get_clean_display_name(game_name, platform),
-                                'status': 'Queued',
-                                'url': url,
-                                'progress': 0,
-                                'message': _("download_queued"),
-                                'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                'downloaded_size': 0,
-                                'total_size': 0,
-                                'task_id': task_id
-                            })
-                            save_history(config.history)
-                            
-                            # Afficher un toast de notification
-                            show_toast(f"{game_name}\n{_('download_queued')}")
-                            
-                            # Le worker de la queue détectera automatiquement le nouvel élément
-                            logger.debug(f"{game_name} ajouté à la file d'attente après confirmation. Queue size: {len(config.download_queue)}")
+                            _queue_download(url, platform, game_name, is_zip_non_supported)
+                            _launch_next_queued_download()
                         else:
-                            # Téléchargement immédiat
-                            if is_1fichier_url(url):
-                                ensure_download_provider_keys(False)
-                                
-                                # Avertissement si pas de clé (utilisation mode gratuit)
-                                if missing_all_provider_keys():
-                                    logger.warning("Aucune clé API - Mode gratuit 1fichier sera utilisé (attente requise)")
-                                
-                                task_id = str(pygame.time.get_ticks())
-                                task = asyncio.create_task(download_from_1fichier(url, platform, game_name, is_zip_non_supported, task_id))
-                            else:
-                                task_id = str(pygame.time.get_ticks())
-                                task = asyncio.create_task(download_rom(url, platform, game_name, is_zip_non_supported, task_id))
-                            config.download_tasks[task_id] = (task, url, game_name, platform)
-                            # Afficher un toast de notification
-                            show_toast(f"{_('download_started')}: {game_name}")
-                            logger.debug(f"[CONTROLS_EXT_WARNING] Téléchargement confirmé après avertissement: {game_name} pour {platform} depuis {url}, task_id={task_id}")
+                            state, task_id = start_or_queue_download(url, platform, game_name, is_zip_non_supported)
+                            logger.debug(f"[CONTROLS_EXT_WARNING] Téléchargement confirmé après avertissement: {game_name} pour {platform} depuis {url}, task_id={task_id}, state={state}")
                         
                         config.previous_menu_state = validate_menu_state(config.previous_menu_state)
                         config.needs_redraw = True
@@ -2224,21 +2164,14 @@ def handle_controls(event, sources, joystick, screen):
                             # Relancer le téléchargement
                             pending_download = check_extension_before_download(url, platform, game_name)
                             if pending_download:
-                                task_id = str(pygame.time.get_ticks())
                                 is_zip_non_supported = pending_download[3] if len(pending_download) > 3 else False
-                                
-                                if is_1fichier_url(url):
-                                    ensure_download_provider_keys(False)
-                                    if missing_all_provider_keys():
-                                        logger.warning("Aucune clé API - Mode gratuit 1fichier sera utilisé (attente requise)")
-                                    task = asyncio.create_task(download_from_1fichier(url, platform, game_name, is_zip_non_supported, task_id))
-                                else:
-                                    task = asyncio.create_task(download_rom(url, platform, game_name, is_zip_non_supported, task_id))
-                                
-                                config.download_tasks[task_id] = (task, url, game_name, platform)
-                                # Afficher un toast de notification
-                                show_toast(f"{_('download_started')}: {game_name}")
-                                logger.debug(f"Relance du téléchargement: {game_name} pour {platform}")
+                                state, task_id = start_or_queue_download(url, platform, game_name, is_zip_non_supported)
+                                if state == "queued":
+                                    entry["status"] = "Queued"
+                                    entry["progress"] = 0
+                                    entry["message"] = _("download_queued")
+                                    save_history(config.history)
+                                logger.debug(f"Relance du téléchargement: {game_name} pour {platform}, state={state}, task_id={task_id}")
                         config.needs_redraw = True
                         
                     elif selected_option == "back":
@@ -2725,7 +2658,8 @@ def handle_controls(event, sources, joystick, screen):
             if show_display_mode:
                 next_index += 1
 
-            light_index = next_index
+            background_index = next_index
+            light_index = background_index + 1
             unknown_index = light_index + 1
             back_index = unknown_index + 1
             total = back_index + 1
@@ -2809,6 +2743,37 @@ def handle_controls(event, sources, joystick, screen):
                         config.needs_redraw = True
                     except Exception as e:
                         logger.error(f"Erreur toggle fullscreen/windowed: {e}")
+                # Background gradient theme cycle
+                elif sel == background_index and (is_input_matched(event, "left") or is_input_matched(event, "right") or is_input_matched(event, "confirm")):
+                    try:
+                        from rgsx_settings import get_display_background_theme, set_display_background_theme
+
+                        theme_keys = ["default", "sunset", "forest", "midnight"]
+                        theme_label_keys = {
+                            "default": "background_theme_default",
+                            "sunset": "background_theme_sunset",
+                            "forest": "background_theme_forest",
+                            "midnight": "background_theme_midnight",
+                        }
+
+                        current = get_display_background_theme()
+                        try:
+                            idx = theme_keys.index(current)
+                        except ValueError:
+                            idx = 0
+
+                        direction = -1 if is_input_matched(event, "left") else 1
+                        new_theme = set_display_background_theme(theme_keys[(idx + direction) % len(theme_keys)])
+
+                        label_key = theme_label_keys.get(new_theme, "")
+                        translated_label = _(label_key) if (_ and label_key) else new_theme
+                        if translated_label == label_key:
+                            translated_label = new_theme
+                        config.popup_message = f"{_('display_background') if _ else 'Background'}: {translated_label}"
+                        config.popup_timer = 1800
+                        config.needs_redraw = True
+                    except Exception as e:
+                        logger.error(f"Erreur changement theme de fond: {e}")
                 # Light mode toggle
                 elif sel == light_index and (is_input_matched(event, "left") or is_input_matched(event, "right") or is_input_matched(event, "confirm")):
                     try:
@@ -4409,12 +4374,8 @@ def handle_controls(event, sources, joystick, screen):
                                         config.needs_redraw = True
                                         logger.debug(f"Extension non supportée, passage à extension_warning pour {game_name}")
                                     else:
-                                        task_id = str(pygame.time.get_ticks())
-                                        task = asyncio.create_task(download_from_1fichier(url, platform, game_name, config.pending_download[3], task_id))
-                                        config.download_tasks[task_id] = (task, url, game_name, platform)
-                                        show_toast(f"{_('download_started')}: {game_name}")
-                                        config.needs_redraw = True
-                                        logger.debug(f"Début du téléchargement 1fichier: {game_name} pour {platform}, task_id={task_id}")
+                                        state, task_id = start_or_queue_download(url, platform, game_name, config.pending_download[3])
+                                        logger.debug(f"Début du téléchargement 1fichier: {game_name} pour {platform}, task_id={task_id}, state={state}")
                                         config.pending_download = None
                                 else:
                                     config.menu_state = "error"
@@ -4440,11 +4401,7 @@ def handle_controls(event, sources, joystick, screen):
                                         config.needs_redraw = True
                                         logger.debug(f"Extension non supportée, passage à extension_warning pour {game_name}")
                                     else:
-                                        task_id = str(pygame.time.get_ticks())
-                                        task = asyncio.create_task(download_rom(url, platform, game_name, config.pending_download[3], task_id))
-                                        config.download_tasks[task_id] = (task, url, game_name, platform)
-                                        show_toast(f"{_('download_started')}: {game_name}")
-                                        config.needs_redraw = True
+                                        start_or_queue_download(url, platform, game_name, config.pending_download[3])
                                         config.pending_download = None
                                 else:
                                     config.menu_state = "error"
@@ -4545,12 +4502,8 @@ def handle_controls(event, sources, joystick, screen):
                                         config.needs_redraw = True
                                         logger.debug(f"Extension non supportée, passage à extension_warning pour {game_name}")
                                     else:
-                                        task_id = str(pygame.time.get_ticks())
-                                        task = asyncio.create_task(download_from_1fichier(url, platform, game_name, config.pending_download[3], task_id))
-                                        config.download_tasks[task_id] = (task, url, game_name, platform)
-                                        show_toast(f"{_('download_started')}: {game_name}")
-                                        config.needs_redraw = True
-                                        logger.debug(f"Début du téléchargement 1fichier: {game_name} pour {platform}, task_id={task_id}")
+                                        state, task_id = start_or_queue_download(url, platform, game_name, config.pending_download[3])
+                                        logger.debug(f"Début du téléchargement 1fichier: {game_name} pour {platform}, task_id={task_id}, state={state}")
                                         config.pending_download = None
                                 else:
                                     config.menu_state = "error"
@@ -4576,11 +4529,7 @@ def handle_controls(event, sources, joystick, screen):
                                         config.needs_redraw = True
                                         logger.debug(f"Extension non supportée, passage à extension_warning pour {game_name}")
                                     else:
-                                        task_id = str(pygame.time.get_ticks())
-                                        task = asyncio.create_task(download_rom(url, platform, game_name, config.pending_download[3], task_id))
-                                        config.download_tasks[task_id] = (task, url, game_name, platform)
-                                        show_toast(f"{_('download_started')}: {game_name}")
-                                        config.needs_redraw = True
+                                        start_or_queue_download(url, platform, game_name, config.pending_download[3])
                                         config.pending_download = None
                                 else:
                                     config.menu_state = "error"

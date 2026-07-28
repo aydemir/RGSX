@@ -1073,6 +1073,7 @@ class RGSXHandler(BaseHTTPRequestHandler):
         is_1fichier = queue_item['is_1fichier']
         task_id = queue_item['task_id']
         
+        config.active_download_count = getattr(config, 'active_download_count', 0) + 1
         config.download_active = True
         
         # Mettre à jour l'historique: queued -> Downloading
@@ -1102,9 +1103,11 @@ class RGSXHandler(BaseHTTPRequestHandler):
                 )
             finally:
                 loop.close()
-                # Après le téléchargement, traiter la queue
-                config.download_active = False
-                if config.download_queue:
+                # Après le téléchargement, traiter la queue selon les slots disponibles.
+                config.download_active = getattr(config, 'active_download_count', 0) > 0
+                max_dl = getattr(config, 'max_simultaneous_downloads', 5)
+                active_now = getattr(config, 'active_download_count', 0)
+                if active_now < max_dl and config.download_queue:
                     next_item = config.download_queue.pop(0)
                     logger.info(f"📋 Traitement du prochain élément de la queue: {next_item['game_name']}")
                     # Relancer de manière asynchrone
@@ -1201,13 +1204,53 @@ class RGSXHandler(BaseHTTPRequestHandler):
                 
                 task_id = f"web_{int(time.time() * 1000)}"
                 
-                # Déterminer si on doit ajouter à la queue ou télécharger immédiatement
-                # - mode='now' : toujours télécharger immédiatement (parallèle autorisé) - JAMAIS addé à la queue
-                # - mode='queue' : ajouter à la queue SEULEMENT s'il y a un téléchargement actif (serial)
-                should_queue = mode == 'queue' and config.download_active
+                # Déterminer si on doit ajouter à la queue selon le mode et les slots disponibles.
+                max_dl = getattr(config, 'max_simultaneous_downloads', 5)
+                active_count = getattr(config, 'active_download_count', 0)
+                queue_full = active_count >= max_dl
+                should_queue = (mode == 'queue' and config.download_active) or queue_full
                 
                 if mode == 'now':
-                    # mode='now' = toujours lancer immédiatement en parallèle, indépendamment de download_active
+                    # mode='now' lance immédiatement uniquement si un slot est disponible.
+                    if queue_full:
+                        queue_item = {
+                            'url': game_url,
+                            'platform': platform,
+                            'game_name': game_name,
+                            'is_zip_non_supported': is_zip_non_supported,
+                            'is_1fichier': is_1fichier,
+                            'task_id': task_id,
+                            'status': 'Queued'
+                        }
+                        config.download_queue.append(queue_item)
+                        import datetime
+                        queue_history_entry = {
+                            'platform': platform,
+                            'game_name': game_name,
+                            'display_name': get_clean_display_name(game_name, platform),
+                            'status': 'Queued',
+                            'url': game_url,
+                            'progress': 0,
+                            'message': get_translation('download_queued'),
+                            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'downloaded_size': 0,
+                            'total_size': 0,
+                            'task_id': task_id
+                        }
+                        config.history.append(queue_history_entry)
+                        from history import save_history
+                        save_history(config.history)
+                        self._send_json({
+                            'success': True,
+                            'message': f"{game_name} ajouté à la file d'attente",
+                            'task_id': task_id,
+                            'game_name': game_name,
+                            'platform': platform,
+                            'queued': True,
+                            'queue_position': len(config.download_queue)
+                        })
+                        return
+
                     logger.info(f"⚡ Téléchargement immédiat lancé en parallèle (mode=now): {game_name}")
                     
                     if is_1fichier:
@@ -1226,7 +1269,15 @@ class RGSXHandler(BaseHTTPRequestHandler):
                             )
                         finally:
                             loop.close()
-                            # mode='now' n'affecte pas download_active - il peut y avoir plusieurs téléchargements en parallèle
+                            config.download_active = getattr(config, 'active_download_count', 0) > 0
+                            max_dl_now = getattr(config, 'max_simultaneous_downloads', 5)
+                            active_now = getattr(config, 'active_download_count', 0)
+                            if active_now < max_dl_now and config.download_queue:
+                                next_item = config.download_queue.pop(0)
+                                threading.Thread(target=lambda: self._process_queued_download(next_item), daemon=True).start()
+
+                    config.active_download_count = getattr(config, 'active_download_count', 0) + 1
+                    config.download_active = True
                     
                     thread = threading.Thread(target=run_download_now, daemon=True)
                     thread.start()
@@ -1274,7 +1325,7 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     from history import save_history
                     save_history(config.history)
                     
-                    logger.info(f"📋 {game_name} ajouté à la file d'attente (mode=queue, active={config.download_active})")
+                    logger.info(f"📋 {game_name} ajouté à la file d'attente (mode=queue, active={active_count}/{max_dl})")
                     
                     self._send_json({
                         'success': True,
@@ -1287,6 +1338,7 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     })
                 else:
                     # mode='queue' MAIS pas de téléchargement actif -> lancer immédiatement (premier élément)
+                    config.active_download_count = getattr(config, 'active_download_count', 0) + 1
                     config.download_active = True
                     logger.info(f"🚀 Lancement du premier élément de la queue: {game_name}")
                     
@@ -1326,9 +1378,11 @@ class RGSXHandler(BaseHTTPRequestHandler):
                             )
                         finally:
                             loop.close()
-                            # Mode queue: marquer comme inactif et traiter le suivant
-                            config.download_active = False
-                            if config.download_queue:
+                            # Mode queue: traiter le suivant uniquement si un slot est libre.
+                            config.download_active = getattr(config, 'active_download_count', 0) > 0
+                            max_dl_queue = getattr(config, 'max_simultaneous_downloads', 5)
+                            active_now = getattr(config, 'active_download_count', 0)
+                            if active_now < max_dl_queue and config.download_queue:
                                 next_item = config.download_queue.pop(0)
                                 logger.info(f"📋 Traitement du prochain élément de la queue: {next_item['game_name']}")
                                 # Relancer de manière asynchrone

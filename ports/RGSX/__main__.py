@@ -74,12 +74,12 @@ from display import (
     draw_global_search_list, draw_global_sort_menu,
         draw_display_menu, draw_filter_menu_choice, draw_filter_advanced, draw_filter_priority_config,
     draw_history_list, draw_clear_history_dialog, draw_cancel_download_dialog,
-    draw_confirm_dialog, draw_reload_games_data_dialog, draw_popup, draw_gradient,
-    draw_toast, show_toast, THEME_COLORS, sync_display_metrics
+    draw_confirm_dialog, draw_reload_games_data_dialog, draw_popup, draw_app_background,
+    draw_toast, show_toast, sync_display_metrics
 )
 from language import _
-from network import test_internet, download_rom, is_1fichier_url, download_from_1fichier, check_for_updates, apply_pending_update, cancel_all_downloads, shutdown_downloads, download_queue_worker
-from controls import handle_controls, validate_menu_state, process_key_repeats, get_emergency_controls, clear_joystick_repeat_states
+from network import test_internet, is_1fichier_url, check_for_updates, apply_pending_update, cancel_all_downloads, shutdown_downloads
+from controls import handle_controls, validate_menu_state, process_key_repeats, get_emergency_controls, clear_joystick_repeat_states, start_or_queue_download
 from controls_mapper import map_controls, draw_controls_mapping, get_actions
 from controls import load_controls_config
 from utils import (
@@ -571,9 +571,7 @@ async def main():
     # Démarrer le serveur web en arrière-plan
     start_web_server()
     
-    # Démarrer le worker de la queue de téléchargement
-    queue_worker_thread = threading.Thread(target=download_queue_worker, daemon=True)
-    queue_worker_thread.start()
+    # Le scheduler de queue est géré par controls.py (callbacks sur fin de tâche).
 
     # Reprendre les téléchargements interrompus (statut "Téléchargement"/"Downloading")
     # Ces entrées proviennent d'une session précédente fermée proprement sans annulation.
@@ -588,17 +586,13 @@ async def main():
             _url = entry["url"]
             _platform = entry.get("platform", "")
             _game_name = entry.get("game_name", "")
-            _task_id = f"resume_{pygame.time.get_ticks()}_{id(entry)}"
             _is_zip = entry.get("is_zip_non_supported", False)
-            logger.info(f"[RESUME] Reprise: {_game_name} ({_platform}) task_id={_task_id}")
-            if is_1fichier_url(_url):
-                _coro = download_from_1fichier(_url, _platform, _game_name, _is_zip, _task_id)
-            else:
-                _coro = download_rom(_url, _platform, _game_name, _is_zip, _task_id)
-            config.download_tasks[_task_id] = (
-                asyncio.ensure_future(_coro),
-                _url, _game_name, _platform
-            )
+            _state, _task_id = start_or_queue_download(_url, _platform, _game_name, _is_zip)
+            logger.info(f"[RESUME] Reprise: {_game_name} ({_platform}) task_id={_task_id} state={_state}")
+            if _state == "queued":
+                entry["status"] = "Queued"
+                entry["message"] = _("download_queued") if _ else "Queued"
+                save_history(config.history)
     except Exception as _e:
         logger.error(f"[RESUME] Erreur lors de la reprise des téléchargements: {_e}")
 
@@ -980,10 +974,7 @@ async def main():
                         })
                         config.current_history_item = len(config.history) - 1
                         save_history(config.history)
-                        config.download_tasks[task_id] = (
-                            asyncio.create_task(download_rom(url, platform_name, game_name, is_zip_non_supported, task_id)),
-                            url, game_name, platform_name
-                        )
+                        start_or_queue_download(url, platform_name, game_name, is_zip_non_supported)
                         old_state = config.menu_state
                         config.menu_state = config.previous_menu_state if config.previous_menu_state else "game"
                         logger.debug(f"[EXTENSION_WARNING] Menu state changed: {old_state} -> {config.menu_state}")
@@ -1081,26 +1072,9 @@ async def main():
                                 else:
                                     config.previous_menu_state = config.menu_state
                                     logger.debug(f"Previous menu state défini: {config.previous_menu_state}")
-                                    # Ajouter une entrée à l'historique maintenant que le téléchargement démarre vraiment
-                                    config.history.append({
-                                        "platform": platform_name,
-                                        "game_name": game_name,
-                                        "status": "Downloading",
-                                        "progress": 0,
-                                        "message": _("download_in_progress") if _ else "Download in progress",
-                                        "url": url,
-                                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    })
-                                    config.current_history_item = len(config.history) - 1
-                                    save_history(config.history)
-                                    # Lancer le téléchargement dans une tâche asynchrone
-                                    task_id = str(pygame.time.get_ticks())
-                                    config.download_tasks[task_id] = (
-                                        asyncio.create_task(download_from_1fichier(url, platform_name, game_name, zip_ok, task_id)),
-                                        url, game_name, platform_name
-                                    )
+                                    start_or_queue_download(url, platform_name, game_name, zip_ok)
                                     config.needs_redraw = True
-                                    logger.debug(f"Téléchargement 1fichier démarré pour {game_name}, tâche lancée")
+                                    logger.debug(f"Téléchargement 1fichier planifié pour {game_name}")
                         else:
                             pending = check_extension_before_download(url, platform_name, game_name)
                             if not pending:
@@ -1127,26 +1101,9 @@ async def main():
                                 else:
                                     config.previous_menu_state = config.menu_state
                                     logger.debug(f"Previous menu state défini: {config.previous_menu_state}")
-                                    # Ajouter une entrée à l'historique maintenant que le téléchargement démarre vraiment
-                                    config.history.append({
-                                        "platform": platform_name,
-                                        "game_name": game_name,
-                                        "status": "Downloading",
-                                        "progress": 0,
-                                        "message": _("download_in_progress") if _ else "Download in progress",
-                                        "url": url,
-                                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    })
-                                    config.current_history_item = len(config.history) - 1
-                                    save_history(config.history)
-                                    # Lancer le téléchargement dans une tâche asynchrone
-                                    task_id = str(pygame.time.get_ticks())
-                                    config.download_tasks[task_id] = (
-                                        asyncio.create_task(download_rom(url, platform_name, game_name, zip_ok, task_id)),
-                                        url, game_name, platform_name
-                                    )
+                                    start_or_queue_download(url, platform_name, game_name, zip_ok)
                                     config.needs_redraw = True
-                                    logger.debug(f"Téléchargement démarré pour {game_name}, tâche lancée")
+                                    logger.debug(f"Téléchargement planifié pour {game_name}")
                 
                 elif action in ("clear_history", "delete_history") and config.menu_state == "history":
                     # Ouvrir le dialogue de confirmation
@@ -1279,7 +1236,7 @@ async def main():
         # Affichage
         if config.needs_redraw:
             #logger.debug(f"[RENDER_LOOP] Frame render - menu_state={config.menu_state}, needs_redraw={config.needs_redraw}")
-            draw_gradient(screen, THEME_COLORS["background_top"], THEME_COLORS["background_bottom"])
+            draw_app_background(screen)
             
             
             if config.menu_state == "controls_mapping":
