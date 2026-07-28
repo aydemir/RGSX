@@ -1016,9 +1016,9 @@ def _refresh_loading_feedback(current_system: str | None = None, progress: float
         if screen is None:
             return
 
-        from display import draw_gradient, draw_loading_screen, draw_controls, THEME_COLORS
+        from display import draw_app_background, draw_loading_screen, draw_controls
 
-        draw_gradient(screen, THEME_COLORS["background_top"], THEME_COLORS["background_bottom"])
+        draw_app_background(screen)
         draw_loading_screen(screen)
         draw_controls(screen, config.menu_state, getattr(config, 'current_music_name', None), getattr(config, 'music_popup_start_time', 0))
         pygame.display.flip()

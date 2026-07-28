@@ -21,7 +21,8 @@ from history import load_history, is_game_downloaded
 from language import _, get_size_units, get_speed_unit, get_available_languages, get_language_name
 from rgsx_settings import (load_rgsx_settings, get_light_mode, get_show_unsupported_platforms,
                             get_allow_unknown_extensions, get_display_monitor, get_display_fullscreen,
-                            get_available_monitors, get_font_family, get_symlink_option)
+                            get_available_monitors, get_font_family, get_symlink_option,
+                            get_display_background_theme)
 from game_filters import GameFilters  
 
 import json
@@ -514,6 +515,50 @@ THEME_COLORS = {
     "accent_gradient_end": (120, 80, 200),  # Fin dégradé accent
 }
 
+BACKGROUND_THEME_PRESETS = {
+    "default": {
+        "label_key": "background_theme_default",
+        "top": THEME_COLORS["background_top"],
+        "bottom": THEME_COLORS["background_bottom"],
+    },
+    "sunset": {
+        "label_key": "background_theme_sunset",
+        "top": (52, 24, 44),
+        "bottom": (173, 82, 56),
+    },
+    "forest": {
+        "label_key": "background_theme_forest",
+        "top": (18, 36, 32),
+        "bottom": (50, 88, 72),
+    },
+    "midnight": {
+        "label_key": "background_theme_midnight",
+        "top": (8, 13, 26),
+        "bottom": (27, 43, 79),
+    },
+}
+
+
+def get_background_theme_colors(theme_key=None):
+    selected_theme = (theme_key or get_display_background_theme() or "default").lower()
+    preset = BACKGROUND_THEME_PRESETS.get(selected_theme, BACKGROUND_THEME_PRESETS["default"])
+    return preset["top"], preset["bottom"]
+
+
+def get_background_theme_label(theme_key=None):
+    selected_theme = (theme_key or get_display_background_theme() or "default").lower()
+    preset = BACKGROUND_THEME_PRESETS.get(selected_theme, BACKGROUND_THEME_PRESETS["default"])
+    label_key = preset.get("label_key")
+    if not label_key:
+        return selected_theme
+    translated = _(label_key) if _ else label_key
+    return translated if translated != label_key else selected_theme
+
+
+def draw_app_background(screen, light_mode=None):
+    top_color, bottom_color = get_background_theme_colors()
+    draw_gradient(screen, top_color, bottom_color, light_mode=light_mode)
+
 # Général, résolution, overlay
 def init_display():
     """Initialise l'écran et les ressources globales.
@@ -796,7 +841,7 @@ def draw_validation_transition(screen, platform_index):
 
     while pygame.time.get_ticks() - start_time < duration:
         # Fond dégradé
-        draw_gradient(screen, THEME_COLORS["background_top"], THEME_COLORS["background_bottom"])
+        draw_app_background(screen)
 
         # Calcul de l'échelle avec une courbe sinusoïdale pour une transition fluide
         elapsed = pygame.time.get_ticks() - start_time
@@ -830,7 +875,7 @@ def draw_validation_transition(screen, platform_index):
         pygame.time.wait(int(frame_time))
 
     # Afficher l'image finale sans effet pour une transition propre
-    draw_gradient(screen, THEME_COLORS["background_top"], THEME_COLORS["background_bottom"])
+    draw_app_background(screen)
     final_image = pygame.transform.smoothscale(image, (base_width, base_height))
     final_image.set_alpha(255)  # Opacité complète
     final_rect = final_image.get_rect(center=(config.screen_width // 2, config.screen_height // 2))
@@ -1273,7 +1318,7 @@ def _format_disk_size_gb(size_bytes):
 
 
 def get_default_disk_space_line():
-    """Retourne l'utilisation disque du dossier ROMs par defaut sous forme 'Disk : utilise/total(percent)'."""
+    """Retourne l'espace disque libre du dossier ROMs par defaut sous forme 'Disk : libre/total(percent libre)'."""
     try:
         target_path = getattr(config, 'ROMS_FOLDER', '') or ''
         if not target_path:
@@ -1290,9 +1335,10 @@ def get_default_disk_space_line():
             return ""
 
         usage = shutil.disk_usage(resolved_path)
-        used_bytes = max(0, usage.total - usage.free)
-        used_percent = int(round((used_bytes / usage.total) * 100)) if usage.total > 0 else 0
-        return f"Disk : {_format_disk_size_gb(used_bytes)}/{_format_disk_size_gb(usage.total)}({used_percent}%)"
+        free_bytes = max(0, usage.free)
+        free_percent = int(round((free_bytes / usage.total) * 100)) if usage.total > 0 else 0
+        free_label = _("disk_percent_free") if _ else "free"
+        return f"[HDD] {_format_disk_size_gb(free_bytes)}/{_format_disk_size_gb(usage.total)} ({free_percent}% {free_label})"
     except Exception:
         return ""
 
@@ -3804,34 +3850,42 @@ def draw_pause_display_menu(screen, selected_index):
     light_status = _('status_on') if light_mode else _('status_off')
     light_txt = f"{_('display_light_mode') if _ else 'Light mode'}: < {light_status} >"
 
+    # Background gradient theme
+    background_theme_label = get_background_theme_label()
+    background_txt = f"{_('display_background') if _ else 'Background'}: < {background_theme_label} >"
+
     back_txt = _("menu_back") if _ else "Back"
     
     # Build options list - conditional monitor and display mode options
     font_submenu_txt = f"{_('submenu_display_font_size') if _ else 'Font Size'} >"
     options = [layout_txt, font_submenu_txt, font_family_txt]
-    instruction_keys = [
-        "instruction_display_layout",
-        "instruction_display_font_size",
-        "instruction_display_font_family",
+    instructions = [
+        _("instruction_display_layout"),
+        _("instruction_display_font_size"),
+        _("instruction_display_font_family"),
     ]
     
     if show_monitor_option:
         options.append(monitor_txt)
-        instruction_keys.append("instruction_display_monitor")
+        instructions.append(_("instruction_display_monitor"))
 
     if show_display_mode_option:
         options.append(display_mode_txt)
-        instruction_keys.append("instruction_display_mode")
+        instructions.append(_("instruction_display_mode"))
     
-    options.extend([light_txt, unknown_txt, back_txt])
-    instruction_keys.extend([
-        "instruction_display_light_mode",
-        "instruction_display_unknown_ext",
-        "instruction_generic_back",
+    bg_instruction = _("instruction_display_background_theme") if _ else ""
+    if not bg_instruction or bg_instruction == "instruction_display_background_theme":
+        bg_instruction = "Left/Right: change background theme"
+
+    options.extend([background_txt, light_txt, unknown_txt, back_txt])
+    instructions.extend([
+        bg_instruction,
+        _("instruction_display_light_mode"),
+        _("instruction_display_unknown_ext"),
+        _("instruction_generic_back"),
     ])
-    
-    key = instruction_keys[selected_index] if 0 <= selected_index < len(instruction_keys) else None
-    instruction_text = _(key) if key else None
+
+    instruction_text = instructions[selected_index] if 0 <= selected_index < len(instructions) else None
     
     _draw_submenu_generic(screen, _("menu_display"), options, selected_index, instruction_text)
 

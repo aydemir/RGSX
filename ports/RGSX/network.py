@@ -48,6 +48,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class InsufficientDiskSpaceError(RuntimeError):
+    """Raised when there is not enough free disk space for the expected download size."""
+
+
+
 def _warn_history_write_issue(context=""):
     status = get_history_write_status() or {}
     message = status.get("message") or "Erreur ecriture history.json. Le telechargement continue sans historique temps reel."
@@ -1293,6 +1298,77 @@ def _parse_known_size_to_bytes(value) -> int:
     return int(amount * multipliers.get(unit, 0)) if unit in multipliers else 0
 
 
+def _resolve_existing_path_for_usage(path: str) -> str:
+    resolved_path = os.path.abspath(path or "")
+    while resolved_path and not os.path.exists(resolved_path):
+        parent_path = os.path.dirname(resolved_path)
+        if not parent_path or parent_path == resolved_path:
+            break
+        resolved_path = parent_path
+    return resolved_path
+
+
+def _get_free_disk_bytes(path: str) -> int | None:
+    try:
+        usage_path = _resolve_existing_path_for_usage(path)
+        if not usage_path or not os.path.exists(usage_path):
+            return None
+        return int(shutil.disk_usage(usage_path).free)
+    except Exception as exc:
+        logger.debug(f"Impossible de lire l'espace disque libre pour {path}: {exc}")
+        return None
+
+
+def _build_low_disk_space_message(free_bytes: int, required_bytes: int, popup: bool = False) -> str:
+    free_text = _format_size(max(0, int(free_bytes or 0)))
+    required_text = _format_size(max(0, int(required_bytes or 0)))
+    key = "popup_low_disk_space" if popup else "error_low_disk_space"
+    template = _(key) if _ else ""
+    if template and template != key:
+        try:
+            return template.format(free=free_text, required=required_text)
+        except Exception:
+            try:
+                return template.format(free_text, required_text)
+            except Exception:
+                pass
+    if popup:
+        return f"Download blocked: low disk space ({free_text} free / {required_text} required)"
+    return f"Low disk space ({free_text} free / {required_text} required)"
+
+
+def _notify_low_disk_space(required_bytes: int, free_bytes: int) -> str:
+    popup_message = _build_low_disk_space_message(free_bytes, required_bytes, popup=True)
+    history_message = _build_low_disk_space_message(free_bytes, required_bytes, popup=False)
+    try:
+        config.popup_message = popup_message
+        config.popup_timer = 5000
+        config.needs_redraw = True
+    except Exception:
+        pass
+    try:
+        show_toast(popup_message, duration=5000)
+    except Exception:
+        pass
+    return history_message
+
+
+def _ensure_sufficient_disk_space(dest_dir: str, required_bytes: int) -> tuple[bool, str | None]:
+    # Unit safety: both required_bytes and free bytes are compared in raw bytes.
+    required = max(0, int(required_bytes or 0))
+    if required <= 0:
+        return True, None
+
+    free_bytes = _get_free_disk_bytes(dest_dir)
+    if free_bytes is None:
+        return True, None
+
+    if free_bytes < required:
+        return False, _notify_low_disk_space(required, free_bytes)
+
+    return True, None
+
+
 def _extract_vimm_download_info(html_text: str, page_url: str) -> dict[str, str | int] | None:
     """Extract Vimm download form data with BeautifulSoup when available, else regex fallback."""
     if not html_text:
@@ -2508,6 +2584,10 @@ def download_1fichier_free_mode(url, dest_dir, session, log_callback=None, progr
         with session.get(direct_link, stream=True, allow_redirects=True, timeout=30) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get('content-length', 0))
+
+            has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, total)
+            if not has_space:
+                return (False, None, low_space_message)
             
             with open(filepath, 'wb') as f:
                 downloaded = 0
@@ -3386,9 +3466,17 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
         # Vérifier si on a un résultat en cache
         if url in url_results:
             logger.info(f"Résultat en cache pour {url}: {url_results[url]}")
+            try:
+                notify_download_finished()
+            except Exception:
+                pass
             return url_results[url]
         else:
             # Fallback: retourner un message de succès (le premier téléchargement a probablement réussi)
+            try:
+                notify_download_finished()
+            except Exception:
+                pass
             return (True, _("network_download_ok").format(game_name))
     
     # Créer une queue/cancel spécifique pour cette tâche
@@ -3481,8 +3569,13 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                 
             sanitized_name = sanitize_filename(game_name)
             dest_path = os.path.join(dest_dir, f"{sanitized_name}")
-            logger.debug(f"Chemin destination: {dest_path}")
+            logger.info(f"Chemin destination: {dest_path}")
             _update_history_local_target(original_history_url, task_id, dest_path)
+
+            expected_size_before_start = int(torrent_meta.get("size_bytes") or 0) if torrent_meta is not None else int(known_total_size or 0)
+            has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, expected_size_before_start)
+            if not has_space:
+                raise InsufficientDiskSpaceError(low_space_message)
 
             torrent_meta = parse_torrent_download_url(url)
             if torrent_meta is not None:
@@ -3522,6 +3615,11 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                         except Exception:
                             pass
                         return result[0], result[1]
+
+                torrent_expected_size = int(torrent_meta.get("size_bytes") or 0)
+                has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, torrent_expected_size)
+                if not has_space:
+                    raise InsufficientDiskSpaceError(low_space_message)
 
                 success, message = _download_torrent_with_aria2(
                     torrent_meta,
@@ -4068,6 +4166,11 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                         config.download_progress[url]["status"] = "Downloading"
                         config.needs_redraw = True
 
+                    announced_total_size = int(response.headers.get('content-length', 0) or 0) or int(vimm_file_size or known_total_size or 0)
+                    has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, announced_total_size)
+                    if not has_space:
+                        raise InsufficientDiskSpaceError(low_space_message)
+
                     transfer = _stream_response_to_path(response, dest_path, task_id, cancel_ev, progress_queues.get(task_id), fallback_total_size=vimm_file_size or known_total_size)
                     total_size = int(transfer['total_size'])
                     downloaded = int(transfer['downloaded'])
@@ -4075,7 +4178,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     last_update_time = float(transfer['last_update_time'])
                     download_canceled = bool(transfer['download_canceled'])
 
-                    logger.debug(f"Taille totale: {total_size} octets")
+                    logger.info(f"Taille totale: {total_size} octets")
                     logger.debug(f"Progression initiale envoyée: 0% pour {game_name}, task_id={task_id}")
                     if isinstance(config.history, list):
                         for entry in config.history:
@@ -4160,7 +4263,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                         return
             
             os.chmod(dest_path, 0o644)
-            logger.debug(f"Téléchargement terminé: {dest_path}")
+            logger.info(f"Téléchargement terminé: {dest_path}")
             
             # Vérifier si l'extraction automatique est activée dans les paramètres
             from rgsx_settings import get_auto_extract
@@ -4208,6 +4311,10 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
             else:
                 result[0] = True
                 result[1] = _("network_download_ok").format(game_name)
+        except InsufficientDiskSpaceError as e:
+            logger.warning(f"Téléchargement annulé par manque d'espace disque pour {url}: {e}")
+            result[0] = False
+            result[1] = str(e)
         except Exception as e:
             logger.error(f"Erreur téléchargement {url}: {str(e)}")
             result[0] = False
@@ -4450,9 +4557,17 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
         # Vérifier si on a un résultat en cache
         if url in url_results:
             logger.info(f"Résultat en cache pour {url}: {url_results[url]}")
+            try:
+                notify_download_finished()
+            except Exception:
+                pass
             return url_results[url]
         else:
             # Fallback: retourner un message de succès (le premier téléchargement a probablement réussi)
+            try:
+                notify_download_finished()
+            except Exception:
+                pass
             return (True, _("network_download_ok").format(game_name))
 
         # Ajouter l'URL au set en cours
@@ -4591,6 +4706,7 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
 
             final_url = None
             filename = game_name
+            onefichier_error_message = None
             provider_download_session = requests.Session()
             provider_download_headers = _build_browser_download_headers()
             provider_download_session.headers.update(provider_download_headers)
@@ -4642,189 +4758,173 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                         result.append({"raw_error_1fichier_fileinfo": raw_err or raw_fileinfo_text})
                     except Exception:
                         pass
-                    return
-                # Status 200 requis à partir d'ici
-                file_info = file_info if isinstance(file_info, dict) else {}
-                if "error" in file_info and file_info["error"] == "Resource not found":
-                    logger.error(f"Le fichier {game_name} n'existe pas sur 1fichier")
-                    result[0] = False
-                    try:
-                        if _:
-                            # Build translated message safely without nesting quotes in f-string
-                            not_found_tpl = _("network_file_not_found")
-                            msg_nf = not_found_tpl.format(game_name) if "{" in not_found_tpl else f"{not_found_tpl} {game_name}"
-                            result[1] = f"1F: {msg_nf}"
-                        else:
-                            result[1] = f"1F: File not found {game_name}"
-                    except Exception:
-                        result[1] = f"1F: File not found {game_name}"
-                    return
-                filename = file_info.get("filename", "").strip()
-                if not filename:
-                    logger.error("Impossible de récupérer le nom du fichier")
-                    result[0] = False
-                    result[1] = _("network_cannot_get_filename")
-                    return
-                sanitized_filename = sanitize_filename(filename)
-                dest_path = os.path.join(dest_dir, sanitized_filename)
-                logger.debug(f"Chemin destination: {dest_path}")
-                _update_history_local_target(url, task_id, dest_path)
-                
-                # Récupérer la taille du serveur depuis l'API 1fichier
-                remote_size = None
-                try:
-                    remote_size = file_info.get("size")
-                    if isinstance(remote_size, str):
-                        remote_size = int(remote_size)
-                    logger.debug(f"Taille du fichier 1fichier: {remote_size} octets")
-                except Exception as e:
-                    logger.debug(f"Impossible de récupérer la taille 1fichier: {e}")
-                
-                # Vérifier si le fichier existe déjà (exact ou avec autre extension)
-                file_found = False
-                if os.path.exists(dest_path):
-                    logger.info(f"Le fichier {dest_path} existe déjà, vérification de la taille...")
-                    
-                    # Vérifier la taille du fichier local
-                    local_size = os.path.getsize(dest_path)
-                    logger.debug(f"Taille du fichier local: {local_size} octets")
-                    
-                    # Comparer les tailles si on a obtenu la taille distante
-                    if remote_size is not None and local_size != remote_size:
-                        logger.warning(f"Taille mismatch! Local: {local_size}, Remote: {remote_size} - le fichier sera re-téléchargé")
-                        # Les tailles ne correspondent pas, il faut re-télécharger
+                    onefichier_error_message = friendly
+                    logger.warning(f"Échec API 1fichier file/info, fallback providers activé: {friendly}")
+                if response.status_code == 200:
+                    file_info = file_info if isinstance(file_info, dict) else {}
+                    if "error" in file_info and file_info["error"] == "Resource not found":
+                        logger.error(f"Le fichier {game_name} n'existe pas sur 1fichier")
+                        result[0] = False
                         try:
-                            if os.path.exists(dest_path):
-                                os.remove(dest_path)
-                                logger.info(f"Fichier incomplet supprimé: {dest_path}")
+                            if _:
+                                not_found_tpl = _("network_file_not_found")
+                                msg_nf = not_found_tpl.format(game_name) if "{" in not_found_tpl else f"{not_found_tpl} {game_name}"
+                                result[1] = f"1F: {msg_nf}"
                             else:
-                                logger.debug(f"Fichier déjà supprimé par un autre thread: {dest_path}")
-                        except FileNotFoundError:
-                            logger.debug(f"Fichier déjà supprimé (ou n'existe plus): {dest_path}")
-                        except Exception as e:
-                            logger.error(f"Impossible de supprimer le fichier incomplet: {e}")
-                            result[0] = False
-                            result[1] = f"Erreur suppression fichier incomplet: {str(e)}"
-                            return
-                        # Continuer le téléchargement normal (ne pas faire return)
+                                result[1] = f"1F: File not found {game_name}"
+                        except Exception:
+                            result[1] = f"1F: File not found {game_name}"
+                        onefichier_error_message = result[1]
+                        logger.warning("Ressource introuvable via API 1fichier, fallback providers activé")
                     else:
-                        # Les tailles correspondent ou on ne peut pas vérifier, considérer comme déjà téléchargé
-                        logger.info(f"Le fichier {dest_path} existe déjà et la taille est correcte, téléchargement ignoré")
-                        result[0] = True
-                        result[1] = _("network_download_ok").format(game_name) + _("download_already_present")
-                        # Afficher un toast au lieu d'ouvrir l'historique
-                        try:
-                            show_toast(result[1])
-                        except Exception as e:
-                            logger.debug(f"Impossible d'afficher le toast: {e}")
-                        with urls_lock:
-                            urls_in_progress.discard(url)
-                            logger.debug(f"URL supprimée du set des téléchargements en cours: {url} (URLs restantes: {len(urls_in_progress)})")
-                        return result[0], result[1]
-                    file_found = True
-                
-                # Vérifier si un fichier avec le même nom de base mais extension différente existe (SEULEMENT si fichier exact non trouvé)
-                if not file_found:
-                    base_name_no_ext = os.path.splitext(sanitized_filename)[0]
-                    if base_name_no_ext != sanitized_filename:  # Seulement si une extension était présente
-                        try:
-                            # Lister tous les fichiers dans le répertoire de destination
-                            if os.path.exists(dest_dir):
-                                for existing_file in os.listdir(dest_dir):
-                                    existing_base = os.path.splitext(existing_file)[0]
-                                    if existing_base == base_name_no_ext:
-                                        existing_path = os.path.join(dest_dir, existing_file)
-                                        logger.info(f"Un fichier avec le même nom de base existe: {existing_path}, vérification de la taille...")
-                                        
-                                        # Vérifier la taille du fichier local
-                                        local_size = os.path.getsize(existing_path)
-                                        logger.debug(f"Taille du fichier local (extension différente): {local_size} octets")
-                                        
-                                        # Comparer les tailles si on a obtenu la taille distante
-                                        if remote_size is not None and local_size != remote_size:
-                                            logger.warning(f"Taille mismatch (extension différente)! Local: {local_size}, Remote: {remote_size} - re-téléchargement")
-                                            # Continuer le téléchargement normal
-                                            break
-                                        else:
-                                            # Les tailles correspondent, fichier complet
-                                            logger.info(f"Un fichier avec le même nom de base existe déjà: {existing_path}, téléchargement ignoré")
-                                            result[0] = True
-                                            result[1] = _("network_download_ok").format(game_name) + _("download_already_extracted")
-                                            # Afficher un toast au lieu d'ouvrir l'historique
-                                            try:
-                                                show_toast(result[1])
-                                            except Exception as e:
-                                                logger.debug(f"Impossible d'afficher le toast: {e}")
-                                            with urls_lock:
-                                                urls_in_progress.discard(url)
-                                                logger.debug(f"URL supprimée du set des téléchargements en cours: {url} (URLs restantes: {len(urls_in_progress)})")
-                                            return result[0], result[1]
-                        except Exception as e:
-                            logger.debug(f"Erreur lors de la vérification des fichiers existants: {e}")
-                
-                logger.debug(f"Envoi requête 1fichier get_token pour {link}")
-                response = requests.post("https://api.1fichier.com/v1/download/get_token.cgi", headers=headers, json=payload, timeout=30)
-                status_1f = response.status_code
-                raw_text_1f = None
-                try:
-                    raw_text_1f = response.text
-                except Exception:
-                    pass
-                logger.debug(f"Réponse get_token reçue, code: {status_1f} body_snippet={(raw_text_1f[:120] + '...') if raw_text_1f and len(raw_text_1f) > 120 else raw_text_1f}")
-                download_info = None
-                try:
-                    download_info = response.json()
-                except Exception:
-                    download_info = None
-                # Même en cas de code !=200 on tente de récupérer un message JSON exploitable
-                if status_1f != 200:
-                    friendly_1f = None
-                    raw_error_1f = None
-                    if isinstance(download_info, dict):
-                        # Exemples de réponses d'erreur 1fichier: {"status":"KO","message":"Bad token"} ou autres
-                        raw_error_1f = download_info.get('message') or download_info.get('status')
-                        # Mapping simple pour les messages fréquents / cas premium requis
-                        ONEFICHIER_ERROR_MAP = {
-                            "Bad token": "1F: Clé API invalide",
-                            "Must be a customer (Premium, Access) #236": "1F: Compte Premium requis",
-                        }
-                        if raw_error_1f:
-                            friendly_1f = ONEFICHIER_ERROR_MAP.get(raw_error_1f)
-                    if not friendly_1f:
-                        # Fallback générique sur code HTTP
-                        if status_1f == 403:
-                            friendly_1f = "1F: Accès refusé (403)"
-                        elif status_1f == 401:
-                            friendly_1f = "1F: Non autorisé (401)"
-                        elif status_1f >= 500:
-                            friendly_1f = f"1F: Erreur serveur ({status_1f})"
+                        filename = file_info.get("filename", "").strip()
+                        if not filename:
+                            logger.error("Impossible de récupérer le nom du fichier")
+                            result[0] = False
+                            result[1] = _("network_cannot_get_filename")
+                            onefichier_error_message = result[1]
+                            logger.warning("Nom de fichier 1fichier introuvable, fallback providers activé")
                         else:
-                            friendly_1f = f"1F: Erreur ({status_1f})"
-                    # Stocker et retourner tôt car pas de token valide
-                    result[0] = False
-                    result[1] = friendly_1f
-                    try:
-                        result.append({"raw_error_1fichier": raw_error_1f or raw_text_1f})
-                    except Exception:
-                        pass
-                    return
-                # Si status 200 on continue normalement
-                response.raise_for_status()
-                if not isinstance(download_info, dict):
-                    logger.error("Réponse 1fichier inattendue (pas un JSON) pour get_token")
-                    result[0] = False
-                    result[1] = _("network_api_error").format("1fichier invalid JSON") if _ else "1fichier invalid JSON"
-                    return
-                final_url = download_info.get("url")
-                if not final_url:
-                    logger.error("Impossible de récupérer l'URL de téléchargement")
-                    result[0] = False
-                    result[1] = _("network_cannot_get_download_url")
-                    return
-                logger.debug(f"URL de téléchargement obtenue via 1fichier: {final_url}")
-                provider_used = '1F'
-                _set_provider_in_history(provider_used)
-            else:
+                            sanitized_filename = sanitize_filename(filename)
+                            dest_path = os.path.join(dest_dir, sanitized_filename)
+                            logger.info(f"Chemin destination: {dest_path}")
+                            _update_history_local_target(url, task_id, dest_path)
+
+                            remote_size = None
+                            try:
+                                remote_size = file_info.get("size")
+                                if isinstance(remote_size, str):
+                                    remote_size = int(remote_size)
+                                logger.debug(f"Taille du fichier 1fichier: {remote_size} octets")
+                            except Exception as e:
+                                logger.debug(f"Impossible de récupérer la taille 1fichier: {e}")
+
+                            file_found = False
+                            if os.path.exists(dest_path):
+                                logger.info(f"Le fichier {dest_path} existe déjà, vérification de la taille...")
+                                local_size = os.path.getsize(dest_path)
+                                logger.debug(f"Taille du fichier local: {local_size} octets")
+                                if remote_size is not None and local_size != remote_size:
+                                    logger.warning(f"Taille mismatch! Local: {local_size}, Remote: {remote_size} - le fichier sera re-téléchargé")
+                                    try:
+                                        if os.path.exists(dest_path):
+                                            os.remove(dest_path)
+                                            logger.info(f"Fichier incomplet supprimé: {dest_path}")
+                                        else:
+                                            logger.debug(f"Fichier déjà supprimé par un autre thread: {dest_path}")
+                                    except FileNotFoundError:
+                                        logger.debug(f"Fichier déjà supprimé (ou n'existe plus): {dest_path}")
+                                    except Exception as e:
+                                        logger.error(f"Impossible de supprimer le fichier incomplet: {e}")
+                                        result[0] = False
+                                        result[1] = f"Erreur suppression fichier incomplet: {str(e)}"
+                                        return
+                                else:
+                                    logger.info(f"Le fichier {dest_path} existe déjà et la taille est correcte, téléchargement ignoré")
+                                    result[0] = True
+                                    result[1] = _("network_download_ok").format(game_name) + _("download_already_present")
+                                    try:
+                                        show_toast(result[1])
+                                    except Exception as e:
+                                        logger.debug(f"Impossible d'afficher le toast: {e}")
+                                    with urls_lock:
+                                        urls_in_progress.discard(url)
+                                        logger.debug(f"URL supprimée du set des téléchargements en cours: {url} (URLs restantes: {len(urls_in_progress)})")
+                                    return result[0], result[1]
+                                file_found = True
+
+                            if not file_found:
+                                base_name_no_ext = os.path.splitext(sanitized_filename)[0]
+                                if base_name_no_ext != sanitized_filename:
+                                    try:
+                                        if os.path.exists(dest_dir):
+                                            for existing_file in os.listdir(dest_dir):
+                                                existing_base = os.path.splitext(existing_file)[0]
+                                                if existing_base == base_name_no_ext:
+                                                    existing_path = os.path.join(dest_dir, existing_file)
+                                                    logger.info(f"Un fichier avec le même nom de base existe: {existing_path}, vérification de la taille...")
+                                                    local_size = os.path.getsize(existing_path)
+                                                    logger.debug(f"Taille du fichier local (extension différente): {local_size} octets")
+                                                    if remote_size is not None and local_size != remote_size:
+                                                        logger.warning(f"Taille mismatch (extension différente)! Local: {local_size}, Remote: {remote_size} - re-téléchargement")
+                                                        break
+                                                    else:
+                                                        logger.info(f"Un fichier avec le même nom de base existe déjà: {existing_path}, téléchargement ignoré")
+                                                        result[0] = True
+                                                        result[1] = _("network_download_ok").format(game_name) + _("download_already_extracted")
+                                                        try:
+                                                            show_toast(result[1])
+                                                        except Exception as e:
+                                                            logger.debug(f"Impossible d'afficher le toast: {e}")
+                                                        with urls_lock:
+                                                            urls_in_progress.discard(url)
+                                                            logger.debug(f"URL supprimée du set des téléchargements en cours: {url} (URLs restantes: {len(urls_in_progress)})")
+                                                        return result[0], result[1]
+                                    except Exception as e:
+                                        logger.debug(f"Erreur lors de la vérification des fichiers existants: {e}")
+
+                            logger.debug(f"Envoi requête 1fichier get_token pour {link}")
+                            response = requests.post("https://api.1fichier.com/v1/download/get_token.cgi", headers=headers, json=payload, timeout=30)
+                            status_1f = response.status_code
+                            raw_text_1f = None
+                            try:
+                                raw_text_1f = response.text
+                            except Exception:
+                                pass
+                            logger.debug(f"Réponse get_token reçue, code: {status_1f} body_snippet={(raw_text_1f[:120] + '...') if raw_text_1f and len(raw_text_1f) > 120 else raw_text_1f}")
+                            download_info = None
+                            try:
+                                download_info = response.json()
+                            except Exception:
+                                download_info = None
+                            if status_1f != 200:
+                                friendly_1f = None
+                                raw_error_1f = None
+                                if isinstance(download_info, dict):
+                                    raw_error_1f = download_info.get('message') or download_info.get('status')
+                                    ONEFICHIER_ERROR_MAP = {
+                                        "Bad token": "1F: Clé API invalide",
+                                        "Must be a customer (Premium, Access) #236": "1F: Compte Premium requis",
+                                    }
+                                    if raw_error_1f:
+                                        friendly_1f = ONEFICHIER_ERROR_MAP.get(raw_error_1f)
+                                if not friendly_1f:
+                                    if status_1f == 403:
+                                        friendly_1f = "1F: Accès refusé (403)"
+                                    elif status_1f == 401:
+                                        friendly_1f = "1F: Non autorisé (401)"
+                                    elif status_1f >= 500:
+                                        friendly_1f = f"1F: Erreur serveur ({status_1f})"
+                                    else:
+                                        friendly_1f = f"1F: Erreur ({status_1f})"
+                                result[0] = False
+                                result[1] = friendly_1f
+                                try:
+                                    result.append({"raw_error_1fichier": raw_error_1f or raw_text_1f})
+                                except Exception:
+                                    pass
+                                onefichier_error_message = friendly_1f
+                                logger.warning(f"Échec API 1fichier get_token, fallback providers activé: {friendly_1f}")
+                            else:
+                                response.raise_for_status()
+                                if not isinstance(download_info, dict):
+                                    logger.error("Réponse 1fichier inattendue (pas un JSON) pour get_token")
+                                    result[0] = False
+                                    result[1] = _("network_api_error").format("1fichier invalid JSON") if _ else "1fichier invalid JSON"
+                                    onefichier_error_message = result[1]
+                                else:
+                                    final_url = download_info.get("url")
+                                    if not final_url:
+                                        logger.error("Impossible de récupérer l'URL de téléchargement")
+                                        result[0] = False
+                                        result[1] = _("network_cannot_get_download_url")
+                                        onefichier_error_message = result[1]
+                                    else:
+                                        logger.debug(f"URL de téléchargement obtenue via 1fichier: {final_url}")
+                                        provider_used = '1F'
+                                        _set_provider_in_history(provider_used)
+
+            if not final_url:
                 # Tentative AllDebrid
                 if getattr(config, 'API_KEY_ALLDEBRID', ''):
                     logger.debug("Mode téléchargement sélectionné: AllDebrid (fallback 1)")
@@ -5487,6 +5587,11 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                         response.raise_for_status()
                         total_size = int(response.headers.get('content-length', 0))
                         logger.debug(f"Taille totale: {total_size} octets")
+
+                        has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, total_size)
+                        if not has_space:
+                            raise InsufficientDiskSpaceError(low_space_message)
+
                         if isinstance(config.history, list):
                             for entry in config.history:
                                 if "url" in entry and entry["url"] == url:
@@ -5611,7 +5716,7 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                     else:
                         logger.debug(f"Application des permissions sur {dest_path}")
                         os.chmod(dest_path, 0o644)
-                        logger.debug(f"Téléchargement terminé: {dest_path}")
+                        logger.info(f"Téléchargement terminé: {dest_path}")
                         result[0] = True
                         result[1] = _("network_download_ok").format(game_name)
                     return
@@ -5631,6 +5736,10 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
             logger.error(f"Erreur API 1fichier: {e}")
             result[0] = False
             result[1] = _("network_api_error").format(str(e))
+        except InsufficientDiskSpaceError as e:
+            logger.warning(f"Téléchargement 1fichier annulé par manque d'espace disque pour {url}: {e}")
+            result[0] = False
+            result[1] = str(e)
         except Exception as e:
             logger.error(f"Erreur inattendue téléchargement 1fichier: {e}", exc_info=True)
             result[0] = False

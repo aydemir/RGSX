@@ -489,6 +489,29 @@ def set_light_mode(enabled: bool):
     save_rgsx_settings(settings)
     return disp["light_mode"]
 
+
+def get_display_background_theme(settings=None):
+    """Retourne le thème de fond configuré pour le dégradé principal."""
+    if settings is None:
+        settings = load_rgsx_settings()
+    value = str(settings.get("display", {}).get("background_theme", "default") or "default").strip().lower()
+    allowed = {"default", "sunset", "forest", "midnight"}
+    return value if value in allowed else "default"
+
+
+def set_display_background_theme(theme_key: str):
+    """Définit et sauvegarde le thème de fond du dégradé principal."""
+    allowed = {"default", "sunset", "forest", "midnight"}
+    normalized = str(theme_key or "default").strip().lower()
+    if normalized not in allowed:
+        normalized = "default"
+
+    settings = load_rgsx_settings()
+    disp = settings.setdefault("display", {})
+    disp["background_theme"] = normalized
+    save_rgsx_settings(settings)
+    return normalized
+
 def get_available_monitors():
     """Retourne la liste des moniteurs disponibles avec leurs informations.
     Compatible Windows, Linux (Batocera), et autres plateformes.
