@@ -2547,22 +2547,52 @@ def draw_history_list(screen):
     selected_entry = history[current_history_item_inverted] if history and 0 <= current_history_item_inverted < len(history) else None
     selected_status = str((selected_entry or {}).get("status") or "")
 
-    if selected_entry and selected_status in active_statuses:
-        downloaded_size = int(selected_entry.get("downloaded_size", 0) or 0)
-        size_text = format_size(downloaded_size)
+    active_download_entry = None
+    for entry in history:
+        entry_status = str(entry.get("status") or "")
+        if entry_status in active_statuses:
+            active_download_entry = entry
+            break
+
+    # La barre de titre doit refléter l'élément actuellement sélectionné dans la liste
+    # d'historique (navigation utilisateur), pas systématiquement le téléchargement actif
+    # en arrière-plan si l'utilisateur regarde une autre entrée. On ne se rabat sur le
+    # téléchargement actif que si rien n'est sélectionné (ex: historique vide).
+    display_entry = selected_entry if selected_entry is not None else active_download_entry
+    display_status = str((display_entry or {}).get("status") or "")
+
+    if display_entry and display_status in active_statuses:
+        downloaded_size = int(display_entry.get("downloaded_size", 0) or 0)
+        total_size_val = int(display_entry.get("total_size", 0) or 0)
+        size_text = f"{format_size(downloaded_size)} / {format_size(total_size_val)}" if total_size_val > 0 else format_size(downloaded_size)
         try:
-            selected_speed = float(selected_entry.get("speed", 0.0) or 0.0)
+            selected_speed = float(display_entry.get("speed", 0.0) or 0.0)
         except Exception:
             selected_speed = 0.0
         speed_text = format_speed_adaptive(selected_speed)
         title_text = _("history_title_downloading_active").format(size_text, speed_text)
-        # Afficher SD/CN dans le titre
-        _sd = int(selected_entry.get("seeds", 0) or 0)
-        _cn = int(selected_entry.get("connections", 0) or 0)
-        title_text = f"{title_text}  [{_sd}SD/{_cn}CN]"
+        # SD/CN (seeds/connexions) n'a de sens que pour les téléchargements torrent.
+        is_torrent_entry = str(display_entry.get("url") or "").startswith("rgsx+torrent://")
+        if is_torrent_entry:
+            # Afficher SD/CN dans le titre
+            progress_entry = None
+            entry_url = str(display_entry.get("url") or "")
+            if entry_url and entry_url in config.download_progress:
+                progress_entry = config.download_progress[entry_url]
+            if progress_entry is not None:
+                _sd = int(progress_entry.get("seeds", display_entry.get("seeds", 0) or 0) or 0)
+                _cn = int(progress_entry.get("connections", display_entry.get("connections", 0) or 0) or 0)
+                downloaded_size = int(progress_entry.get("downloaded_size", display_entry.get("downloaded_size", 0) or 0) or 0)
+                total_size_val = int(progress_entry.get("total_size", display_entry.get("total_size", 0) or 0) or 0)
+                size_text = f"{format_size(downloaded_size)} / {format_size(total_size_val)}" if total_size_val > 0 else format_size(downloaded_size)
+                title_text = _("history_title_downloading_active").format(size_text, speed_text)
+            else:
+                _sd = int(display_entry.get("seeds", 0) or 0)
+                _cn = int(display_entry.get("connections", 0) or 0)
+            title_text = f"{title_text}  [{_sd}SD/{_cn}CN]"
         # Afficher l'étape aria2c courante dans le titre (connecting / verifying / waiting).
         # On ne montre rien quand on télécharge activement (speed > 0) car l'info de vitesse suffit.
-        _aria2_phase = str(selected_entry.get("aria2_phase") or "")
+        _aria2_phase = str(display_entry.get("aria2_phase") or "")
         _phase_labels = {
             "connecting": _("aria2_phase_connecting"),
             "verifying":  _("aria2_phase_verifying"),
@@ -2571,12 +2601,12 @@ def draw_history_list(screen):
         _phase_label = _phase_labels.get(_aria2_phase, "")
         if _phase_label:
             title_text = f"{title_text}  [{_phase_label}]"
-    elif selected_entry and selected_status == "Seeding":
-        _cn = int(selected_entry.get("seeds", 0) or 0)
-        _ul = float(selected_entry.get("ul_speed", 0.0) or 0.0)
+    elif display_entry and display_status == "Seeding":
+        _cn = int(display_entry.get("seeds", 0) or 0)
+        _ul = float(display_entry.get("ul_speed", 0.0) or 0.0)
         _ul_text = format_speed_adaptive(_ul)
         title_text = f"Seeding - {_ul_text} - [{_cn}p]"
-    elif selected_entry and selected_status in completed_statuses:
+    elif display_entry and display_status in completed_statuses:
         completed_count = sum(1 for item in history if str(item.get("status") or "") in completed_statuses)
         title_text = _("history_title_completed_count").format(completed_count)
     elif selected_entry and selected_status in error_statuses:
@@ -3814,6 +3844,7 @@ def draw_pause_display_menu(screen, selected_index):
     # Nom user-friendly
     family_map = {
         "pixel": "Pixel",
+        "bell_centennial": "Bell Centennial",
         "dejavu": "DejaVu Sans"
     }
     fam_label = family_map.get(current_family, current_family)

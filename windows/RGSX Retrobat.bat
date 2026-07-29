@@ -142,13 +142,59 @@ echo [%DATE% %TIME%]   PYTHON_EXE: %PYTHON_EXE% >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   MAIN_SCRIPT: %MAIN_SCRIPT% >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   RGSX_ROOT: %RGSX_ROOT% >> "%LOG_FILE%"
 
+:: Determiner la source Python a utiliser
+set "PYTHON_EXE="
+set "PYTHON_ARGS="
+set "PYTHON_SOURCE=none"
+
+:: Essayer d'abord python.exe dans le PATH, mais seulement si il fonctionne vraiment
+for /f "delims=" %%I in ('where python.exe 2^>nul') do (
+    set "PYTHON_CANDIDATE=%%~fI"
+    if exist "!PYTHON_CANDIDATE!" (
+        if /i not "!PYTHON_CANDIDATE!"=="%localappdata%\Microsoft\WindowsApps\python.exe" (
+            "!PYTHON_CANDIDATE!" --version >nul 2>&1
+            if !ERRORLEVEL! EQU 0 (
+                set "PYTHON_EXE=!PYTHON_CANDIDATE!"
+                set "PYTHON_ARGS="
+                set "PYTHON_SOURCE=user"
+            )
+        )
+    )
+)
+
+if not defined PYTHON_EXE (
+    where py.exe >nul 2>&1
+    if !ERRORLEVEL! EQU 0 (
+        py.exe -3 --version >nul 2>&1
+        if !ERRORLEVEL! EQU 0 (
+            set "PYTHON_EXE=py.exe"
+            set "PYTHON_ARGS=-3"
+            set "PYTHON_SOURCE=user"
+        )
+    )
+)
+
+if not defined PYTHON_EXE (
+    if exist "%PYTHON_DIR%\python.exe" (
+        "%PYTHON_DIR%\python.exe" --version >nul 2>&1
+        if !ERRORLEVEL! EQU 0 (
+            set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
+            set "PYTHON_ARGS="
+            set "PYTHON_SOURCE=local-bundle"
+        )
+    )
+)
+
+echo [%DATE% %TIME%] Python source: !PYTHON_SOURCE! >> "%LOG_FILE%"
+echo [%DATE% %TIME%] Python executable: !PYTHON_EXE! >> "%LOG_FILE%"
+
 :: =============================================================================
 :: Verification Python
 :: =============================================================================
 echo %ESC%%YELLOW%[1/3]%ESC%%RESET% Checking Python environment...
 echo [%DATE% %TIME%] Step 1/3: Checking Python >> "%LOG_FILE%"
 
-if not exist "%PYTHON_EXE%" (
+if /i "!PYTHON_SOURCE!"=="local-bundle" if not exist "!PYTHON_EXE!" (
     echo       %ESC%%YELLOW%^> Python not found, installing...%ESC%%RESET%
     echo [%DATE% %TIME%] Python not found, starting installation >> "%LOG_FILE%"
     
@@ -262,9 +308,58 @@ if not exist "%PYTHON_EXE%" (
 )
 
 :: Afficher et logger la version Python
-for /f "tokens=*" %%v in ('"%PYTHON_EXE%" --version 2^>^&1') do set "PYTHON_VERSION=%%v"
-echo       %ESC%%GREEN%^> %PYTHON_VERSION% found%ESC%%RESET%
-echo [%DATE% %TIME%] %PYTHON_VERSION% detected >> "%LOG_FILE%"
+for /f "tokens=*" %%v in ('"!PYTHON_EXE!" !PYTHON_ARGS! --version 2^>^&1') do set "PYTHON_VERSION=%%v"
+echo       %ESC%%GREEN%^> !PYTHON_VERSION! found via !PYTHON_SOURCE!%ESC%%RESET%
+echo [%DATE% %TIME%] !PYTHON_VERSION! detected using !PYTHON_SOURCE! >> "%LOG_FILE%"
+
+:: Verifier et installer les dependances Python si necessaires
+set "MISSING_PACKAGES="
+for /f "delims=" %%m in ('"!PYTHON_EXE!" !PYTHON_ARGS! -c "import importlib.util,sys;mods=['requests','pygame']; missing=[m for m in mods if importlib.util.find_spec(m) is None]; print(' '.join(missing))" 2^>nul') do set "MISSING_PACKAGES=%%m"
+if defined MISSING_PACKAGES (
+    echo       %ESC%%YELLOW%^> Installing Python packages: !MISSING_PACKAGES!%ESC%%RESET%
+    echo [%DATE% %TIME%] Installing missing packages: !MISSING_PACKAGES! >> "%LOG_FILE%"
+    "!PYTHON_EXE!" !PYTHON_ARGS! -m pip install requests pygame >> "%LOG_FILE%" 2>&1
+    set "PIP_RESULT=!ERRORLEVEL!"
+    if !PIP_RESULT! NEQ 0 (
+        echo.
+        echo %ESC%%RED%  ERROR: Failed to install Python dependencies!%ESC%%RESET%
+        echo [%DATE% %TIME%] ERROR: pip install failed with code !PIP_RESULT! >> "%LOG_FILE%"
+        goto :error
+    )
+    echo       %ESC%%GREEN%^> Python dependencies installed%ESC%%RESET%
+    echo [%DATE% %TIME%] Python dependencies installed successfully >> "%LOG_FILE%"
+) else (
+    echo       %ESC%%GREEN%^> Python dependencies OK%ESC%%RESET%
+    echo [%DATE% %TIME%] Python dependencies already available >> "%LOG_FILE%"
+)
+
+:: =============================================================================
+:: Configuration automatique du pare-feu Windows (une seule fois, transparente)
+:: =============================================================================
+:: Ajoute des regles entrantes pour aria2c.exe (BitTorrent) et python.exe (UPnP)
+:: afin que les telechargements torrent et la decouverte UPnP fonctionnent sans
+:: que l'utilisateur ait a configurer quoi que ce soit manuellement. Peut demander
+:: une elevation UAC une seule fois (marqueur ecrit dans tous les cas pour ne
+:: jamais redemander a chaque lancement).
+set "ARIA2C_EXE=%ROOT_DIR%\roms\ports\RGSX\assets\progs\aria2c.exe"
+set "FIREWALL_SCRIPT=%ROOT_DIR%\roms\ports\RGSX\assets\scripts\rgsx_firewall_setup.ps1"
+set "FIREWALL_MARKER_DIR=%ROOT_DIR%\saves\ports\rgsx"
+set "FIREWALL_MARKER=%FIREWALL_MARKER_DIR%\.firewall_rules_configured"
+
+if not exist "%FIREWALL_MARKER%" (
+    if exist "%FIREWALL_SCRIPT%" (
+        echo       %ESC%%YELLOW%^> Configuring Windows Firewall for downloads ^(one-time^)...%ESC%%RESET%
+        echo [%DATE% %TIME%] One-time firewall setup: launching %FIREWALL_SCRIPT% >> "%LOG_FILE%"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -Aria2cPath "%ARIA2C_EXE%" -PythonPath "!PYTHON_EXE!" >> "%LOG_FILE%" 2>&1
+        if not exist "%FIREWALL_MARKER_DIR%" mkdir "%FIREWALL_MARKER_DIR%" 2>nul
+        echo [%DATE% %TIME%] Firewall setup attempted >> "%FIREWALL_MARKER%" 2>nul
+        echo [%DATE% %TIME%] Firewall setup attempt complete, marker written >> "%LOG_FILE%"
+    ) else (
+        echo [%DATE% %TIME%] Firewall setup script not found, skipping >> "%LOG_FILE%"
+    )
+) else (
+    echo [%DATE% %TIME%] Firewall already configured previously, skipping >> "%LOG_FILE%"
+)
 
 :: =============================================================================
 :: Verification script principal
@@ -344,10 +439,10 @@ if defined WINDOWED_MODE (
 echo   %ESC%%CYAN%Starting RGSX application...%ESC%%RESET%
 echo   %ESC%%BOLD%Press Ctrl+C to force quit if needed%ESC%%RESET%
 echo.
-echo [%DATE% %TIME%] Executing: "%PYTHON_EXE%" "%MAIN_SCRIPT%" >> "%LOG_FILE%"
+echo [%DATE% %TIME%] Executing: "!PYTHON_EXE!" !PYTHON_ARGS! "%MAIN_SCRIPT%" >> "%LOG_FILE%"
 echo [%DATE% %TIME%] --- Application output start --- >> "%LOG_FILE%"
 
-"%PYTHON_EXE%" "%MAIN_SCRIPT%" >> "%LOG_FILE%" 2>&1
+"!PYTHON_EXE!" !PYTHON_ARGS! "%MAIN_SCRIPT%" >> "%LOG_FILE%" 2>&1
 set EXITCODE=!ERRORLEVEL!
 
 echo [%DATE% %TIME%] --- Application output end --- >> "%LOG_FILE%"
