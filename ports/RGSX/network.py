@@ -3487,6 +3487,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
     
     def download_thread():
         nonlocal url
+        nonlocal torrent_meta
         try:
             _check_history_access_before_download("download_rom")
             known_total_size = _lookup_known_game_size(platform, game_name, original_history_url)
