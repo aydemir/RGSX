@@ -173,6 +173,7 @@
     "network_auth_required": "Authentication required (HTTP {0})",
     "network_access_denied": "Access denied (HTTP {0})",
     "network_server_error": "Server error (HTTP {0})",
+    "network_vimm_rate_limit": "Vimm.net allows only one download at a time per IP. Wait for the other download to finish, then retry.",
     "network_download_ok": "Download OK: {0}",
     "download_already_present": " (already present)",
     "download_already_extracted": " (already extracted)",
