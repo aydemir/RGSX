@@ -528,6 +528,7 @@ history = []  # Liste des entrées d'historique avec platform, game_name, status
 pending_download = None  # Objet de téléchargement en attente
 download_progress = {}  # Dictionnaire de progression des téléchargements actifs
 download_tasks = {}  # Dictionnaire pour les tâches de téléchargement
+spinner_frame = 0  # Animasyon karesi (indirme spinner için)
 history_write_ok = True  # Etat courant de l'ecriture de history.json
 history_write_error = ""  # Message explicite si l'ecriture de history.json echoue
 history_write_failure_count = 0  # Nombre d'echecs consecutifs d'ecriture

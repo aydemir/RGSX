@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 import time
+import xml.etree.ElementTree as ET
 import config
 from datetime import datetime
 
@@ -492,6 +493,95 @@ def mark_game_as_downloaded(platform_name, game_name, file_size=None):
     # Sauvegarder immédiatement
     save_downloaded_games(downloaded)
     logger.info(f"Jeu marqué comme téléchargé : {platform_name} / {normalized_name}")
+
+
+_scanned_platforms_cache: set = set()
+
+
+def scan_platform_roms_on_enter(platform_name):
+    """Mevcut platformun ROM klasörünü hızlıca tarar ve diskteki oyunları downloaded_games.json'a ekler."""
+    if platform_name in _scanned_platforms_cache:
+        return 0
+
+    folder = None
+    for pd in config.platform_dicts or []:
+        if pd.get("platform_name") == platform_name:
+            folder = pd.get("folder")
+            break
+
+    if not folder:
+        _scanned_platforms_cache.add(platform_name)
+        return 0
+
+    roms_path = os.path.join(config.ROMS_FOLDER, folder)
+    if not os.path.isdir(roms_path):
+        _scanned_platforms_cache.add(platform_name)
+        return 0
+
+    from utils import load_games
+
+    available_games = load_games(platform_name)
+    available_names = {
+        normalize_downloaded_game_name(game.name)
+        for game in available_games
+        if normalize_downloaded_game_name(game.name)
+    }
+    if not available_names:
+        _scanned_platforms_cache.add(platform_name)
+        return 0
+
+    downloaded = config.downloaded_games
+    platform_games = downloaded.setdefault(platform_name, {})
+    added = 0
+
+    gamelist_path = os.path.join(roms_path, "gamelist.xml")
+    if os.path.isfile(gamelist_path):
+        try:
+            tree = ET.parse(gamelist_path)
+            root = tree.getroot()
+            for game in root.findall("game"):
+                path_elem = game.find("path")
+                if path_elem is not None and path_elem.text:
+                    game_path = path_elem.text.strip().lstrip("./\\")
+                    normalized = normalize_downloaded_game_name(game_path)
+                    if normalized and normalized in available_names and normalized not in platform_games:
+                        platform_games[normalized] = {}
+                        added += 1
+        except Exception as exc:
+            logger.debug("gamelist.xml parse hatasi, dosya taramasina dusuluyor: %s", exc)
+            added = 0
+            platform_games.clear()
+            platform_games.update(downloaded.setdefault(platform_name, {}))
+            for root, _, filenames in os.walk(roms_path):
+                for filename in filenames:
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext in IGNORED_ROM_SCAN_EXTENSIONS:
+                        continue
+                    normalized = normalize_downloaded_game_name(filename)
+                    if not normalized or normalized not in available_names:
+                        continue
+                    if normalized not in platform_games:
+                        platform_games[normalized] = {}
+                        added += 1
+    else:
+        for root, _, filenames in os.walk(roms_path):
+            for filename in filenames:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in IGNORED_ROM_SCAN_EXTENSIONS:
+                    continue
+                normalized = normalize_downloaded_game_name(filename)
+                if not normalized or normalized not in available_names:
+                    continue
+                if normalized not in platform_games:
+                    platform_games[normalized] = {}
+                    added += 1
+
+    if added > 0:
+        config.downloaded_games = downloaded
+        save_downloaded_games(downloaded)
+
+    _scanned_platforms_cache.add(platform_name)
+    return added
 
 
 def is_game_downloaded(platform_name, game_name):
