@@ -2183,16 +2183,27 @@ def draw_game_list(screen):
         # Vérifier si le jeu est déjà téléchargé en comparant le nom réel sans extension
         is_downloaded = is_game_downloaded(platform_name, item.name)
         
+        is_downloading = any(
+            v[2] == item.name and v[3] == platform_name
+            for v in config.download_tasks.values()
+        )
+        
         ext_text = get_display_extension(item.name)
         size_text = size_val if (isinstance(size_val, str) and size_val.strip()) else "N/A"
         color = THEME_COLORS["fond_lignes"] if i == config.current_game else THEME_COLORS["text"]
         
-        # Ajouter un marqueur vert si le jeu est déjà téléchargé
-        prefix = "[>] " if is_downloaded else ""
-        truncated_name = truncate_text_middle(prefix + game_name, config.small_font, name_col_width, is_filename=False)
+        if is_downloading:
+            spinner = "|/-\\"[int(config.spinner_frame / 6) % 4]
+            prefix = f"[{spinner}] "
+            name_color = (255, 230, 80)
+        elif is_downloaded:
+            prefix = "[>] "
+            name_color = (100, 255, 100)
+        else:
+            prefix = ""
+            name_color = color
         
-        # Utiliser une couleur verte pour les jeux téléchargés
-        name_color = (100, 255, 100) if is_downloaded else color  # Vert clair si téléchargé
+        truncated_name = truncate_text_middle(prefix + game_name, config.small_font, name_col_width, is_filename=False)
         name_surface = config.small_font.render(truncated_name, True, name_color)
         ext_surface = config.small_font.render(ext_text, True, THEME_COLORS["text"])
         size_surface = config.small_font.render(size_text, True, THEME_COLORS["text"])
