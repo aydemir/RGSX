@@ -173,8 +173,6 @@ try:
 except Exception as e:
     logger.exception(f"Échec du nettoyage des anciens fichiers: {e}")
 
-
-          
 # Chargement des paramètres d'accessibilité
 config.accessibility_settings = load_accessibility_settings()
 # Appliquer la grille d'affichage depuis les paramètres
@@ -609,7 +607,6 @@ async def main():
 
     while running:
         clock.tick(60)  # Limite à 60 FPS pour une meilleure réactivité
-        config.spinner_frame += 1
         if config.update_triggered:
             logger.debug("Mise à jour déclenchée, arrêt de la boucle principale")
             break
@@ -628,11 +625,19 @@ async def main():
         except Exception as e:
             logger.error(f"Erreur lors du déclenchement du redémarrage planifié: {e}")
 
-        # Forcer redraw toutes les 100 ms pendant un téléchargement actif
-        if config.download_tasks:
-            if config.menu_state in ("download_progress", "loading", "game", "platform", "history", "platform_search", "settings", "filter_platform") and current_time - last_redraw_time >= 100:
+        # Forcer redraw toutes les 100 ms dans download_progress
+        if config.menu_state == "download_progress" and current_time - last_redraw_time >= 100:
+            config.needs_redraw = True
+            last_redraw_time = current_time
+        if config.menu_state == "loading" and current_time - last_redraw_time >= 100:
+            config.needs_redraw = True
+            last_redraw_time = current_time
+        # Forcer redraw toutes les 100 ms dans history avec téléchargement actif
+        if config.menu_state == "history" and any(entry["status"] in ["Downloading", "Téléchargement"] for entry in config.history):
+            if current_time - last_redraw_time >= 100:
                 config.needs_redraw = True
                 last_redraw_time = current_time
+                # logger.debug("Forcing redraw in history state due to active download")
 
         # Gestion de la fin du popup
         if config.menu_state == "restart_popup" and config.popup_timer > 0:
@@ -1175,7 +1180,6 @@ async def main():
                         del config.download_tasks[task_id]
                 else:
                     # Traiter les mises à jour de progression
-                    
                     progress_queue = queue.Queue()
                     while not progress_queue.empty():
                         data = progress_queue.get()
@@ -1779,9 +1783,7 @@ async def main():
     
     # Arrêter le serveur web
     stop_web_server()
-    
-   
-    
+
     if config.OPERATING_SYSTEM == "Windows":
         logger.debug(f"Mise à jour liste des jeux ignorée sur {config.OPERATING_SYSTEM}")
         try:

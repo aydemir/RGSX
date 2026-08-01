@@ -27,7 +27,7 @@ except Exception:
     pygame = None  # type: ignore
 
 # Version actuelle de l'application
-app_version = "2.6.4.8"
+app_version = "2.6.4.9"
 
 # Nombre de jours avant de proposer la mise à jour de la liste des jeux
 GAMELIST_UPDATE_DAYS = 1
@@ -425,8 +425,9 @@ search_font = None  # Police pour la recherche
 small_font = None  # Police pour les petits textes
 tiny_font = None  # Police pour le footer (contrôles/version)
 FONT_FAMILIES = [
-    "pixel",   # police rétro Pixel-UniCode.ttf
-    "dejavu"   # police plus standard lisible petites tailles
+    "pixel",          # police rétro Pixel-UniCode.ttf
+    "bell_centennial",# police élégante Bell-centennial.otf
+    "dejavu"          # police plus standard lisible petites tailles
 ]
 current_font_family_index = 0  # 0=pixel par défaut
 
@@ -528,7 +529,6 @@ history = []  # Liste des entrées d'historique avec platform, game_name, status
 pending_download = None  # Objet de téléchargement en attente
 download_progress = {}  # Dictionnaire de progression des téléchargements actifs
 download_tasks = {}  # Dictionnaire pour les tâches de téléchargement
-spinner_frame = 0  # Animasyon karesi (indirme spinner için)
 history_write_ok = True  # Etat courant de l'ecriture de history.json
 history_write_error = ""  # Message explicite si l'ecriture de history.json echoue
 history_write_failure_count = 0  # Nombre d'echecs consecutifs d'ecriture
@@ -638,6 +638,14 @@ def init_font():
             p = pygame.font.Font(path, int(base_size * font_scale))
             sm = pygame.font.Font(path, int(small_size * font_scale))
             return f, t, s, p, sm
+        elif fam == "bell_centennial":
+            path = os.path.join(APP_FOLDER, "assets", "fonts", "Bell-centennial.otf")
+            f = pygame.font.Font(path, int(base_size * font_scale))
+            t = pygame.font.Font(path, int(title_size * font_scale))
+            s = pygame.font.Font(path, int(search_size * font_scale))
+            p = pygame.font.Font(path, int(base_size * font_scale))
+            sm = pygame.font.Font(path, int(small_size * font_scale))
+            return f, t, s, p, sm
         elif fam == "dejavu":
             try:
                 f = pygame.font.SysFont("dejavusans", int(base_size * font_scale))
@@ -679,6 +687,9 @@ def init_footer_font():
     try:
         if family_id == "pixel":
             path = os.path.join(APP_FOLDER, "assets", "fonts", "Pixel-UniCode.ttf")
+            tiny_font = pygame.font.Font(path, int(footer_base_size * footer_font_scale))
+        elif family_id == "bell_centennial":
+            path = os.path.join(APP_FOLDER, "assets", "fonts", "Bell-centennial.otf")
             tiny_font = pygame.font.Font(path, int(footer_base_size * footer_font_scale))
         elif family_id == "dejavu":
             try:

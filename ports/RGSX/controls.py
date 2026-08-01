@@ -27,7 +27,7 @@ from utils import (
     parse_game_size_to_bytes,
     sort_games_list,
 )
-from history import load_history, clear_history, add_to_history, save_history, scan_roms_for_downloaded_games, scan_platform_roms_on_enter
+from history import load_history, clear_history, add_to_history, save_history, scan_roms_for_downloaded_games
 from language import _, get_available_languages, set_language  
 from rgsx_settings import (
     get_allow_unknown_extensions, set_display_grid, get_font_family, set_font_family,
@@ -966,7 +966,6 @@ def open_global_search_result(screen) -> None:
 
     platform_id = result["platform_id"]
     config.games = load_games(platform_id)
-    scan_platform_roms_on_enter(platform_id)
     config.filtered_games = config.games
     config.search_mode = False
     config.search_query = ""
@@ -2314,11 +2313,6 @@ def handle_controls(event, sources, joystick, screen):
                 elif viewer_mode == "ota_update" and is_input_matched(event, "confirm"):
                     config.startup_update_confirmed = True
                     config.menu_state = "loading"
-                    config.needs_redraw = True
-                elif viewer_mode == "ota_update" and is_input_matched(event, "cancel"):
-                    config.pending_update_version = ""
-                    config.update_checked = True
-                    config.menu_state = validate_menu_state(config.previous_menu_state)
                     config.needs_redraw = True
                 elif viewer_mode != "ota_update" and (is_input_matched(event, "cancel") or is_input_matched(event, "confirm")):
                     config.menu_state = validate_menu_state(config.previous_menu_state)
@@ -4434,7 +4428,6 @@ def handle_controls(event, sources, joystick, screen):
                         if config.platforms:
                             config.current_platform = config.selected_platform
                             config.games = load_games(config.platforms[config.current_platform])
-                            scan_platform_roms_on_enter(config.platforms[config.current_platform])
                             
                             # Apply saved filters automatically if any
                             if config.game_filter_obj and config.game_filter_obj.is_active():
@@ -4560,7 +4553,6 @@ def handle_controls(event, sources, joystick, screen):
                         if config.platforms:
                             config.current_platform = config.selected_platform
                             config.games = load_games(config.platforms[config.current_platform])
-                            scan_platform_roms_on_enter(config.platforms[config.current_platform])
                             
                             # Apply saved filters automatically if any
                             if config.game_filter_obj and config.game_filter_obj.is_active():

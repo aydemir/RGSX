@@ -103,11 +103,19 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 - 🎯 **Smart System Detection** – Auto-discovers supported systems from `es_systems.cfg`
 - 📦 **Intelligent Archive Handling** – Auto-extracts archives when systems don't support ZIP files
 - 🔑 **Premium Unlocking** – 1Fichier API + AllDebrid/Debrid-Link/Real-Debrid/TorBox fallback for unlimited downloads
-- 🎨 **Fully Customizable** – Layout (3×3 to 4×4), fonts, font sizes (UI + footer), languages (EN/FR/DE/ES/IT/PT)
+- 🎨 **Fully Customizable** – Layout (3×3 to 4×4), fonts, font sizes (UI + footer), languages (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 - 🎮 **Controller-First Design** – Auto-mapping for popular controllers + custom remapping support
 - 🔍 **Advanced Filtering** – Search by name, hide/show unsupported systems, filter platforms
 - 📊 **Download Management** – Queue system, history tracking, progress notifications
 - ♿ **Accessibility** – Separate font scaling for UI and footer, keyboard-only mode support
+
+### Game List Status Indicators
+
+| Status | Marker | Color | Description |
+|--------|--------|-------|-------------|
+| Downloaded | `[>]` | 🟢 Green | ROM file exists locally |
+| Downloading | `[~] %` | 🟡 Yellow | Active download with progress |
+| Failed | `[X]` | 🔴 Red | Last download attempt failed
 
 > ### 🔑 API Keys Setup
 > For unlimited 1Fichier downloads, add your API key(s) to `/saves/ports/rgsx/`:
@@ -175,7 +183,7 @@ RGSX includes a web interface that launched automatically when using RGSX for re
 │   │   ├── network.py                 # Download manager
 │   │   ├── rgsx_settings.py           # Settings manager
 │   │   ├── assets/controls/           # Controller profiles
-│   │   ├── languages/                 # Translations (EN/FR/DE/ES/IT/PT)
+│   │   ├── languages/                 # Translations (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 │   │   └── logs/RGSX.log              # Runtime logs
 │   ├── gamelist.xml
 │   ├── images/

@@ -183,6 +183,7 @@
     "network_connection_error": "Erreur de connexion réseau",
     "network_no_response": "Aucune réponse du serveur",
     "network_auth_required": "Authentification requise (HTTP {0})",
+    "network_vimm_rate_limit": "Vimm.net n'autorise qu'un seul téléchargement à la fois par IP. Attendez la fin de l'autre téléchargement puis réessayez.",
     "network_access_denied": "Accès refusé (HTTP {0})",
     "network_server_error": "Erreur serveur (HTTP {0})",
     "network_download_ok": "Téléchargement ok : {0}",

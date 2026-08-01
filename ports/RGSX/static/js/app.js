@@ -582,12 +582,9 @@
                             
                             games.forEach((game, idx) => {
                                 const downloadTitle = t('web_download');
-                                const downloaded = game.downloaded;
-                            const searchNameColor = downloaded ? 'style="color: #4CAF50;"' : '';
-                            const searchCheck = downloaded ? '✅ ' : '';
-                            html += `
-                                    <div class="search-game-item" style="padding: 15px; background: #f9f9f9; border-radius: 8px; transition: background 0.2s; ${downloaded ? 'border-left: 4px solid #4CAF50;' : ''}">
-                                        <div class="search-game-name" style="font-weight: 500; margin-bottom: 10px; word-wrap: break-word; overflow-wrap: break-word;" ${searchNameColor}>${searchCheck}${game.game_name}</div>
+                                html += `
+                                    <div class="search-game-item" style="padding: 15px; background: #f9f9f9; border-radius: 8px; transition: background 0.2s;">
+                                        <div class="search-game-name" style="font-weight: 500; margin-bottom: 10px; word-wrap: break-word; overflow-wrap: break-word;">${game.game_name}</div>
                                         <div style="display: flex; justify-content: space-between; align-items: center;">
                                             ${game.size ? `<span style="background: #667eea; color: white; padding: 5px 10px; border-radius: 5px; font-size: 0.9em; white-space: nowrap;">${game.size}</span>` : '<span></span>'}
                                             <div class="download-btn-group" style="display: flex; gap: 4px;">
@@ -1375,12 +1372,9 @@
                 
                 // Ajouter chaque jeu
                 data.games.forEach((g, idx) => {
-                    const downloaded = g.downloaded;
-                    const nameColor = downloaded ? 'style="color: #4CAF50;"' : '';
-                    const checkMark = downloaded ? '✅ ' : '';
                     html += `
-                        <div class="game-item" ${downloaded ? 'style="border-left: 4px solid #4CAF50;"' : ''}>
-                            <span class="game-name" ${nameColor}>${checkMark}${g.name}</span>
+                        <div class="game-item">
+                            <span class="game-name">${g.name}</span>
                             ${g.size ? `<span class="game-size">${g.size}</span>` : ''}
                             <div class="download-btn-group" style="display: flex; gap: 4px;">
                                 <button class="download-btn" title="${downloadTitle} (now)" onclick='downloadGame("${platform.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", "${g.name.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", ${idx}, "now")'>⬇️</button>
@@ -2122,6 +2116,7 @@
                                 <option value="de" ${settings.language === 'de' ? 'selected' : ''}>Deutsch</option>
                                 <option value="it" ${settings.language === 'it' ? 'selected' : ''}>Italiano</option>
                                 <option value="pt" ${settings.language === 'pt' ? 'selected' : ''}>Português</option>
+                                <option value="tr" ${settings.language === 'tr' ? 'selected' : ''}>Türkçe</option>
                             </select>
                         </div>
                         

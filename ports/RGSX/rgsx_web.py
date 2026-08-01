@@ -20,7 +20,7 @@ import mimetypes
 from datetime import datetime, timezone
 from email.utils import formatdate, parsedate_to_datetime
 import config
-from history import load_history, save_history, load_downloaded_games, is_game_downloaded, scan_platform_roms_on_enter
+from history import load_history, save_history
 from utils import load_sources, load_games, extract_data, get_clean_display_name, parse_torrent_download_url, request_torrent_manifest_refresh, _resolve_platform_image_path
 from network import download_rom, download_from_1fichier
 from pathlib import Path
@@ -708,8 +708,7 @@ class RGSXHandler(BaseHTTPRequestHandler):
                                         'game_name': game_name,
                                         'platform': platform_name,
                                         'url': game.url,
-                                        'size': normalize_size(game.size, self._get_language_from_cookies()),
-                                        'downloaded': is_game_downloaded(platform_name, game_name)
+                                        'size': normalize_size(game.size, self._get_language_from_cookies())
                                     })
                         except Exception as e:
                             logger.debug(f"Erreur lors de la recherche dans {platform_name}: {e}")
@@ -753,15 +752,12 @@ class RGSXHandler(BaseHTTPRequestHandler):
                 # Récupérer la langue depuis les cookies ou utiliser 'en' par défaut
                 lang = self._get_language_from_cookies()
                 
-                scan_platform_roms_on_enter(platform_name)
-                
                 games, _, games_last_modified = get_cached_games(platform_name)
                 games_formatted = [
                     {
                         'name': g.name,
                         'url': g.url,
-                        'size': normalize_size(g.size, lang),
-                        'downloaded': is_game_downloaded(platform_name, g.name)
+                        'size': normalize_size(g.size, lang)
                     }
                     for g in games
                 ]
@@ -2138,10 +2134,6 @@ def run_server(host='0.0.0.0', port=5000):
     # Attendre un peu pour que le port se libère
     time.sleep(1)
     
-    # Load downloaded games registry
-    config.downloaded_games = load_downloaded_games()
-    logging.info(f"downloaded_games.json chargé: {sum(len(v) for v in config.downloaded_games.values()) if config.downloaded_games else 0} jeux")
-
     httpd = ReuseAddrHTTPServer(server_address, RGSXHandler)
     
     logger.info("=" * 60)

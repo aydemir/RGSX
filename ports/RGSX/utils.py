@@ -2780,22 +2780,30 @@ def _finalize_extraction(archive_path, dest_dir, url):
     NOTE: Ne met PAS à jour l'historique - c'est le rôle de network.py après le retour.
     Cela évite les doublons d'entrées dans l'historique.
     """
-    try:
-        os.remove(archive_path)
-        logger.info(f"Fichier {archive_path} extrait dans {dest_dir} et supprimé")
-        
-        # Mettre à jour l'état de progression à 100% (mais PAS l'historique)
-        if url in getattr(config, 'download_progress', {}):
-            try:
-                config.download_progress[url]["status"] = "Download_OK"
-                config.download_progress[url]["progress_percent"] = 100
-            except Exception:
-                pass
-                
-        return True, _("utils_extracted").format(os.path.basename(archive_path))
-    except Exception as e:
-        logger.error(f"Erreur lors de la finalisation de l'extraction: {str(e)}")
-        return True, _("utils_extracted").format(os.path.basename(archive_path))
+    # Quelques tentatives avec un court délai : un antivirus/indexeur peut brièvement
+    # garder le fichier ouvert juste après extraction (Windows). Sans ceci, l'archive
+    # source resterait dupliquée sur le disque à côté des fichiers extraits.
+    last_error = None
+    for attempt in range(5):
+        try:
+            os.remove(archive_path)
+            logger.info(f"Fichier {archive_path} extrait dans {dest_dir} et supprimé")
+
+            # Mettre à jour l'état de progression à 100% (mais PAS l'historique)
+            if url in getattr(config, 'download_progress', {}):
+                try:
+                    config.download_progress[url]["status"] = "Download_OK"
+                    config.download_progress[url]["progress_percent"] = 100
+                except Exception:
+                    pass
+
+            return True, _("utils_extracted").format(os.path.basename(archive_path))
+        except Exception as e:
+            last_error = e
+            if attempt < 4:
+                time.sleep(0.5)
+    logger.error(f"Erreur lors de la finalisation de l'extraction: {str(last_error)}")
+    return True, _("utils_extracted").format(os.path.basename(archive_path))
 
 def _capture_directories_before_extraction(dest_dir):
     """Capture les dossiers existants avant extraction pour détection PS3."""
@@ -4341,6 +4349,46 @@ def check_web_service_status():
 def normalize_platform_name(platform):
     """Normalise un nom de plateforme en supprimant espaces et convertissant en minuscules."""
     return platform.lower().replace(" ", "")
+
+
+def resolve_platform_folder(platform):
+    """Résout le dossier ROM d'une plateforme de façon fiable, même si config.platform_dicts
+    n'est pas encore chargé en mémoire (ex: reprise de téléchargement au tout début du
+    démarrage, avant l'étape 'load_sources').
+
+    Ordre de résolution :
+    1) config.platform_dicts (rapide, déjà en mémoire si chargé)
+    2) Lecture directe de config.SOURCES_FILE (systems_list.json) sur disque
+    3) normalize_platform_name(platform) en dernier recours
+
+    Utiliser cette fonction partout où le dossier ROM est déterminé à partir du nom de
+    plateforme, pour garantir un chemin identique quel que soit le moment de l'appel.
+    """
+    try:
+        for platform_dict in getattr(config, 'platform_dicts', None) or []:
+            if platform_dict.get("platform_name") == platform:
+                folder = platform_dict.get("folder") or platform_dict.get("dossier")
+                if folder:
+                    return folder
+    except Exception as e:
+        logger.debug(f"resolve_platform_folder: erreur lecture config.platform_dicts: {e}")
+
+    try:
+        sources_file = getattr(config, 'SOURCES_FILE', '')
+        if sources_file and os.path.isfile(sources_file):
+            with open(sources_file, 'r', encoding='utf-8') as f:
+                sources = json.load(f)
+            if isinstance(sources, list):
+                for entry in sources:
+                    if isinstance(entry, dict) and entry.get("platform_name") == platform:
+                        folder = entry.get("folder") or entry.get("dossier")
+                        if folder:
+                            return folder
+    except Exception as e:
+        logger.debug(f"resolve_platform_folder: erreur lecture {getattr(config, 'SOURCES_FILE', '')}: {e}")
+
+    logger.warning(f"resolve_platform_folder: aucun dossier trouvé pour '{platform}', repli sur normalize_platform_name")
+    return normalize_platform_name(platform)
 
 
 def find_matching_files(base_path, filename):

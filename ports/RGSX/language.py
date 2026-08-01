@@ -175,7 +175,8 @@ def get_language_name(lang_code):
         "pt": "Português",
         "ja": "日本語",
         "zh": "中文",
-        "ru": "Русский"
+        "ru": "Русский",
+        "tr": "Türkçe"
     }
     return language_names.get(lang_code, lang_code)
 

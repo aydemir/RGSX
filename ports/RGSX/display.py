@@ -1,5 +1,3 @@
- 
-
 import pygame  # type: ignore
 import os
 import io
@@ -664,7 +662,21 @@ def init_display():
     )
     return screen
 
-# Fond d'écran dégradé
+# Fond d'écran dégradé - cache pour performance
+_gradient_cache = {"surface": None, "top": None, "bottom": None, "size": None}
+_grain_cache = {"surface": None, "size": None}
+
+def _build_grain_surface(width, height):
+    """Construit une texture de grain statique (seed fixe=42) pour le fond dégradé."""
+    surface = pygame.Surface((width, height), pygame.SRCALPHA)
+    random.seed(42)
+    for _ in range(width * height // 200):
+        x = random.randint(0, width - 1)
+        y = random.randint(0, height - 1)
+        alpha = random.randint(5, 20)
+        surface.set_at((x, y), (255, 255, 255, alpha))
+    return surface
+
 def draw_gradient(screen, top_color, bottom_color, light_mode=None):
     """Dessine un fond dégradé vertical avec des couleurs vibrantes et texture de grain.
     En mode light, utilise une couleur unie pour de meilleures performances."""
@@ -684,24 +696,34 @@ def draw_gradient(screen, top_color, bottom_color, light_mode=None):
         screen.fill(avg_color)
         return
     
-    top_color = pygame.Color(*top_color)
-    bottom_color = pygame.Color(*bottom_color)
+    # Utiliser le cache si les paramètres n'ont pas changé
+    current_size = (width, height)
+    if (_gradient_cache["surface"] is not None and
+        _gradient_cache["top"] == top_color and
+        _gradient_cache["bottom"] == bottom_color and
+        _gradient_cache["size"] == current_size):
+        screen.blit(_gradient_cache["surface"], (0, 0))
+        return
     
-    # Dégradé principal
+    top_c = pygame.Color(*top_color)
+    bottom_c = pygame.Color(*bottom_color)
+    
+    gradient = pygame.Surface((width, height))
     for y in range(height):
         ratio = y / height
-        color = top_color.lerp(bottom_color, ratio)
-        pygame.draw.line(screen, color, (0, y), (width, y))
+        color = top_c.lerp(bottom_c, ratio)
+        pygame.draw.line(gradient, color, (0, y), (width, y))
     
-    # Ajouter une texture de grain subtile pour plus de profondeur
-    grain_surface = pygame.Surface((width, height), pygame.SRCALPHA)
-    random.seed(42)  # Seed fixe pour cohérence
-    for _ in range(width * height // 200):  # Réduire la densité pour performance
-        x = random.randint(0, width - 1)
-        y = random.randint(0, height - 1)
-        alpha = random.randint(5, 20)
-        grain_surface.set_at((x, y), (255, 255, 255, alpha))
-    screen.blit(grain_surface, (0, 0))
+    # Appliquer la texture de grain (une seule fois, puis mise en cache)
+    grain = _build_grain_surface(width, height)
+    gradient.blit(grain, (0, 0))
+    
+    _gradient_cache["surface"] = gradient
+    _gradient_cache["top"] = top_color
+    _gradient_cache["bottom"] = bottom_color
+    _gradient_cache["size"] = current_size
+    
+    screen.blit(gradient, (0, 0))
 
 
 def draw_shadow(surface, rect, offset=6, alpha=120, light_mode=None):
@@ -2183,22 +2205,39 @@ def draw_game_list(screen):
         # Vérifier si le jeu est déjà téléchargé en comparant le nom réel sans extension
         is_downloaded = is_game_downloaded(platform_name, item.name)
         
-        is_downloading = any(
-            v[2] == item.name and v[3] == platform_name
-            for v in config.download_tasks.values()
-        )
+        # Vérifier si le jeu est en cours de téléchargement
+        is_downloading = False
+        download_percent = 0
+        for tid, (task, dl_url, dl_name, dl_platform) in getattr(config, 'download_tasks', {}).items():
+            if dl_name and dl_name.lower() == game_name.lower():
+                is_downloading = True
+                dl_progress = getattr(config, 'download_progress', {}).get(dl_url, {})
+                download_percent = int(dl_progress.get("progress_percent", 0))
+                break
+        
+        # Vérifier si le jeu a échoué (dernière tentative dans l'historique)
+        is_failed = False
+        if not is_downloaded and not is_downloading:
+            for entry in reversed(getattr(config, 'history', [])):
+                if entry.get("game_name", "").lower() == game_name.lower() and entry.get("platform", "").lower() == platform_name.lower():
+                    if entry.get("status") in ("Erreur", "Error"):
+                        is_failed = True
+                    break
         
         ext_text = get_display_extension(item.name)
         size_text = size_val if (isinstance(size_val, str) and size_val.strip()) else "N/A"
         color = THEME_COLORS["fond_lignes"] if i == config.current_game else THEME_COLORS["text"]
         
-        if is_downloading:
-            spinner = "|/-\\"[int(config.spinner_frame / 6) % 4]
-            prefix = f"[{spinner}] "
-            name_color = (255, 230, 80)
-        elif is_downloaded:
+        # Couleur et marqueur selon l'état: téléchargé > en cours > échoué > normal
+        if is_downloaded:
             prefix = "[>] "
-            name_color = (100, 255, 100)
+            name_color = (100, 255, 100)  # Vert clair
+        elif is_downloading:
+            prefix = f"[~] {download_percent}% "
+            name_color = (255, 200, 0)  # Jaune
+        elif is_failed:
+            prefix = "[X] "
+            name_color = (255, 80, 80)  # Rouge
         else:
             prefix = ""
             name_color = color
@@ -2558,22 +2597,52 @@ def draw_history_list(screen):
     selected_entry = history[current_history_item_inverted] if history and 0 <= current_history_item_inverted < len(history) else None
     selected_status = str((selected_entry or {}).get("status") or "")
 
-    if selected_entry and selected_status in active_statuses:
-        downloaded_size = int(selected_entry.get("downloaded_size", 0) or 0)
-        size_text = format_size(downloaded_size)
+    active_download_entry = None
+    for entry in history:
+        entry_status = str(entry.get("status") or "")
+        if entry_status in active_statuses:
+            active_download_entry = entry
+            break
+
+    # La barre de titre doit refléter l'élément actuellement sélectionné dans la liste
+    # d'historique (navigation utilisateur), pas systématiquement le téléchargement actif
+    # en arrière-plan si l'utilisateur regarde une autre entrée. On ne se rabat sur le
+    # téléchargement actif que si rien n'est sélectionné (ex: historique vide).
+    display_entry = selected_entry if selected_entry is not None else active_download_entry
+    display_status = str((display_entry or {}).get("status") or "")
+
+    if display_entry and display_status in active_statuses:
+        downloaded_size = int(display_entry.get("downloaded_size", 0) or 0)
+        total_size_val = int(display_entry.get("total_size", 0) or 0)
+        size_text = f"{format_size(downloaded_size)} / {format_size(total_size_val)}" if total_size_val > 0 else format_size(downloaded_size)
         try:
-            selected_speed = float(selected_entry.get("speed", 0.0) or 0.0)
+            selected_speed = float(display_entry.get("speed", 0.0) or 0.0)
         except Exception:
             selected_speed = 0.0
         speed_text = format_speed_adaptive(selected_speed)
         title_text = _("history_title_downloading_active").format(size_text, speed_text)
-        # Afficher SD/CN dans le titre
-        _sd = int(selected_entry.get("seeds", 0) or 0)
-        _cn = int(selected_entry.get("connections", 0) or 0)
-        title_text = f"{title_text}  [{_sd}SD/{_cn}CN]"
+        # SD/CN (seeds/connexions) n'a de sens que pour les téléchargements torrent.
+        is_torrent_entry = str(display_entry.get("url") or "").startswith("rgsx+torrent://")
+        if is_torrent_entry:
+            # Afficher SD/CN dans le titre
+            progress_entry = None
+            entry_url = str(display_entry.get("url") or "")
+            if entry_url and entry_url in config.download_progress:
+                progress_entry = config.download_progress[entry_url]
+            if progress_entry is not None:
+                _sd = int(progress_entry.get("seeds", display_entry.get("seeds", 0) or 0) or 0)
+                _cn = int(progress_entry.get("connections", display_entry.get("connections", 0) or 0) or 0)
+                downloaded_size = int(progress_entry.get("downloaded_size", display_entry.get("downloaded_size", 0) or 0) or 0)
+                total_size_val = int(progress_entry.get("total_size", display_entry.get("total_size", 0) or 0) or 0)
+                size_text = f"{format_size(downloaded_size)} / {format_size(total_size_val)}" if total_size_val > 0 else format_size(downloaded_size)
+                title_text = _("history_title_downloading_active").format(size_text, speed_text)
+            else:
+                _sd = int(display_entry.get("seeds", 0) or 0)
+                _cn = int(display_entry.get("connections", 0) or 0)
+            title_text = f"{title_text}  [{_sd}SD/{_cn}CN]"
         # Afficher l'étape aria2c courante dans le titre (connecting / verifying / waiting).
         # On ne montre rien quand on télécharge activement (speed > 0) car l'info de vitesse suffit.
-        _aria2_phase = str(selected_entry.get("aria2_phase") or "")
+        _aria2_phase = str(display_entry.get("aria2_phase") or "")
         _phase_labels = {
             "connecting": _("aria2_phase_connecting"),
             "verifying":  _("aria2_phase_verifying"),
@@ -2582,12 +2651,12 @@ def draw_history_list(screen):
         _phase_label = _phase_labels.get(_aria2_phase, "")
         if _phase_label:
             title_text = f"{title_text}  [{_phase_label}]"
-    elif selected_entry and selected_status == "Seeding":
-        _cn = int(selected_entry.get("seeds", 0) or 0)
-        _ul = float(selected_entry.get("ul_speed", 0.0) or 0.0)
+    elif display_entry and display_status == "Seeding":
+        _cn = int(display_entry.get("seeds", 0) or 0)
+        _ul = float(display_entry.get("ul_speed", 0.0) or 0.0)
         _ul_text = format_speed_adaptive(_ul)
         title_text = f"Seeding - {_ul_text} - [{_cn}p]"
-    elif selected_entry and selected_status in completed_statuses:
+    elif display_entry and display_status in completed_statuses:
         completed_count = sum(1 for item in history if str(item.get("status") or "") in completed_statuses)
         title_text = _("history_title_completed_count").format(completed_count)
     elif selected_entry and selected_status in error_statuses:
@@ -3825,6 +3894,7 @@ def draw_pause_display_menu(screen, selected_index):
     # Nom user-friendly
     family_map = {
         "pixel": "Pixel",
+        "bell_centennial": "Bell Centennial",
         "dejavu": "DejaVu Sans"
     }
     fam_label = family_map.get(current_family, current_family)
