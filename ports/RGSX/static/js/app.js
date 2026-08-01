@@ -502,9 +502,14 @@
             
             searchTimeout = setTimeout(async () => {
                 try {
-                    // Appeler l'API de recherche universelle
-                    const response = await fetch('/api/search?q=' + encodeURIComponent(term));
+                    // Appeler l'API de recherche universelle + statuts
+                    const [response, statusResponse] = await Promise.all([
+                        fetch('/api/search?q=' + encodeURIComponent(term)),
+                        fetch('/api/game-status')
+                    ]);
                     const data = await response.json();
+                    const statusData = await statusResponse.json();
+                    const gameStatuses = statusData.statuses || {};
                     
                     if (!data.success) throw new Error(data.error);
                     
@@ -582,9 +587,25 @@
                             
                             games.forEach((game, idx) => {
                                 const downloadTitle = t('web_download');
+                                const gameNameLower = game.game_name.toLowerCase();
+                                const gameStem = gameNameLower.replace(/\.[^.]+$/, '');
+                                let statusIndicator = '';
+                                
+                                const status = gameStatuses[gameStem] || gameStatuses[gameNameLower];
+                                if (status) {
+                                    if (status.status === 'downloaded') {
+                                        statusIndicator = '<span style="color: #66ff66; font-weight: bold; margin-right: 6px;">[✓]</span>';
+                                    } else if (status.status === 'downloading') {
+                                        const pct = status.progress || 0;
+                                        statusIndicator = `<span style="color: #ffcc00; font-weight: bold; margin-right: 6px;">[~] ${pct}%</span>`;
+                                    } else if (status.status === 'failed') {
+                                        statusIndicator = '<span style="color: #ff5555; font-weight: bold; margin-right: 6px;">[✗]</span>';
+                                    }
+                                }
+                                
                                 html += `
                                     <div class="search-game-item" style="padding: 15px; background: #f9f9f9; border-radius: 8px; transition: background 0.2s;">
-                                        <div class="search-game-name" style="font-weight: 500; margin-bottom: 10px; word-wrap: break-word; overflow-wrap: break-word;">${game.game_name}</div>
+                                        <div class="search-game-name" style="font-weight: 500; margin-bottom: 10px; word-wrap: break-word; overflow-wrap: break-word;">${statusIndicator}${game.game_name}</div>
                                         <div style="display: flex; justify-content: space-between; align-items: center;">
                                             ${game.size ? `<span style="background: #667eea; color: white; padding: 5px 10px; border-radius: 5px; font-size: 0.9em; white-space: nowrap;">${game.size}</span>` : '<span></span>'}
                                             <div class="download-btn-group" style="display: flex; gap: 4px;">
@@ -1306,8 +1327,13 @@
             }
             
             try {
-                const response = await fetch('/api/games/' + encodeURIComponent(platform));
+                const [response, statusResponse] = await Promise.all([
+                    fetch('/api/games/' + encodeURIComponent(platform)),
+                    fetch('/api/game-status')
+                ]);
                 const data = await response.json();
+                const statusData = await statusResponse.json();
+                const gameStatuses = statusData.statuses || {};
                 
                 if (!data.success) throw new Error(data.error);
                 
@@ -1372,9 +1398,26 @@
                 
                 // Ajouter chaque jeu
                 data.games.forEach((g, idx) => {
+                    const gameNameLower = g.name.toLowerCase();
+                    const gameStem = gameNameLower.replace(/\.[^.]+$/, '');
+                    let statusIndicator = '';
+                    let nameStyle = '';
+                    
+                    const status = gameStatuses[gameStem] || gameStatuses[gameNameLower];
+                    if (status) {
+                        if (status.status === 'downloaded') {
+                            statusIndicator = '<span style="color: #66ff66; font-weight: bold; margin-right: 6px;">[✓]</span>';
+                        } else if (status.status === 'downloading') {
+                            const pct = status.progress || 0;
+                            statusIndicator = `<span style="color: #ffcc00; font-weight: bold; margin-right: 6px;">[~] ${pct}%</span>`;
+                        } else if (status.status === 'failed') {
+                            statusIndicator = '<span style="color: #ff5555; font-weight: bold; margin-right: 6px;">[✗]</span>';
+                        }
+                    }
+                    
                     html += `
                         <div class="game-item">
-                            <span class="game-name">${g.name}</span>
+                            <span class="game-name">${statusIndicator}${g.name}</span>
                             ${g.size ? `<span class="game-size">${g.size}</span>` : ''}
                             <div class="download-btn-group" style="display: flex; gap: 4px;">
                                 <button class="download-btn" title="${downloadTitle} (now)" onclick='downloadGame("${platform.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", "${g.name.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", ${idx}, "now")'>⬇️</button>
