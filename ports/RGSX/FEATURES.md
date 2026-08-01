@@ -2,6 +2,51 @@
 
 ## Yapılan Özelleştirmeler (RetroBat Entegrasyonu)
 
+### v2.6.4.9-TR2 - Web UI Masaüstü Kısayolu
+
+**Dosyalar:** `windows/RGSX Retrobat.bat`, `windows/create_shortcut.vbs`
+
+Masaüstüne "RGSX Web UI" kısayolu oluşturarak web arayüzünü kolayca başlatabilirsiniz.
+
+**Yeni BAT Seçenekleri:**
+- `--webui` → Sadece web sunucusunu başlatır (TV UI çalışmaz)
+- `--create-shortcut` → Masaüstüne kısayol oluşturur
+
+**Kullanım:**
+```batch
+"RGSX Retrobat.bat" --create-shortcut   # Kısayol oluştur
+"RGSX Retrobat.bat" --webui             # Sadece web sunucusu
+```
+
+**Oluşturulan Kısayol:**
+- Hedef: `RGSX Retrobat.bat --webui`
+- İkon: `favicon_rgsx.ico`
+- Konum: `%USERPROFILE%\Desktop\RGSX Web UI.lnk`
+
+**Avantajları:**
+- Tek tıkla web arayüzüne erişim
+- TV UI olmadan sadece web arayüzü çalıştırma
+- Diğer kullanıcılar için otomatik kurulum
+
+---
+
+### v2.6.4.9-TR1 - Web UI Oyun Durum Göstergeleri
+
+**Dosyalar:** `rgsx_web.py`, `static/js/app.js`
+
+Web arayüzünde oyun listelerinde indirme durumu göstergeleri:
+
+| Durum | İkon | Renk | Açıklama |
+|-------|------|------|----------|
+| İndirilmiş | `[✓]` | Yeşil `#66ff66` | Oyun indirilmiş |
+| İndiriliyor | `[~] %` | Sarı `#ffcc00` | İndirme devam ediyor |
+| Başarısız | `[✗]` | Kırmızı `#ff5555` | İndirme başarısız |
+| Normal | yok | Tema rengi | Henüz indirilmemiş |
+
+**API:** `GET /api/game-status` → Tüm oyunların durumunu döndürür
+
+---
+
 ### v2.6.4.9-TR1 - Oyun Listesi Durum Göstergeleri
 
 **Dosya:** `display.py`

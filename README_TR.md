@@ -58,6 +58,31 @@ BAT dosyası (`RGSX Retrobat.bat`) Python tespitini ve kurulumunu otomatik olara
 - `/roms/ports/RGSX` (tüm sistemler)
 - `/roms/windows/RGSX` (sadece RetroBat)
 
+### Web UI Kısayolu (Masaüstü)
+
+RGSX'in web arayüzünü masaüstünden kolayca başlatabilirsiniz:
+
+**Otomatik Oluşturma:**
+```batch
+"RGSX Retrobat.bat" --create-shortcut
+```
+Bu komut masaüstüne "RGSX Web UI" kısayolu oluşturur.
+
+**Manuel Oluşturma:**
+1. `windows\create_shortcut.vbs` dosyasını çalıştırın
+2. Veya `RGSX Retrobat.bat --webui` komutunu çalıştırın
+
+**Kullanım:**
+- Masaüstündeki "RGSX Web UI" kısayoluna çift tıklayın
+- Web sunucusu otomatik başlar ve tarayıcıda açılır
+- TV UI (televizyon arayüzü) çalışmaz, sadece web arayüzü çalışır
+
+**Seçenekler:**
+- `--webui` → Sadece web sunucusunu başlatır (TV UI yok)
+- `--create-shortcut` → Masaüstü kısayolu oluşturur
+- `--display=N` → Belirli ekranda TV UI'ı başlatır
+- `--windowed` → Pencere modunda başlatır
+
 ---
 
 ## 🎮 Kullanım

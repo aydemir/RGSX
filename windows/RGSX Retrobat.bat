@@ -7,6 +7,8 @@ setlocal EnableDelayedExpansion
 :: Usage: "RGSX Retrobat.bat" [options]
 ::   --display=N    Launch on display N (0=primary, 1=secondary, etc.)
 ::   --windowed     Launch in windowed mode instead of fullscreen
+::   --webui        Start only the web server (no TV UI)
+::   --create-shortcut  Create a desktop shortcut for Web UI
 ::   --help         Show this help
 :: =============================================================================
 
@@ -39,6 +41,16 @@ if /i "%~1"=="--windowed" (
     shift
     goto :parse_args
 )
+if /i "%~1"=="--webui" (
+    set "WEBUI_ONLY=1"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--create-shortcut" (
+    set "CREATE_SHORTCUT=1"
+    shift
+    goto :parse_args
+)
 :: Check for --display=N format
 echo %~1 | findstr /r "^--display=" >nul
 if !ERRORLEVEL! EQU 0 (
@@ -56,14 +68,18 @@ echo.
 echo Usage: "RGSX Retrobat.bat" [options]
 echo.
 echo Options:
-echo   --display=N    Launch on display N (0=primary, 1=secondary, etc.)
-echo   --windowed     Launch in windowed mode instead of fullscreen
-echo   --help, -h     Show this help
+echo   --display=N         Launch on display N (0=primary, 1=secondary, etc.)
+echo   --windowed          Launch in windowed mode instead of fullscreen
+echo   --webui             Start only the web server (no TV UI)
+echo   --create-shortcut   Create a desktop shortcut for Web UI
+echo   --help, -h          Show this help
 echo.
 echo Examples:
-echo   "RGSX Retrobat.bat"              Launch on primary display
-echo   "RGSX Retrobat.bat" --display=1  Launch on secondary display (TV)
-echo   "RGSX Retrobat.bat" --windowed   Launch in windowed mode
+echo   "RGSX Retrobat.bat"                   Launch on primary display
+echo   "RGSX Retrobat.bat" --display=1       Launch on secondary display (TV)
+echo   "RGSX Retrobat.bat" --windowed        Launch in windowed mode
+echo   "RGSX Retrobat.bat" --webui           Start web server only
+echo   "RGSX Retrobat.bat" --create-shortcut Create desktop shortcut for Web UI
 echo.
 echo You can also create shortcuts with different display settings.
 echo.
@@ -71,6 +87,42 @@ pause
 exit /b 0
 
 :args_done
+
+:: =============================================================================
+:: --create-shortcut: Create desktop shortcut for Web UI
+:: =============================================================================
+if defined CREATE_SHORTCUT (
+    echo.
+    echo %ESC%%CYAN%Creating desktop shortcut for RGSX Web UI...%ESC%%RESET%
+    
+    set "SHORTCUT_NAME=RGSX Web UI"
+    set "BAT_SOURCE=%~dp0RGSX Retrobat.bat"
+    
+    :: Create VBS script to create shortcut
+    (
+        echo Set WshShell = CreateObject^("WScript.Shell"^)
+        echo Set shortcut = WshShell.CreateShortcut^(WshShell.SpecialFolders^("Desktop"^) ^& "\%SHORTCUT_NAME%.lnk"^)
+        echo shortcut.TargetPath = "%COMSPEC%"
+        echo shortcut.Arguments = "/c ""%BAT_SOURCE%"" --webui"
+        echo shortcut.WorkingDirectory = "%~dp0"
+        echo shortcut.IconLocation = "%~dp0..\..\roms\ports\RGSX\assets\images\favicon_rgsx.ico"
+        echo shortcut.Description = "RGSX Web UI - Web browser interface"
+        echo shortcut.Save
+    ) > "%TEMP%\rgsx_shortcut.vbs"
+    
+    cscript //nologo "%TEMP%\rgsx_shortcut.vbs"
+    del /q "%TEMP%\rgsx_shortcut.vbs" 2>nul
+    
+    if exist "%USERPROFILE%\Desktop\%SHORTCUT_NAME%.lnk" (
+        echo %ESC%%GREEN%^> Desktop shortcut created successfully!%ESC%%RESET%
+        echo %ESC%%CYAN%  Location: %USERPROFILE%\Desktop\%SHORTCUT_NAME%.lnk%ESC%%RESET%
+    ) else (
+        echo %ESC%%RED%^> Failed to create shortcut%ESC%%RESET%
+    )
+    echo.
+    pause
+    exit /b 0
+)
 
 :: URL de telechargement Python
 set "PYTHON_ZIP_URL=https://github.com/RetroGameSets/RGSX/raw/main/windows/python.zip"
@@ -428,6 +480,29 @@ echo [%DATE% %TIME%]   RGSX_ROOT=%RGSX_ROOT% >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   SDL_VIDEODRIVER=%SDL_VIDEODRIVER% >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   SDL_AUDIODRIVER=%SDL_AUDIODRIVER% >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   PYTHONIOENCODING=%PYTHONIOENCODING% >> "%LOG_FILE%"
+
+:: =============================================================================
+:: --webui: Start only web server (no TV UI)
+:: =============================================================================
+if defined WEBUI_ONLY (
+    echo.
+    echo %ESC%%CYAN%========================================%ESC%%RESET%
+    echo %ESC%%CYAN%  RGSX Web UI Server%ESC%%RESET%
+    echo %ESC%%CYAN%========================================%ESC%%RESET%
+    echo.
+    echo   %ESC%%YELLOW%Starting web server only...%ESC%%RESET%
+    echo   %ESC%%CYAN%URL: http://localhost:5000%ESC%%RESET%
+    echo   %ESC%%BOLD%Press Ctrl+C to stop the server%ESC%%RESET%
+    echo.
+    echo [%DATE% %TIME%] Web UI mode - starting web server only >> "%LOG_FILE%"
+    
+    cd /d "%ROOT_DIR%\roms\ports\RGSX"
+    "!PYTHON_EXE!" !PYTHON_ARGS! "rgsx_web.py" --host 0.0.0.0 --port 5000
+    set EXITCODE=!ERRORLEVEL!
+    
+    echo [%DATE% %TIME%] Web server exited with code !EXITCODE! >> "%LOG_FILE%"
+    exit /b !EXITCODE!
+)
 
 echo.
 if defined DISPLAY_NUM (
