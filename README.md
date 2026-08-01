@@ -213,10 +213,11 @@ RGSX includes a web interface that launched automatically when using RGSX for re
 │   └── videos/
 └── windows/
     ├── RGSX Retrobat.bat              # Launcher for Windows only (can be used without retrobat too)
-    ├── python.zip                     # Portable Python 3.13 (for automatic installation)
     ├── gamelist.xml
     ├── images/
     └── videos/
+└── deps/
+    └── python.zip                     # Portable Python 3.13 (for automatic installation)
 
 /saves/ports/rgsx/
 ├── rgsx_settings.json        # User preferences

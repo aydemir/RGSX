@@ -191,10 +191,11 @@ RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için oto
 │   └── videos/
 └── windows/
     ├── RGSX Retrobat.bat              # Sadece Windows (RetroBat olmadan da kullanılabilir)
-    ├── python.zip                     # Taşınabilir Python 3.13 (otomatik kurulum için)
     ├── gamelist.xml
     ├── images/
     └── videos/
+└── deps/
+    └── python.zip                     # Taşınabilir Python 3.13 (otomatik kurulum için)
 
 /saves/ports/rgsx/
 ├── rgsx_settings.json        # Kullanıcı tercihleri

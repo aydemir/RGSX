@@ -125,7 +125,7 @@ if defined CREATE_SHORTCUT (
 )
 
 :: URL de telechargement Python
-set "PYTHON_ZIP_URL=https://github.com/RetroGameSets/RGSX/raw/main/windows/python.zip"
+set "PYTHON_ZIP_URL=https://github.com/RetroGameSets/RGSX/raw/main/deps/python.zip"
 
 :: Obtenir le chemin du script de maniere fiable
 set "SCRIPT_DIR=%~dp0"
@@ -182,7 +182,7 @@ echo [%DATE% %TIME%] ========================================== >> "%LOG_FILE%"
 set "PYTHON_DIR=%ROOT_DIR%\system\tools\Python"
 set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
 set "MAIN_SCRIPT=%ROOT_DIR%\roms\ports\RGSX\__main__.py"
-set "ZIP_FILE=%ROOT_DIR%\roms\windows\python.zip"
+set "ZIP_FILE=%SCRIPT_DIR%\..\deps\python.zip"
 
 :: Exporter RGSX_ROOT pour le script Python
 set "RGSX_ROOT=%ROOT_DIR%"
