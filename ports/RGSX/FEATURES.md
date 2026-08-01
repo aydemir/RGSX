@@ -53,6 +53,22 @@ _grain_cache = {"surface": None, "size": None}
 
 ---
 
+### v2.6.4.9-TR1 - İndirme İlerleme Düzeltmesi
+
+**Dosya:** `display.py`
+
+**Sorun:** Oyun listesinde indirme yüzde gösterilmiyordu. `download_tasks`'daki `game_name` uzantılı (örn: `"Oyun.rvz"`), `item.display_name` uzantısız (örn: `"Oyun"`) olduğu için eşleşme başarısız oluyordu.
+
+**Çözüm:**
+- `os.path.splitext()` ile uzantı kaldırılarak karşılaştırma yapıldı
+- Fallback arama: `download_progress` dict'indeki `game_name` ile de uzantı kaldırılarak eşleştirildi
+
+**Etkilenen durumlar:**
+- İndirme yüzdesi artık tüm listelerde görünüyor
+- BIOS listeleri gibi farklı kaynaklarda da çalışıyor
+
+---
+
 ## Orijinal RGSX Özellikleri
 
 ### v2.6.4.9

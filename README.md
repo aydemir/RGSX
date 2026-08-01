@@ -36,6 +36,29 @@ After installation:
    - **RetroBat**: Extract both `ports` and `windows` folders to `/roms/`
 3. **Refresh**: `Menu > Game Settings > Update game list`
 
+### Windows (RetroBat) Installation Details
+
+The BAT file (`RGSX Retrobat.bat`) handles Python detection and installation automatically:
+
+**Python Detection Priority:**
+1. `python.exe` in system PATH (user-installed Python)
+2. `py.exe` (Python Launcher)
+3. Local bundle: `%ROOT_DIR%\system\tools\Python\python.exe`
+   - If not found → automatically downloads and installs from `python.zip`
+
+**First Launch Process:**
+1. Checks for Python installation
+2. If missing → downloads `python.zip` (~53MB) from GitHub
+3. Extracts Python 3.13 embedded distribution to `system\tools\Python\`
+4. Installs required packages (pygame-ce, requests, libtorrent, etc.)
+5. Configures Windows Firewall rules
+6. Starts RGSX
+
+**Requirements:**
+- Windows 10/11
+- Internet connection (for first launch only)
+- No manual Python installation required (embedded Python is used automatically)
+
 ### Manual Update (if automatic update failed)
 Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameSets/RGSX/releases/latest/download/RGSX_full_latest.zip)
 
@@ -190,6 +213,7 @@ RGSX includes a web interface that launched automatically when using RGSX for re
 │   └── videos/
 └── windows/
     ├── RGSX Retrobat.bat              # Launcher for Windows only (can be used without retrobat too)
+    ├── python.zip                     # Portable Python 3.13 (for automatic installation)
     ├── gamelist.xml
     ├── images/
     └── videos/

@@ -31,11 +31,28 @@ Kurulumdan sonra:
    - **RetroBat**: Hem `ports` hem de `windows` klasörlerini `/roms/` altına çıkarın
 3. **Yenileyin**: `Menü > Oyun Ayarları > Oyun listesini güncelle`
 
-### RetroBat Kurulumu
-1. RGSX'i indirin ve çıkarın
-2. `ports` ve `windows` klasörlerini `C:\RetroBat\roms\` altına kopyalayın
-3. RetroBat'ı başlatın
-4. RGSX'i **PORTS** bölümünde bulun
+### Windows (RetroBat) Kurulum Detayları
+
+BAT dosyası (`RGSX Retrobat.bat`) Python tespitini ve kurulumunu otomatik olarak yönetir:
+
+**Python Tespit Önceliği:**
+1. PATH'teki `python.exe` (kullanıcının kendi Python'u)
+2. `py.exe` (Python Launcher)
+3. Yerel bundle: `%ROOT_DIR%\system\tools\Python\python.exe`
+   - Yoksa → `python.zip`'ten otomatik indirilir ve kurulur
+
+**İlk Çalıştırma Süreci:**
+1. Python kurulumu kontrol edilir
+2. Yoksa → GitHub'dan `python.zip` (~53MB) indirilir
+3. Python 3.13 embedded dağıtımı `system\tools\Python\` dizinine çıkarılır
+4. Gerekli paketler kurulur (pygame-ce, requests, libtorrent, vb.)
+5. Windows Güvenlik Duvarı kuralları yapılandırılır
+6. RGSX başlatılır
+
+**Gereksinimler:**
+- Windows 10/11
+- İnternet bağlantısı (sadece ilk çalışma için)
+- Manuel Python kurulumu gerekmez (gömülü Python otomatik kullanılır)
 
 **Kurulan yollar:**
 - `/roms/ports/RGSX` (tüm sistemler)
@@ -149,6 +166,7 @@ RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için oto
 │   └── videos/
 └── windows/
     ├── RGSX Retrobat.bat              # Sadece Windows (RetroBat olmadan da kullanılabilir)
+    ├── python.zip                     # Taşınabilir Python 3.13 (otomatik kurulum için)
     ├── gamelist.xml
     ├── images/
     └── videos/
