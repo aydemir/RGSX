@@ -2216,7 +2216,8 @@ def draw_game_list(screen):
                 download_percent = int(dl_progress.get("progress_percent", 0))
                 if download_percent == 0:
                     for prog_url, prog_data in getattr(config, 'download_progress', {}).items():
-                        if prog_data.get("game_name", "").lower() == game_name.lower():
+                        prog_name_stem = os.path.splitext(prog_data.get("game_name", ""))[0]
+                        if prog_name_stem.lower() == game_name.lower():
                             download_percent = int(prog_data.get("progress_percent", 0))
                             break
                 break
