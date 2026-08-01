@@ -2209,17 +2209,24 @@ def draw_game_list(screen):
         is_downloading = False
         download_percent = 0
         for tid, (task, dl_url, dl_name, dl_platform) in getattr(config, 'download_tasks', {}).items():
-            if dl_name and dl_name.lower() == game_name.lower():
+            dl_name_stem = os.path.splitext(dl_name)[0] if dl_name else ""
+            if dl_name_stem and dl_name_stem.lower() == game_name.lower():
                 is_downloading = True
                 dl_progress = getattr(config, 'download_progress', {}).get(dl_url, {})
                 download_percent = int(dl_progress.get("progress_percent", 0))
+                if download_percent == 0:
+                    for prog_url, prog_data in getattr(config, 'download_progress', {}).items():
+                        if prog_data.get("game_name", "").lower() == game_name.lower():
+                            download_percent = int(prog_data.get("progress_percent", 0))
+                            break
                 break
         
         # Vérifier si le jeu a échoué (dernière tentative dans l'historique)
         is_failed = False
         if not is_downloaded and not is_downloading:
             for entry in reversed(getattr(config, 'history', [])):
-                if entry.get("game_name", "").lower() == game_name.lower() and entry.get("platform", "").lower() == platform_name.lower():
+                entry_name = os.path.splitext(entry.get("game_name", ""))[0]
+                if entry_name.lower() == game_name.lower() and entry.get("platform", "").lower() == platform_name.lower():
                     if entry.get("status") in ("Erreur", "Error"):
                         is_failed = True
                     break
