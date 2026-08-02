@@ -17,7 +17,7 @@ try:
 except Exception:
     pygame = None  # type: ignore
 from config import OTA_VERSION_ENDPOINT,APP_FOLDER, UPDATE_FOLDER, OTA_UPDATE_ZIP
-from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, resolve_platform_folder, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games
+from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, resolve_platform_folder, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games, get_disk_usage
 from history import save_history, check_history_write_access, get_history_write_status
 from display import show_toast
 import logging
@@ -1461,7 +1461,8 @@ def _get_free_disk_bytes(path: str) -> int | None:
         usage_path = _resolve_existing_path_for_usage(path)
         if not usage_path or not os.path.exists(usage_path):
             return None
-        return int(shutil.disk_usage(usage_path).free)
+        usage = get_disk_usage(usage_path)
+        return int(usage.free) if usage else None
     except Exception as exc:
         logger.debug(f"Impossible de lire l'espace disque libre pour {path}: {exc}")
         return None
@@ -1510,6 +1511,12 @@ def _ensure_sufficient_disk_space(dest_dir: str, required_bytes: int) -> tuple[b
     free_bytes = _get_free_disk_bytes(dest_dir)
     if free_bytes is None:
         return True, None
+
+    try:
+        from utils import get_disk_usage as _get_disk_usage_for_log
+        _get_disk_usage_for_log(dest_dir, log=True)
+    except Exception:
+        pass
 
     if free_bytes < required:
         return False, _notify_low_disk_space(required, free_bytes)

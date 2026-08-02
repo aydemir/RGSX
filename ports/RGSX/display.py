@@ -13,7 +13,8 @@ from utils import (truncate_text_middle, wrap_text, load_system_image, truncate_
                    _get_dest_folder_name, find_file_with_or_without_extension, find_matching_files,
                    get_connection_status_targets, get_connection_status_snapshot,
                    get_clean_display_name, get_existing_history_matches, remember_history_local_match,
-                   sort_games_list, get_platform_source_badge_key, get_platform_source_badge_surface)
+                   sort_games_list, get_platform_source_badge_key, get_platform_source_badge_surface,
+                   get_disk_usage)
 import logging
 import math
 import re
@@ -1334,7 +1335,9 @@ def get_default_disk_space_line():
         if not os.path.exists(resolved_path):
             return ""
 
-        usage = shutil.disk_usage(resolved_path)
+        usage = get_disk_usage(resolved_path)
+        if usage is None:
+            return ""
         free_bytes = max(0, usage.free)
         free_percent = int(round((free_bytes / usage.total) * 100)) if usage.total > 0 else 0
         free_label = _("disk_percent_free") if _ else "free"
