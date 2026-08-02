@@ -1856,6 +1856,39 @@ def _looks_like_html_or_challenge(file_path: str) -> bool:
         return True
 
 
+def _should_accept_partial_archive(downloaded: int, total_size: int, file_path: str) -> tuple[bool, str]:
+    if total_size <= 0 or downloaded >= total_size:
+        return True, "archive complete"
+
+    difference = max(0, total_size - downloaded)
+    if difference <= 0:
+        return True, "archive complete"
+
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension not in {'.7z', '.zip', '.rar'}:
+        return True, "non-archive payload"
+
+    if not _matches_expected_archive_signature(file_path):
+        return False, "invalid archive signature"
+
+    if difference <= 16:
+        return True, f"small size mismatch tolerated ({downloaded}/{total_size} bytes)"
+
+    ratio = difference / total_size if total_size > 0 else 0.0
+    if ratio <= 0.0005 and difference <= 64:
+        return True, f"tiny size mismatch tolerated ({downloaded}/{total_size} bytes)"
+
+    if extension == '.zip':
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                archive.testzip()
+                return True, f"archive validates despite partial size mismatch ({downloaded}/{total_size} bytes)"
+        except Exception:
+            pass
+
+    return False, f"incomplete archive payload downloaded ({downloaded}/{total_size} bytes)"
+
+
 def _matches_expected_archive_signature(file_path: str) -> bool:
     extension = os.path.splitext(file_path)[1].lower()
     if extension not in {'.7z', '.zip', '.rar'}:
@@ -4500,11 +4533,6 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     # renvoyer une page HTML/challenge avec un status 200.
                     archive_ext = os.path.splitext(dest_path)[1].lower()
                     if archive_ext in {'.7z', '.zip', '.rar'}:
-                        if total_size > 0 and downloaded < total_size:
-                            _safe_remove_file(dest_path)
-                            raise requests.HTTPError(
-                                f"Incomplete archive payload downloaded ({downloaded}/{total_size} bytes)"
-                            )
                         if _looks_like_html_or_challenge(dest_path):
                             _safe_remove_file(dest_path)
                             raise requests.HTTPError(
@@ -4514,6 +4542,14 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                             _safe_remove_file(dest_path)
                             raise requests.HTTPError(
                                 "Downloaded payload is not a valid archive"
+                            )
+                        if total_size > 0 and downloaded < total_size:
+                            accepted, reason = _should_accept_partial_archive(downloaded, total_size, dest_path)
+                            if not accepted:
+                                _safe_remove_file(dest_path)
+                                raise requests.HTTPError(reason)
+                            logger.warning(
+                                f"Archive partiellement incomplète mais acceptée malgré l'écart de taille: {reason}"
                             )
 
                     if downloaded > 0 and downloaded != last_downloaded:
