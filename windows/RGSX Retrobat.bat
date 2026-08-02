@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
-
+set "VERSION=1.4"
 :: =============================================================================
-:: RGSX Retrobat Launcher v1.3
+:: RGSX Retrobat Launcher v%VERSION%
 :: =============================================================================
 :: Usage: "RGSX Retrobat.bat" [options]
 ::   --display=N    Launch on display N (0=primary, 1=secondary, etc.)
@@ -110,7 +110,7 @@ echo %ESC%%CYAN% ^| ^|_) ^| ^|  _\___ \\  /  %ESC%%RESET%
 echo %ESC%%CYAN% ^|  _ ^<^| ^|_^| ^|___) /  \  %ESC%%RESET%
 echo %ESC%%CYAN% ^|_^| \_\\____^|____/_/\_\ %ESC%%RESET%
 echo.
-echo %ESC%%BOLD%  RetroBat Launcher v1.3%ESC%%RESET%
+echo %ESC%%BOLD%  RetroBat Launcher v%VERSION%%ESC%%RESET%
 echo   --------------------------------
 if "!DISPLAY_NUM!" NEQ "0" (
     echo   %ESC%%CYAN%Display: !DISPLAY_NUM!%ESC%%RESET%
@@ -122,7 +122,7 @@ echo.
 
 :: Debut du log
 echo [%DATE% %TIME%] ========================================== >> "%LOG_FILE%"
-echo [%DATE% %TIME%] RGSX Launcher v1.3 started >> "%LOG_FILE%"
+echo [%DATE% %TIME%] RGSX Launcher v%VERSION% started >> "%LOG_FILE%"
 echo [%DATE% %TIME%] Display: !DISPLAY_NUM!, Windowed: !WINDOWED_MODE! >> "%LOG_FILE%"
 echo [%DATE% %TIME%] ========================================== >> "%LOG_FILE%"
 
