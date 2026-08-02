@@ -146,14 +146,17 @@ echo [%DATE% %TIME%]   RGSX_ROOT: %RGSX_ROOT% >> "%LOG_FILE%"
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
 set "PYTHON_SOURCE=none"
+set "PYTHON_BUNDLE_EXE=%PYTHON_DIR%\python.exe"
+set "PYTHON_BUNDLE_NEEDS_INSTALL=0"
 
 :: Essayer d'abord python.exe dans le PATH, mais seulement si il fonctionne vraiment
 for /f "delims=" %%I in ('where python.exe 2^>nul') do (
     set "PYTHON_CANDIDATE=%%~fI"
     if exist "!PYTHON_CANDIDATE!" (
-        if /i not "!PYTHON_CANDIDATE!"=="%localappdata%\Microsoft\WindowsApps\python.exe" (
+        echo !PYTHON_CANDIDATE! | find /I "\Microsoft\WindowsApps\python.exe" >nul
+        if !ERRORLEVEL! NEQ 0 (
             "!PYTHON_CANDIDATE!" --version >nul 2>&1
-            if !ERRORLEVEL! EQU 0 (
+            if !ERRORLEVEL! EQU 0 if not defined PYTHON_EXE (
                 set "PYTHON_EXE=!PYTHON_CANDIDATE!"
                 set "PYTHON_ARGS="
                 set "PYTHON_SOURCE=user"
@@ -175,12 +178,56 @@ if not defined PYTHON_EXE (
 )
 
 if not defined PYTHON_EXE (
-    if exist "%PYTHON_DIR%\python.exe" (
-        "%PYTHON_DIR%\python.exe" --version >nul 2>&1
+    for %%P in (
+        "%ROOT_DIR%\roms\windows\python.exe"
+        "%ROOT_DIR%\roms\windows\Python\python.exe"
+        "%ROOT_DIR%\roms\windows\python\python.exe"
+    ) do (
+        if exist "%%~fP" (
+            "%%~fP" --version >nul 2>&1
+            if !ERRORLEVEL! EQU 0 if not defined PYTHON_EXE (
+                set "PYTHON_EXE=%%~fP"
+                set "PYTHON_ARGS="
+                set "PYTHON_SOURCE=windows-bundle"
+            )
+        )
+    )
+)
+
+if not defined PYTHON_EXE (
+    if exist "!PYTHON_BUNDLE_EXE!" (
+        "!PYTHON_BUNDLE_EXE!" --version >nul 2>&1
         if !ERRORLEVEL! EQU 0 (
-            set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
+            set "PYTHON_EXE=!PYTHON_BUNDLE_EXE!"
             set "PYTHON_ARGS="
             set "PYTHON_SOURCE=local-bundle"
+        ) else (
+            set "PYTHON_EXE=!PYTHON_BUNDLE_EXE!"
+            set "PYTHON_ARGS="
+            set "PYTHON_SOURCE=local-bundle"
+            set "PYTHON_BUNDLE_NEEDS_INSTALL=1"
+            echo [%DATE% %TIME%] Embedded Python found but unusable, reinstall required >> "%LOG_FILE%"
+        )
+    ) else (
+        set "PYTHON_EXE=!PYTHON_BUNDLE_EXE!"
+        set "PYTHON_ARGS="
+        set "PYTHON_SOURCE=local-bundle"
+        set "PYTHON_BUNDLE_NEEDS_INSTALL=1"
+        echo [%DATE% %TIME%] Embedded Python not found, install required >> "%LOG_FILE%"
+    )
+)
+
+:: Si Python utilisateur est recent, garder Python user et tenter pygame-ce en fallback
+if /i "!PYTHON_SOURCE!"=="user" (
+    set "PY_USER_VERSION_RAW="
+    for /f "tokens=2" %%v in ('"!PYTHON_EXE!" !PYTHON_ARGS! --version 2^>^&1') do set "PY_USER_VERSION_RAW=%%v"
+    if defined PY_USER_VERSION_RAW (
+        for /f "tokens=1,2 delims=." %%a in ("!PY_USER_VERSION_RAW!") do (
+            set "PY_USER_MAJOR=%%a"
+            set "PY_USER_MINOR=%%b"
+        )
+        if "!PY_USER_MAJOR!"=="3" if !PY_USER_MINOR! GEQ 13 (
+            echo [%DATE% %TIME%] User Python !PY_USER_VERSION_RAW! may be incompatible with pygame wheels, will try pygame-ce fallback before embedded Python >> "%LOG_FILE%"
         )
     )
 )
@@ -194,9 +241,25 @@ echo [%DATE% %TIME%] Python executable: !PYTHON_EXE! >> "%LOG_FILE%"
 echo %ESC%%YELLOW%[1/3]%ESC%%RESET% Checking Python environment...
 echo [%DATE% %TIME%] Step 1/3: Checking Python >> "%LOG_FILE%"
 
-if /i "!PYTHON_SOURCE!"=="local-bundle" if not exist "!PYTHON_EXE!" (
-    echo       %ESC%%YELLOW%^> Python not found, installing...%ESC%%RESET%
-    echo [%DATE% %TIME%] Python not found, starting installation >> "%LOG_FILE%"
+if /i "!PYTHON_SOURCE!"=="local-bundle" (
+    if not exist "!PYTHON_EXE!" (
+        set "PYTHON_DISCOVERED_EXE="
+        for /f "delims=" %%F in ('dir /s /b "%PYTHON_DIR%\python.exe" 2^>nul') do if not defined PYTHON_DISCOVERED_EXE set "PYTHON_DISCOVERED_EXE=%%~fF"
+        if defined PYTHON_DISCOVERED_EXE (
+            set "PYTHON_EXE=!PYTHON_DISCOVERED_EXE!"
+            echo [%DATE% %TIME%] Embedded Python discovered at !PYTHON_EXE! >> "%LOG_FILE%"
+        )
+    )
+    if not exist "!PYTHON_EXE!" set "PYTHON_BUNDLE_NEEDS_INSTALL=1"
+    if exist "!PYTHON_EXE!" (
+        "!PYTHON_EXE!" --version >nul 2>&1
+        if !ERRORLEVEL! NEQ 0 set "PYTHON_BUNDLE_NEEDS_INSTALL=1"
+    )
+)
+
+if /i "!PYTHON_SOURCE!"=="local-bundle" if "!PYTHON_BUNDLE_NEEDS_INSTALL!"=="1" (
+    echo       %ESC%%YELLOW%^> Embedded Python missing or broken, installing...%ESC%%RESET%
+    echo [%DATE% %TIME%] Embedded Python missing/broken, starting installation >> "%LOG_FILE%"
     
     :: Creer le dossier Python
     if not exist "%PYTHON_DIR%" (
@@ -262,19 +325,6 @@ if /i "!PYTHON_SOURCE!"=="local-bundle" if not exist "!PYTHON_EXE!" (
         echo [%DATE% %TIME%] Download successful: !ZIP_SIZE! bytes >> "%LOG_FILE%"
     )
     
-    :: Verifier que tar existe (Windows 10 1803+)
-    where tar >nul 2>&1
-    if !ERRORLEVEL! NEQ 0 (
-        echo.
-        echo %ESC%%RED%  ERROR: tar command not available!%ESC%%RESET%
-        echo.
-        echo   Please update Windows 10 or extract manually to:
-        echo   %ESC%%CYAN%%PYTHON_DIR%%ESC%%RESET%
-        echo.
-        echo [%DATE% %TIME%] ERROR: tar command not found >> "%LOG_FILE%"
-        goto :error
-    )
-    
     :: Extraction avec progression simulee
     echo       %ESC%%YELLOW%^> Extracting Python...%ESC%%RESET%
     echo [%DATE% %TIME%] Extracting python.zip >> "%LOG_FILE%"
@@ -287,7 +337,7 @@ if /i "!PYTHON_SOURCE!"=="local-bundle" if not exist "!PYTHON_EXE!" (
     if !TAR_RESULT! NEQ 0 (
         echo.
         echo %ESC%%RED%  ERROR: Extraction failed!%ESC%%RESET%
-        echo [%DATE% %TIME%] ERROR: tar extraction failed with code !TAR_RESULT! >> "%LOG_FILE%"
+        echo [%DATE% %TIME%] ERROR: archive extraction failed with code !TAR_RESULT! >> "%LOG_FILE%"
         goto :error
     )
     
@@ -300,11 +350,35 @@ if /i "!PYTHON_SOURCE!"=="local-bundle" if not exist "!PYTHON_EXE!" (
     
     :: Verifier installation
     if not exist "%PYTHON_EXE%" (
+        set "PYTHON_DISCOVERED_EXE="
+        for /f "delims=" %%F in ('dir /s /b "%PYTHON_DIR%\python.exe" 2^>nul') do if not defined PYTHON_DISCOVERED_EXE set "PYTHON_DISCOVERED_EXE=%%~fF"
+        if defined PYTHON_DISCOVERED_EXE (
+            set "PYTHON_EXE=!PYTHON_DISCOVERED_EXE!"
+            echo [%DATE% %TIME%] Embedded Python discovered after extraction at !PYTHON_EXE! >> "%LOG_FILE%"
+        )
+    )
+
+    if not exist "!PYTHON_EXE!" (
         echo.
         echo %ESC%%RED%  ERROR: Python not found after extraction!%ESC%%RESET%
-        echo [%DATE% %TIME%] ERROR: python.exe not found after extraction >> "%LOG_FILE%"
+        echo [%DATE% %TIME%] ERROR: python.exe not found after extraction in %PYTHON_DIR% >> "%LOG_FILE%"
         goto :error
     )
+)
+
+if not defined PYTHON_EXE (
+    echo.
+    echo %ESC%%RED%  ERROR: No usable Python interpreter found!%ESC%%RESET%
+    echo [%DATE% %TIME%] ERROR: PYTHON_EXE not defined after detection/install >> "%LOG_FILE%"
+    goto :error
+)
+
+"!PYTHON_EXE!" !PYTHON_ARGS! --version >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    echo.
+    echo %ESC%%RED%  ERROR: Selected Python is not executable!%ESC%%RESET%
+    echo [%DATE% %TIME%] ERROR: Python executable test failed for !PYTHON_EXE! !PYTHON_ARGS! >> "%LOG_FILE%"
+    goto :error
 )
 
 :: Afficher et logger la version Python
@@ -314,18 +388,98 @@ echo [%DATE% %TIME%] !PYTHON_VERSION! detected using !PYTHON_SOURCE! >> "%LOG_FI
 
 :: Verifier et installer les dependances Python si necessaires
 set "MISSING_PACKAGES="
-for /f "delims=" %%m in ('"!PYTHON_EXE!" !PYTHON_ARGS! -c "import importlib.util,sys;mods=['requests','pygame']; missing=[m for m in mods if importlib.util.find_spec(m) is None]; print(' '.join(missing))" 2^>nul') do set "MISSING_PACKAGES=%%m"
+echo [%DATE% %TIME%] Checking Python modules: requests pygame >> "%LOG_FILE%"
+set "MODULE_CHECK_TMP=%TEMP%\rgsx_py_mod_check_!RANDOM!!RANDOM!.txt"
+"!PYTHON_EXE!" !PYTHON_ARGS! -c "import importlib.util,sys;mods=['requests','pygame'];missing=[m for m in mods if importlib.util.find_spec(m) is None];sys.stdout.write(' '.join(missing))" > "!MODULE_CHECK_TMP!" 2>&1
+set "MODULE_CHECK_RESULT=!ERRORLEVEL!"
+if !MODULE_CHECK_RESULT! NEQ 0 (
+    echo.
+    echo %ESC%%RED%  ERROR: Python module check failed!%ESC%%RESET%
+    echo [%DATE% %TIME%] ERROR: Module check failed with code !MODULE_CHECK_RESULT! >> "%LOG_FILE%"
+    type "!MODULE_CHECK_TMP!" >> "%LOG_FILE%"
+    del /q "!MODULE_CHECK_TMP!" 2>nul
+    goto :error
+)
+
+set /p "MISSING_PACKAGES=" < "!MODULE_CHECK_TMP!"
+del /q "!MODULE_CHECK_TMP!" 2>nul
+
+if defined MISSING_PACKAGES (
+    echo [%DATE% %TIME%] Missing Python modules detected: !MISSING_PACKAGES! >> "%LOG_FILE%"
+) else (
+    echo [%DATE% %TIME%] All required Python modules already present: requests pygame >> "%LOG_FILE%"
+)
+
 if defined MISSING_PACKAGES (
     echo       %ESC%%YELLOW%^> Installing Python packages: !MISSING_PACKAGES!%ESC%%RESET%
     echo [%DATE% %TIME%] Installing missing packages: !MISSING_PACKAGES! >> "%LOG_FILE%"
-    "!PYTHON_EXE!" !PYTHON_ARGS! -m pip install requests pygame >> "%LOG_FILE%" 2>&1
-    set "PIP_RESULT=!ERRORLEVEL!"
-    if !PIP_RESULT! NEQ 0 (
-        echo.
-        echo %ESC%%RED%  ERROR: Failed to install Python dependencies!%ESC%%RESET%
-        echo [%DATE% %TIME%] ERROR: pip install failed with code !PIP_RESULT! >> "%LOG_FILE%"
-        goto :error
+
+    "!PYTHON_EXE!" !PYTHON_ARGS! -m pip --version >nul 2>&1
+    if !ERRORLEVEL! NEQ 0 (
+        echo [%DATE% %TIME%] pip missing, trying ensurepip >> "%LOG_FILE%"
+        "!PYTHON_EXE!" !PYTHON_ARGS! -m ensurepip --upgrade >> "%LOG_FILE%" 2>&1
     )
+
+    set "PIP_USER_FLAG="
+    if /i "!PYTHON_SOURCE!"=="user" set "PIP_USER_FLAG=--user"
+
+    set "MISSING_PYGAME="
+    set "MISSING_OTHER_PACKAGES="
+    for %%p in (!MISSING_PACKAGES!) do (
+        if /i "%%p"=="pygame" (
+            set "MISSING_PYGAME=1"
+        ) else (
+            if defined MISSING_OTHER_PACKAGES (
+                set "MISSING_OTHER_PACKAGES=!MISSING_OTHER_PACKAGES! %%p"
+            ) else (
+                set "MISSING_OTHER_PACKAGES=%%p"
+            )
+        )
+    )
+
+    if defined MISSING_OTHER_PACKAGES (
+        "!PYTHON_EXE!" !PYTHON_ARGS! -m pip install !PIP_USER_FLAG! !MISSING_OTHER_PACKAGES! >> "%LOG_FILE%" 2>&1
+        set "PIP_RESULT=!ERRORLEVEL!"
+        if !PIP_RESULT! NEQ 0 (
+            echo.
+            echo %ESC%%RED%  ERROR: Failed to install Python dependencies: !MISSING_OTHER_PACKAGES!%ESC%%RESET%
+            echo [%DATE% %TIME%] ERROR: pip install failed for !MISSING_OTHER_PACKAGES! with code !PIP_RESULT! >> "%LOG_FILE%"
+            goto :error
+        )
+    )
+
+    if defined MISSING_PYGAME (
+        echo [%DATE% %TIME%] Installing pygame with binary wheel only >> "%LOG_FILE%"
+        "!PYTHON_EXE!" !PYTHON_ARGS! -m pip install !PIP_USER_FLAG! --only-binary pygame pygame >> "%LOG_FILE%" 2>&1
+        set "PIP_RESULT=!ERRORLEVEL!"
+        if !PIP_RESULT! NEQ 0 (
+            if /i "!PYTHON_SOURCE!"=="user" (
+                echo [%DATE% %TIME%] pygame wheel install failed on user Python, trying pygame-ce fallback >> "%LOG_FILE%"
+                "!PYTHON_EXE!" !PYTHON_ARGS! -m pip install !PIP_USER_FLAG! pygame-ce >> "%LOG_FILE%" 2>&1
+                set "PIP_RESULT=!ERRORLEVEL!"
+                if !PIP_RESULT! EQU 0 (
+                    "!PYTHON_EXE!" !PYTHON_ARGS! -c "import pygame" >nul 2>&1
+                    set "PIP_RESULT=!ERRORLEVEL!"
+                )
+                if !PIP_RESULT! NEQ 0 (
+                    echo [%DATE% %TIME%] pygame-ce fallback failed on user Python, will require embedded Python >> "%LOG_FILE%"
+                    set "PYTHON_EXE=!PYTHON_BUNDLE_EXE!"
+                    set "PYTHON_ARGS="
+                    set "PYTHON_SOURCE=local-bundle"
+                    set "PYTHON_BUNDLE_NEEDS_INSTALL=1"
+                    goto :error
+                )
+                echo [%DATE% %TIME%] pygame-ce installed successfully on user Python >> "%LOG_FILE%"
+            ) else (
+                echo.
+                echo %ESC%%RED%  ERROR: Failed to install pygame binary wheel!%ESC%%RESET%
+                echo [%DATE% %TIME%] ERROR: pygame wheel install failed with code !PIP_RESULT! >> "%LOG_FILE%"
+                echo [%DATE% %TIME%] ERROR: Try embedded Python bundle or Python 3.12/3.11 for pygame compatibility >> "%LOG_FILE%"
+                goto :error
+            )
+        )
+    )
+
     echo       %ESC%%GREEN%^> Python dependencies installed%ESC%%RESET%
     echo [%DATE% %TIME%] Python dependencies installed successfully >> "%LOG_FILE%"
 ) else (
@@ -348,12 +502,11 @@ set "FIREWALL_MARKER=%FIREWALL_MARKER_DIR%\.firewall_rules_configured"
 
 if not exist "%FIREWALL_MARKER%" (
     if exist "%FIREWALL_SCRIPT%" (
-        echo       %ESC%%YELLOW%^> Configuring Windows Firewall for downloads ^(one-time^)...%ESC%%RESET%
-        echo [%DATE% %TIME%] One-time firewall setup: launching %FIREWALL_SCRIPT% >> "%LOG_FILE%"
-        powershell -NoProfile -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -Aria2cPath "%ARIA2C_EXE%" -PythonPath "!PYTHON_EXE!" >> "%LOG_FILE%" 2>&1
+        echo       %ESC%%YELLOW%^> Configuring Windows Firewall for downloads ^(one-time, background^)...%ESC%%RESET%
         if not exist "%FIREWALL_MARKER_DIR%" mkdir "%FIREWALL_MARKER_DIR%" 2>nul
         echo [%DATE% %TIME%] Firewall setup attempted >> "%FIREWALL_MARKER%" 2>nul
-        echo [%DATE% %TIME%] Firewall setup attempt complete, marker written >> "%LOG_FILE%"
+        echo [%DATE% %TIME%] One-time firewall setup: launching %FIREWALL_SCRIPT% detached/hidden in background >> "%LOG_FILE%"
+        start "" /B powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -Aria2cPath "%ARIA2C_EXE%" -PythonPath "!PYTHON_EXE!" >> "%LOG_FILE%" 2>&1
     ) else (
         echo [%DATE% %TIME%] Firewall setup script not found, skipping >> "%LOG_FILE%"
     )

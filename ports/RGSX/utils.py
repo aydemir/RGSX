@@ -1,4 +1,5 @@
 from pathlib import Path
+import collections
 import io
 import shutil
 import requests  # type: ignore
@@ -43,6 +44,40 @@ _SOURCE_BADGE_CACHE = {}
 _HISTORY_MATCH_NO_MATCH_LOG_COOLDOWN_SEC = 5.0
 _HISTORY_MATCH_NO_MATCH_LOG_LAST_TS: dict[str, float] = {}
 _HISTORY_MATCH_NO_MATCH_LOG_LOCK = threading.Lock()
+
+DiskUsage = collections.namedtuple("DiskUsage", "total used free")
+
+
+def get_disk_usage(path: str, log: bool = False) -> "DiskUsage | None":
+    """Retourne (total, used, free) en octets pour le point de montage de `path`.
+
+    Sur certains montages (overlayfs, NFS, quotas), `f_bavail` (blocs libres pour un
+    utilisateur non privilégié) peut remonter à 0 alors que `f_bfree` (blocs libres
+    incluant la réserve root) est correct : on prend le plus grand des deux pour éviter
+    de considérer le disque comme plein à tort.
+    """
+    try:
+        usage = shutil.disk_usage(path)
+    except Exception as exc:
+        logger.debug(f"Impossible de lire l'espace disque pour {path}: {exc}")
+        return None
+
+    if usage.free > 0 or platform.system() == "Windows" or not hasattr(os, "statvfs"):
+        if log:
+            logger.info(f"[HDD] Espace Disque disponible : {usage}")
+        return usage
+
+    try:
+        st = os.statvfs(path)
+        bfree_bytes = st.f_bfree * st.f_frsize
+        if bfree_bytes > usage.free:
+            logger.warning(
+                f"Espace disque libre incohérent pour {path}: f_bavail=0 mais f_bfree={bfree_bytes} octets, utilisation de f_bfree"
+            )
+            return DiskUsage(usage.total, usage.total - bfree_bytes, bfree_bytes)
+    except Exception as exc:
+        logger.debug(f"Fallback statvfs impossible pour {path}: {exc}")
+    return usage
 
 
 def _history_no_match_log_key(game_name, platform_name) -> str:
