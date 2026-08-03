@@ -2315,11 +2315,6 @@ def handle_controls(event, sources, joystick, screen):
                     config.startup_update_confirmed = True
                     config.menu_state = "loading"
                     config.needs_redraw = True
-                elif viewer_mode == "ota_update" and is_input_matched(event, "cancel"):
-                    config.pending_update_version = ""
-                    config.update_checked = True
-                    config.menu_state = validate_menu_state(config.previous_menu_state)
-                    config.needs_redraw = True
                 elif viewer_mode != "ota_update" and (is_input_matched(event, "cancel") or is_input_matched(event, "confirm")):
                     config.menu_state = validate_menu_state(config.previous_menu_state)
                     config.needs_redraw = True

@@ -174,6 +174,7 @@
     "network_connection_error": "Erro de conexão de rede",
     "network_no_response": "Sem resposta do servidor",
     "network_auth_required": "Autenticação necessária (HTTP {0})",
+    "network_vimm_rate_limit": "O Vimm.net permite apenas um download por vez por IP. Aguarde o término do outro download e tente novamente.",
     "network_access_denied": "Acesso negado (HTTP {0})",
     "network_server_error": "Erro do servidor (HTTP {0})",
     "network_download_ok": "Download OK: {0}",
