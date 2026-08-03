@@ -84,7 +84,7 @@ from controls_mapper import map_controls, draw_controls_mapping, get_actions
 from controls import load_controls_config
 from utils import (
     load_sources, check_extension_before_download, extract_data,
-    play_random_music, load_music_config, load_api_keys, _refresh_loading_feedback, _format_size_bytes
+    play_random_music, load_music_config, load_api_keys, _refresh_loading_feedback, _format_size_bytes, get_disk_usage
 )
 from history import load_history, save_history, load_downloaded_games, check_history_write_access, get_history_write_status
 from config import OTA_data_ZIP
@@ -115,6 +115,12 @@ except Exception as e:
     logging.error(f"Échec de la configuration du logging dans {config.log_file}: {str(e)}")
 
 logger = logging.getLogger(__name__)
+
+try:
+    startup_disk_path = getattr(config, "ROMS_FOLDER", None) or getattr(config, "APP_FOLDER", None) or os.getcwd()
+    get_disk_usage(startup_disk_path, log=True)
+except Exception as exc:
+    logger.debug(f"Impossible de journaliser l'espace disque au démarrage: {exc}")
 
 # Ensure API key files (1Fichier, AllDebrid, Debrid-Link, RealDebrid) exist at startup so user can fill them before any download
 try:  # pragma: no cover
@@ -1232,6 +1238,7 @@ async def main():
 
         # Affichage
         if config.needs_redraw:
+          try:
             #logger.debug(f"[RENDER_LOOP] Frame render - menu_state={config.menu_state}, needs_redraw={config.needs_redraw}")
             draw_app_background(screen)
             
@@ -1384,7 +1391,15 @@ async def main():
             pygame.display.flip()
             
             config.needs_redraw = False
-            # logger.debug("Screen flipped with pygame.display.flip()")
+          except (pygame.error, ValueError) as render_exc:
+            # Surface d'affichage temporairement invalide (ex: RetroBat masque/restaure la fenetre): on tente de la recreer plutot que de planter.
+            logger.error(f"Erreur de rendu, tentative de recuperation de l'affichage: {render_exc}")
+            try:
+                screen = pygame.display.set_mode(screen.get_size(), screen.get_flags())
+                screen = sync_display_metrics(screen)
+            except Exception as recover_exc:
+                logger.error(f"Echec de la recuperation de l'affichage: {recover_exc}")
+            config.needs_redraw = True
 
         # Gestion de l'état controls_mapping
         if config.menu_state == "controls_mapping":
