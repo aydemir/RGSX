@@ -17,7 +17,7 @@ try:
 except Exception:
     pygame = None  # type: ignore
 from config import OTA_VERSION_ENDPOINT,APP_FOLDER, UPDATE_FOLDER, OTA_UPDATE_ZIP
-from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, resolve_platform_folder, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games
+from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, resolve_platform_folder, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games, get_disk_usage
 from history import save_history, check_history_write_access, get_history_write_status
 from display import show_toast
 import logging
@@ -1461,7 +1461,8 @@ def _get_free_disk_bytes(path: str) -> int | None:
         usage_path = _resolve_existing_path_for_usage(path)
         if not usage_path or not os.path.exists(usage_path):
             return None
-        return int(shutil.disk_usage(usage_path).free)
+        usage = get_disk_usage(usage_path)
+        return int(usage.free) if usage else None
     except Exception as exc:
         logger.debug(f"Impossible de lire l'espace disque libre pour {path}: {exc}")
         return None
@@ -1510,6 +1511,12 @@ def _ensure_sufficient_disk_space(dest_dir: str, required_bytes: int) -> tuple[b
     free_bytes = _get_free_disk_bytes(dest_dir)
     if free_bytes is None:
         return True, None
+
+    try:
+        from utils import get_disk_usage as _get_disk_usage_for_log
+        _get_disk_usage_for_log(dest_dir, log=True)
+    except Exception:
+        pass
 
     if free_bytes < required:
         return False, _notify_low_disk_space(required, free_bytes)
@@ -1847,6 +1854,39 @@ def _looks_like_html_or_challenge(file_path: str) -> bool:
         return any(marker in head for marker in markers)
     except Exception:
         return True
+
+
+def _should_accept_partial_archive(downloaded: int, total_size: int, file_path: str) -> tuple[bool, str]:
+    if total_size <= 0 or downloaded >= total_size:
+        return True, "archive complete"
+
+    difference = max(0, total_size - downloaded)
+    if difference <= 0:
+        return True, "archive complete"
+
+    extension = os.path.splitext(file_path)[1].lower()
+    if extension not in {'.7z', '.zip', '.rar'}:
+        return True, "non-archive payload"
+
+    if not _matches_expected_archive_signature(file_path):
+        return False, "invalid archive signature"
+
+    if difference <= 16:
+        return True, f"small size mismatch tolerated ({downloaded}/{total_size} bytes)"
+
+    ratio = difference / total_size if total_size > 0 else 0.0
+    if ratio <= 0.0005 and difference <= 64:
+        return True, f"tiny size mismatch tolerated ({downloaded}/{total_size} bytes)"
+
+    if extension == '.zip':
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                archive.testzip()
+                return True, f"archive validates despite partial size mismatch ({downloaded}/{total_size} bytes)"
+        except Exception:
+            pass
+
+    return False, f"incomplete archive payload downloaded ({downloaded}/{total_size} bytes)"
 
 
 def _matches_expected_archive_signature(file_path: str) -> bool:
@@ -4493,11 +4533,6 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     # renvoyer une page HTML/challenge avec un status 200.
                     archive_ext = os.path.splitext(dest_path)[1].lower()
                     if archive_ext in {'.7z', '.zip', '.rar'}:
-                        if total_size > 0 and downloaded < total_size:
-                            _safe_remove_file(dest_path)
-                            raise requests.HTTPError(
-                                f"Incomplete archive payload downloaded ({downloaded}/{total_size} bytes)"
-                            )
                         if _looks_like_html_or_challenge(dest_path):
                             _safe_remove_file(dest_path)
                             raise requests.HTTPError(
@@ -4507,6 +4542,14 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                             _safe_remove_file(dest_path)
                             raise requests.HTTPError(
                                 "Downloaded payload is not a valid archive"
+                            )
+                        if total_size > 0 and downloaded < total_size:
+                            accepted, reason = _should_accept_partial_archive(downloaded, total_size, dest_path)
+                            if not accepted:
+                                _safe_remove_file(dest_path)
+                                raise requests.HTTPError(reason)
+                            logger.warning(
+                                f"Archive partiellement incomplète mais acceptée malgré l'écart de taille: {reason}"
                             )
 
                     if downloaded > 0 and downloaded != last_downloaded:
