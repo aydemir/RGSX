@@ -373,6 +373,10 @@ try:
     initial_sources = load_sources()  # Initialise config.games_count
     logger.info(f"{len(getattr(config, 'platforms', []))} plateformes chargées")
     
+    # Charger les jeux déjà téléchargés (pour les indicateurs de statut)
+    config.downloaded_games = load_downloaded_games()
+    logger.info(f"Jeux téléchargés chargés: {len(config.downloaded_games)} plateformes")
+    
     # Initialiser filter_platforms_selection depuis les settings (pour filtrer les plateformes)
     from rgsx_settings import load_rgsx_settings
     settings = load_rgsx_settings()
@@ -821,6 +825,74 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     'downloads': downloads
                 })
             
+            # Route: API - Durum göstergeleri (indirilen/indiriliyor/başarısız)
+            elif path == '/api/game-status':
+                try:
+                    from history import load_history, is_game_downloaded
+                    import json as _json
+                    
+                    history = load_history() or []
+                    
+                    # İndirilen oyunlar (config'den al, dosyadan değil)
+                    downloaded = getattr(config, 'downloaded_games', {})
+                    
+                    # Aktif indirmeler (progress)
+                    in_progress = {}
+                    for entry in history:
+                        status = entry.get('status', '')
+                        if status in ("Downloading", "Téléchargement", "Connecting", "Extracting") or status.startswith('Try '):
+                            game_name = entry.get('game_name', '')
+                            if game_name:
+                                stem = os.path.splitext(game_name)[0]
+                                in_progress[stem.lower()] = {
+                                    'status': 'downloading',
+                                    'progress': entry.get('progress', 0)
+                                }
+                    
+                    # Başarısız indirmeler
+                    failed = {}
+                    for entry in reversed(history):
+                        status = entry.get('status', '')
+                        if status in ("Erreur", "Error"):
+                            game_name = entry.get('game_name', '')
+                            platform = entry.get('platform', '')
+                            stem = os.path.splitext(game_name)[0]
+                            key = f"{platform}::{stem.lower()}"
+                            if key not in failed:
+                                failed[key] = {'status': 'failed'}
+                    
+                    # Tüm durumları birleştir
+                    result = {}
+                    for platform_name, games in downloaded.items():
+                        for game_name in games:
+                            stem = os.path.splitext(game_name)[0]
+                            result[stem.lower()] = {
+                                'status': 'downloaded',
+                                'platform': platform_name
+                            }
+                    
+                    # Aktif indirmeleri ekle/override et
+                    for stem_lower, info in in_progress.items():
+                        result[stem_lower] = info
+                    
+                    # Başarısızları ekle (sadece indirilmemiş olanlar)
+                    for key, info in failed.items():
+                        platform, stem_lower = key.split('::', 1)
+                        if stem_lower not in result:
+                            result[stem_lower] = info
+                    
+                    self._send_json({
+                        'success': True,
+                        'statuses': result
+                    })
+                except Exception as e:
+                    logger.error(f"Erreur /api/game-status: {e}")
+                    self._send_json({
+                        'success': False,
+                        'error': str(e),
+                        'statuses': {}
+                    })
+            
             # Route: API - Historique (téléchargements terminés ET en queue/cours)
             elif path == '/api/history':
                 # Lire depuis history.json - filtrer pour inclure en cours ET terminés
@@ -1081,7 +1153,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
         config.download_active = True
         
         # Mettre à jour l'historique: queued -> Downloading
-        from history import load_history, save_history
         config.history = load_history()
         for entry in config.history:
             if entry.get('task_id') == task_id and entry.get('status') == 'Queued':
@@ -1417,7 +1488,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
                 
                 try:
                     from network import request_cancel
-                    from history import load_history, save_history
                     
                     # Trouver le task_id correspondant à l'URL dans l'historique
                     history = load_history() or []
@@ -2138,10 +2208,6 @@ def run_server(host='0.0.0.0', port=5000):
     # Attendre un peu pour que le port se libère
     time.sleep(1)
     
-    # Load downloaded games registry
-    config.downloaded_games = load_downloaded_games()
-    logging.info(f"downloaded_games.json chargé: {sum(len(v) for v in config.downloaded_games.values()) if config.downloaded_games else 0} jeux")
-
     httpd = ReuseAddrHTTPServer(server_address, RGSXHandler)
     
     logger.info("=" * 60)

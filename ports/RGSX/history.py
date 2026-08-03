@@ -495,6 +495,7 @@ def mark_game_as_downloaded(platform_name, game_name, file_size=None):
     logger.info(f"Jeu marqué comme téléchargé : {platform_name} / {normalized_name}")
 
 
+
 _scanned_platforms_cache: set = set()
 
 

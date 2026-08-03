@@ -17,7 +17,7 @@ try:
 except Exception:
     pygame = None  # type: ignore
 from config import OTA_VERSION_ENDPOINT,APP_FOLDER, UPDATE_FOLDER, OTA_UPDATE_ZIP
-from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games
+from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, resolve_platform_folder, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games
 from history import save_history, check_history_write_access, get_history_write_status
 from display import show_toast
 import logging
@@ -259,12 +259,19 @@ def _strip_ansi_escape_codes(text: str) -> str:
 
 
 def _parse_aria2_progress_line(line: str, total_size: int) -> dict[str, float | int] | None:
-    if not line or ("[#" not in line and "[SEEDING#" not in line):
+    if not line:
         return None
 
     line = _strip_ansi_escape_codes(line)
 
     result: dict[str, float | int] = {}
+
+    # aria2c peut émettre des lignes de progrès sous plusieurs formes :
+    # [#.... 274MiB/2.2GiB(11%) CN:64 SD:0 DL:4.6MiB UL:0B(35MiB) ETA:7m27s]
+    # ou parfois [#.... 1.2GiB/2.2GiB(55%)] sans métriques supplémentaires.
+    # On accepte les deux cas.
+    if "[#" not in line and "[SEEDING#" not in line and "Download Progress Summary" not in line:
+        return None
 
     progress_match = re.search(r"\s([0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|TiB|B))\/([0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|TiB|B))\((\d+)%\)", line)
     if progress_match:
@@ -278,23 +285,25 @@ def _parse_aria2_progress_line(line: str, total_size: int) -> dict[str, float | 
         if total_bytes is not None and total_bytes > 0:
             result["total"] = total_bytes
 
-    speed_match = re.search(r"DL:([0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|TiB|B))", line)
+    # aria2c peut utiliser des variantes comme DL:4.6MiB ou DL:123.4KiB, parfois avec des espaces.
+    speed_match = re.search(r"DL:([0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|TiB|B))", line, re.IGNORECASE)
     if speed_match:
         speed_bytes = _parse_aria2_size_to_bytes(speed_match.group(1))
         if speed_bytes is not None:
             result["speed_mib_s"] = speed_bytes / (1024 * 1024)
 
-    ul_match = re.search(r"UL:([0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|TiB|B))", line)
+    ul_match = re.search(r"UL:([0-9]+(?:\.[0-9]+)?(?:KiB|MiB|GiB|TiB|B))", line, re.IGNORECASE)
     if ul_match:
         ul_bytes = _parse_aria2_size_to_bytes(ul_match.group(1))
         if ul_bytes is not None:
             result["ul_speed_mib_s"] = ul_bytes / (1024 * 1024)
 
-    cn_match = re.search(r'\bCN:(\d+)', line)
+    # Capturer aussi des formes du style : CN:64 SD:0, CN=64 SD=0, CN 64 SD 0
+    cn_match = re.search(r'(?<![A-Za-z])CN[:= ]+(\d+)', line)
     if cn_match:
         result["connections"] = int(cn_match.group(1))
 
-    sd_match = re.search(r'\bSD:(\d+)', line)
+    sd_match = re.search(r'(?<![A-Za-z])SD[:= ]+(\d+)', line)
     if sd_match:
         result["seeds"] = int(sd_match.group(1))
 
@@ -321,14 +330,29 @@ def _reserve_ephemeral_tcp_port() -> int:
 # Compatible Windows, Linux, Batocera – aucun module tiers requis.
 # ---------------------------------------------------------------------------
 
-def _upnp_discover_igd(timeout: float = 2.0) -> tuple[str, str] | None:
+def _get_local_ip_for_route(dest_ip: str = "8.8.8.8", dest_port: int = 80) -> str | None:
+    """Détermine l'IP locale utilisée pour joindre `dest_ip` (sans envoyer de données),
+    afin de forcer la découverte UPnP sur la bonne interface réseau (utile quand
+    plusieurs adaptateurs sont actifs : VPN, Docker/Hyper-V, VMware, etc., qui font
+    parfois échouer la sélection d'interface multicast par défaut sur Windows)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((dest_ip, dest_port))
+        return s.getsockname()[0]
+    except Exception:
+        return None
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def _upnp_discover_igd(timeout: float = 3.0) -> tuple[str, str] | None:
     """
     Découverte SSDP de l'IGD (Internet Gateway Device) sur le réseau local.
     Retourne (location_url, local_ip) ou None si aucun dispositif trouvé.
     """
-    import xml.etree.ElementTree as _ET
-    import urllib.request as _req
-
     SSDP_ADDR = "239.255.255.250"
     SSDP_PORT = 1900
     SSDP_ST   = "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
@@ -341,32 +365,62 @@ def _upnp_discover_igd(timeout: float = 2.0) -> tuple[str, str] | None:
         "\r\n"
     ).encode()
 
+    # Sur Windows, avec plusieurs adaptateurs réseau actifs (VPN, Docker/Hyper-V,
+    # VMware, etc.), le système peut envoyer le paquet multicast sur la mauvaise
+    # interface, ce qui fait que la box ne le reçoit jamais et qu'aucune réponse
+    # ne revient. On détermine explicitement l'IP locale utilisée pour joindre
+    # Internet (donc la vraie interface réseau) et on force la socket à l'utiliser
+    # via bind() + IP_MULTICAST_IF.
+    preferred_local_ip = _get_local_ip_for_route()
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if preferred_local_ip:
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(preferred_local_ip))
+                sock.bind((preferred_local_ip, 0))
+                logger.debug(f"UPnP: interface locale forcée pour la découverte SSDP: {preferred_local_ip}")
+            except Exception as e:
+                logger.debug(f"UPnP: impossible de forcer l'interface locale {preferred_local_ip}: {e}")
         sock.settimeout(timeout)
+
+        deadline = time.time() + timeout
+        # Renvoyer la requête M-SEARCH une seconde fois après un court délai :
+        # les paquets UDP/multicast peuvent se perdre, un seul essai n'est pas fiable.
         sock.sendto(msg, (SSDP_ADDR, SSDP_PORT))
+        resent = False
         while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            if not resent and remaining < timeout - 0.5:
+                try:
+                    sock.sendto(msg, (SSDP_ADDR, SSDP_PORT))
+                except Exception:
+                    pass
+                resent = True
+            sock.settimeout(max(0.1, remaining))
             try:
                 data, addr = sock.recvfrom(4096)
             except OSError:
                 break
             text = data.decode(errors="replace")
+            logger.debug(f"UPnP: réponse SSDP reçue de {addr[0]}")
             for line in text.splitlines():
                 if line.upper().startswith("LOCATION:"):
                     location = line.split(":", 1)[1].strip()
-                    local_ip = addr[0]
-                    # addr[0] est l'IP de la box; on veut notre propre IP locale.
-                    # On la déduit en ouvrant une socket UDP vers la box.
-                    try:
-                        s2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        s2.connect((addr[0], 1900))
-                        local_ip = s2.getsockname()[0]
-                        s2.close()
-                    except Exception:
-                        pass
+                    local_ip = preferred_local_ip or addr[0]
+                    if not preferred_local_ip:
+                        # addr[0] est l'IP de la box; on veut notre propre IP locale.
+                        # On la déduit en ouvrant une socket UDP vers la box.
+                        deduced = _get_local_ip_for_route(addr[0], 1900)
+                        if deduced:
+                            local_ip = deduced
                     return location, local_ip
     finally:
         sock.close()
+    logger.debug("UPnP: aucune réponse SSDP reçue (vérifier pare-feu Windows / bonne interface réseau)")
     return None
 
 
@@ -506,6 +560,7 @@ def _download_torrent_with_aria2(
     cancel_ev,
     progress_queue,
     original_history_url: str = "",
+    allow_resume: bool = True,
 ) -> tuple[bool, str]:
     source_url = str(torrent_meta.get("source_url") or "")
     relative_path = str(torrent_meta.get("relative_path") or "").strip() or os.path.basename(dest_path)
@@ -526,7 +581,17 @@ def _download_torrent_with_aria2(
     # qui a déjà des pièces se fait unchoke et peut télécharger.
     import hashlib as _hashlib
     _stable_key = _hashlib.md5(f"{source_url}|{file_index}".encode()).hexdigest()[:12]
-    temp_root = os.path.join(dest_dir, ".rgsx_torrent", _stable_key)
+    # Utiliser un emplacement de reprise stable et persistant sous le dossier ROM réel.
+    # Tout doit rester sous le tree des ROMs, jamais dans saves/.
+    rom_root = os.path.abspath(dest_dir or config.ROMS_FOLDER)
+    temp_root = os.path.join(rom_root, ".rgsx_torrent", _stable_key)
+    if not allow_resume:
+        try:
+            shutil.rmtree(temp_root, ignore_errors=True)
+        except Exception as exc:
+            logger.debug("Impossible de nettoyer l'état de reprise torrent %s: %s", temp_root, exc)
+        os.makedirs(temp_root, exist_ok=True)
+        logger.warning("Réinitialisation de l'état de reprise torrent pour %s", temp_root)
     # Enregistrer le temp_root pour permettre le nettoyage sur annulation explicite.
     if task_id:
         torrent_temp_roots[task_id] = temp_root
@@ -766,6 +831,15 @@ def _download_torrent_with_aria2(
                     shutil.rmtree(temp_root, ignore_errors=True)
                 except Exception:
                     pass
+                try:
+                    _stable_key_for_cleanup = os.path.basename(temp_root.rstrip("\\/"))
+                    for _stray_root in _find_stray_torrent_temp_roots(_stable_key_for_cleanup):
+                        if os.path.normcase(os.path.abspath(_stray_root)) == os.path.normcase(os.path.abspath(temp_root)):
+                            continue
+                        shutil.rmtree(_stray_root, ignore_errors=True)
+                        logger.debug(f"Annulation: dossier orphelin supprimé {_stray_root}")
+                except Exception:
+                    pass
                 raise RuntimeError(_("download_canceled") if _ else "Download canceled")
 
             current_path = _find_torrent_downloaded_file(temp_root, relative_path, fallback_name)
@@ -822,6 +896,32 @@ def _download_torrent_with_aria2(
         remaining_output = "\n".join(aria2_output).strip()
 
         if process.returncode != 0:
+            output_text = (remaining_output or "").lower()
+            is_checksum_error = "checksum error" in output_text or "checksum mismatch" in output_text
+            if is_checksum_error and allow_resume:
+                logger.warning("Checksum mismatch détecté pour l'état de reprise torrent; relance depuis zéro")
+                try:
+                    shutil.rmtree(temp_root, ignore_errors=True)
+                except Exception as exc:
+                    logger.debug("Impossible de nettoyer le dossier temp torrent après checksum error %s: %s", temp_root, exc)
+                os.makedirs(temp_root, exist_ok=True)
+                try:
+                    os.remove(temp_manifest)
+                except Exception:
+                    pass
+                _upnp_close_port(upnp_handle, bt_listen_port)
+                torrent_temp_roots.pop(task_id, None)
+                _aria2c_processes.pop(task_id, None)
+                return _download_torrent_with_aria2(
+                    torrent_meta,
+                    dest_dir,
+                    dest_path,
+                    task_id,
+                    cancel_ev,
+                    progress_queue,
+                    original_history_url,
+                    allow_resume=False,
+                )
             raise RuntimeError(remaining_output or f"aria2c exited with code {process.returncode}")
 
         downloaded_path = _find_torrent_downloaded_file(temp_root, relative_path, fallback_name)
@@ -849,17 +949,23 @@ def _download_torrent_with_aria2(
             progress_queue.put((task_id, final_size, max(total_size, final_size), 0.0))
         torrent_temp_roots.pop(task_id, None)
         _aria2c_processes.pop(task_id, None)
-        # Démarrer le seed en arrière-plan (temp_manifest sera supprimé par le seeder une fois terminé).
+        # Ne PAS démarrer le seed maintenant : une extraction automatique peut suivre
+        # immédiatement (fichier .zip/.rar/.7z), et aria2c garderait un verrou sur le
+        # fichier pendant l'extraction, empêchant sa suppression ensuite (WinError 32
+        # sous Windows) et affichant "Seeding" avant même que l'extraction ne soit
+        # terminée. On mémorise donc les infos nécessaires : l'appelant démarrera le
+        # seed lui-même une fois le post-traitement (extraction ou non) terminé, via
+        # _start_pending_torrent_seed_if_any / _discard_pending_torrent_seed.
         if original_history_url:
-            _start_background_seeder(
-                task_id=task_id,
-                source_url=source_url,
-                temp_manifest=temp_manifest,
-                dest_path=dest_path,
-                relative_path=relative_path,
-                file_index=file_index,
-                original_history_url=original_history_url,
-            )
+            _pending_torrent_seeds[task_id] = {
+                "task_id": task_id,
+                "source_url": source_url,
+                "temp_manifest": temp_manifest,
+                "dest_path": dest_path,
+                "relative_path": relative_path,
+                "file_index": file_index,
+                "original_history_url": original_history_url,
+            }
         else:
             try:
                 os.remove(temp_manifest)
@@ -937,38 +1043,42 @@ def _start_background_seeder(
         import hashlib as _hashlib
         import random as _random
         dest_dir = os.path.dirname(dest_path)
-        dest_basename = os.path.basename(dest_path)
-        torrent_basename = os.path.basename(relative_path) or dest_basename
 
-        # Si le nom du fichier dans le torrent diffère du nom final (dest_path),
-        # créer un hard-link portant le nom attendu par aria2c dans un sous-dossier dédié.
-        # aria2c identifie les fichiers par leur nom (chemin interne du torrent) :
-        # sans ce lien, il recréerait le fichier depuis 0 au lieu de seeder.
+        # Chemin relatif attendu par aria2c à l'intérieur du torrent : peut inclure des
+        # sous-dossiers pour un torrent multi-fichiers (ex: "Minerva_Myrient/Redump/.../jeu.zip"),
+        # même si le nom final (dest_path) est un simple fichier à la racine de dest_dir.
+        _relative_parts = [p for p in relative_path.replace('\\', '/').split('/') if p not in ('', '.')]
+        torrent_relpath = os.path.join(*_relative_parts) if _relative_parts else os.path.basename(dest_path)
+
+        # aria2c identifie et vérifie les fichiers d'un torrent par leur CHEMIN INTERNE complet
+        # (sous-dossiers compris), pas seulement par leur nom de fichier. On seed donc TOUJOURS
+        # depuis un hard-link dédié respectant l'arborescence exacte du torrent, dans un
+        # sous-dossier isolé (.rgsx_seed) : sans cela, si la structure de dossiers du torrent
+        # diffère de dest_path (même avec un nom de fichier identique), aria2c ne retrouve pas
+        # le fichier et tente de re-télécharger les pièces manquantes en créant des dossiers/
+        # fichiers indésirables directement dans le dossier ROMS visible par l'utilisateur.
         _seed_key = _hashlib.md5(f"seed|{source_url}|{file_index}".encode()).hexdigest()[:12]
         seed_work_dir = os.path.join(dest_dir, ".rgsx_seed", _seed_key)
         link_created = False
         seed_dir: str
 
-        if torrent_basename != dest_basename:
-            try:
-                os.makedirs(seed_work_dir, exist_ok=True)
-                link_path = os.path.join(seed_work_dir, torrent_basename)
-                if os.path.exists(link_path):
-                    os.remove(link_path)
-                os.link(dest_path, link_path)   # hard-link (même volume)
-                seed_dir = seed_work_dir
-                link_created = True
-            except OSError:
-                # Hard-link impossible (volumes différents, etc.) → seed dans dest_dir
-                # avec le nom réel ; aria2c risque de ne pas trouver le fichier et
-                # de le re-télécharger, mais c'est mieux que de ne pas essayer.
-                logger.warning(
-                    "[seeder] impossible de créer un hard-link pour %s ; "
-                    "le seed peut échouer si le nom ne correspond pas au torrent",
-                    dest_path,
-                )
-                seed_dir = dest_dir
-        else:
+        try:
+            link_path = os.path.join(seed_work_dir, torrent_relpath)
+            os.makedirs(os.path.dirname(link_path), exist_ok=True)
+            if os.path.exists(link_path):
+                os.remove(link_path)
+            os.link(dest_path, link_path)   # hard-link (même volume)
+            seed_dir = seed_work_dir
+            link_created = True
+        except OSError:
+            # Hard-link impossible (volumes différents, etc.) → seed dans dest_dir
+            # avec le nom réel ; aria2c risque de ne pas trouver le fichier et
+            # de le re-télécharger, mais c'est mieux que de ne pas essayer.
+            logger.warning(
+                "[seeder] impossible de créer un hard-link pour %s ; "
+                "le seed peut échouer si le chemin ne correspond pas au torrent",
+                dest_path,
+            )
             seed_dir = dest_dir
 
         try:
@@ -1189,6 +1299,44 @@ def _start_background_seeder(
         daemon=True,
     )
     seeder_thread.start()
+
+
+def _start_pending_torrent_seed_if_any(task_id: str) -> None:
+    """Démarre le seed torrent différé pour `task_id` s'il y en a un en attente.
+
+    À appeler par l'appelant de `_download_torrent_with_aria2` une fois le
+    post-traitement (extraction éventuelle) terminé et seulement si le fichier
+    final (dest_path) existe toujours (voir _discard_pending_torrent_seed sinon).
+    """
+    pending = _pending_torrent_seeds.pop(task_id, None)
+    if not pending:
+        return
+    _start_background_seeder(
+        task_id=pending["task_id"],
+        source_url=pending["source_url"],
+        temp_manifest=pending["temp_manifest"],
+        dest_path=pending["dest_path"],
+        relative_path=pending["relative_path"],
+        file_index=pending["file_index"],
+        original_history_url=pending["original_history_url"],
+    )
+
+
+def _discard_pending_torrent_seed(task_id: str) -> None:
+    """Annule un seed torrent en attente pour `task_id` (ex: fichier supprimé par
+    l'extraction) : supprime simplement le manifest temporaire, aucun seed ne démarre."""
+    pending = _pending_torrent_seeds.pop(task_id, None)
+    if not pending:
+        return
+    try:
+        os.remove(pending["temp_manifest"])
+    except Exception:
+        pass
+    logger.debug(
+        "Seed torrent annulé pour %s (fichier absent après post-traitement, ex: extrait puis supprimé)",
+        pending.get("dest_path"),
+    )
+
 
 
 def _build_browser_download_headers(referer: str | None = None, accept: str = 'application/octet-stream,*/*;q=0.8') -> dict:
@@ -3149,6 +3297,12 @@ torrent_temp_roots: dict[str, str] = {}
 _aria2c_processes: dict[str, "subprocess.Popen"] = {}
 # Process aria2c de seed post-téléchargement, indexés par task_id.
 _active_seeders: dict[str, dict] = {}
+# Seeds torrent en attente de démarrage (téléchargement terminé mais extraction
+# éventuelle pas encore effectuée). Voir _start_pending_torrent_seed_if_any /
+# _discard_pending_torrent_seed : on ne démarre le seed qu'une fois le
+# post-traitement (extraction) terminé, pour éviter qu'aria2c ne verrouille le
+# fichier pendant que celui-ci est en cours d'extraction/suppression.
+_pending_torrent_seeds: dict[str, dict] = {}
 # Flag global : True quand l'application est en cours d'arrêt propre.
 # Permet d'ignorer les signaux d'annulation déclenchés par le shutdown asyncio
 # et de préserver l'état "Téléchargement" en historique pour la reprise.
@@ -3175,6 +3329,36 @@ def request_cancel(task_id: str) -> bool:
     logger.debug(f"No cancel event found for task_id={task_id}")
     return False
 
+
+def _find_stray_torrent_temp_roots(stable_key: str) -> list[str]:
+    """Recherche tous les dossiers '.rgsx_torrent/<stable_key>' existants sous les
+    dossiers de plateformes de ROMS_FOLDER.
+
+    Utile car le dossier de destination résolu pour une plateforme peut varier
+    d'une session à l'autre (ex: bug historique de résolution de dossier avant
+    chargement de config.platform_dicts), laissant des dossiers de reprise
+    orphelins dans un ancien emplacement. On les recherche tous pour un nettoyage
+    complet, plutôt que de se fier uniquement au dernier temp_root connu.
+    """
+    found: list[str] = []
+    if not stable_key:
+        return found
+    roms_root = getattr(config, 'ROMS_FOLDER', '') or ''
+    if not roms_root or not os.path.isdir(roms_root):
+        return found
+    try:
+        for entry in os.listdir(roms_root):
+            platform_dir = os.path.join(roms_root, entry)
+            if not os.path.isdir(platform_dir):
+                continue
+            candidate = os.path.join(platform_dir, ".rgsx_torrent", stable_key)
+            if os.path.isdir(candidate):
+                found.append(candidate)
+    except Exception as e:
+        logger.debug(f"_find_stray_torrent_temp_roots: erreur scan {roms_root}: {e}")
+    return found
+
+
 def cleanup_torrent_temp(task_id: str) -> bool:
     """Supprime le dossier temporaire torrent associé à task_id.
     
@@ -3184,14 +3368,32 @@ def cleanup_torrent_temp(task_id: str) -> bool:
     Retourne True si un dossier a été supprimé.
     """
     temp_root = torrent_temp_roots.pop(task_id, None)
+    removed_any = False
     if temp_root and os.path.isdir(temp_root):
         try:
             shutil.rmtree(temp_root, ignore_errors=True)
             logger.debug(f"cleanup_torrent_temp: dossier supprimé {temp_root}")
-            return True
+            removed_any = True
         except Exception as e:
             logger.debug(f"cleanup_torrent_temp: erreur suppression {temp_root}: {e}")
-    return False
+
+    # Nettoyer aussi les éventuels dossiers orphelins du même torrent situés sous
+    # un autre dossier de plateforme (ex: résolution de dossier différente d'une
+    # session à l'autre).
+    if temp_root:
+        stable_key = os.path.basename(temp_root.rstrip("\\/"))
+        for stray_root in _find_stray_torrent_temp_roots(stable_key):
+            if os.path.normcase(os.path.abspath(stray_root)) == os.path.normcase(os.path.abspath(temp_root)):
+                continue
+            try:
+                shutil.rmtree(stray_root, ignore_errors=True)
+                logger.debug(f"cleanup_torrent_temp: dossier orphelin supprimé {stray_root}")
+                removed_any = True
+            except Exception as e:
+                logger.debug(f"cleanup_torrent_temp: erreur suppression orpheline {stray_root}: {e}")
+
+    return removed_any
+
 
 
 def _cleanup_torrent_resume_artifacts(source_url: str | None, file_index: int | None, dest_path: str | None) -> bool:
@@ -3203,8 +3405,9 @@ def _cleanup_torrent_resume_artifacts(source_url: str | None, file_index: int | 
     try:
         import hashlib as _hashlib
         stable_key = _hashlib.md5(f"{source_url}|{int(file_index or 1)}".encode()).hexdigest()[:12]
-        dest_dir = os.path.dirname(dest_path)
-        temp_parent = os.path.join(dest_dir, ".rgsx_torrent")
+        dest_dir = os.path.dirname(dest_path) or os.path.abspath(config.ROMS_FOLDER)
+        rom_root = os.path.abspath(dest_dir)
+        temp_parent = os.path.join(rom_root, ".rgsx_torrent")
         temp_root = os.path.join(temp_parent, stable_key)
 
         if os.path.isdir(temp_root):
@@ -3219,6 +3422,22 @@ def _cleanup_torrent_resume_artifacts(source_url: str | None, file_index: int | 
                     logger.debug(f"_cleanup_torrent_resume_artifacts: dossier vide supprimé {temp_parent}")
             except Exception:
                 pass
+
+        # Nettoyer aussi les dossiers orphelins du même torrent sous un autre
+        # dossier de plateforme (résolution de dossier incohérente d'une session
+        # à l'autre).
+        for stray_root in _find_stray_torrent_temp_roots(stable_key):
+            if os.path.normcase(os.path.abspath(stray_root)) == os.path.normcase(os.path.abspath(temp_root)):
+                continue
+            try:
+                shutil.rmtree(stray_root, ignore_errors=True)
+                removed_any = True
+                logger.debug(f"_cleanup_torrent_resume_artifacts: dossier orphelin supprimé {stray_root}")
+                stray_parent = os.path.dirname(stray_root)
+                if os.path.isdir(stray_parent) and not os.listdir(stray_parent):
+                    os.rmdir(stray_parent)
+            except Exception as e:
+                logger.debug(f"_cleanup_torrent_resume_artifacts: erreur suppression orpheline {stray_root}: {e}")
     except Exception as exc:
         logger.debug(f"_cleanup_torrent_resume_artifacts: erreur nettoyage: {exc}")
 
@@ -3551,12 +3770,12 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                 for platform_dict in config.platform_dicts:
                     if platform_dict.get("platform_name") == platform:
                         # Priorité: clé 'folder'; fallback legacy: 'dossier'; sinon normalisation du nom de plateforme
-                        platform_folder = platform_dict.get("folder") or platform_dict.get("dossier") or normalize_platform_name(platform)
+                        platform_folder = platform_dict.get("folder") or platform_dict.get("dossier") or resolve_platform_folder(platform)
                         dest_dir = apply_symlink_path(config.ROMS_FOLDER, platform_folder)
                         logger.debug(f"Répertoire de destination trouvé pour {platform}: {dest_dir}")
                         break
                 if not dest_dir:
-                    platform_folder = normalize_platform_name(platform)
+                    platform_folder = resolve_platform_folder(platform)
                     dest_dir = apply_symlink_path(config.ROMS_FOLDER, platform_folder)
 
             # Spécifique: si le système est "BIOS" on force le dossier BIOS
@@ -4027,6 +4246,15 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                                 **({'Cookie': archive_cookie} if archive_cookie else {})
                             }
                         ])
+                    elif 'vimm.net' in url:
+                        # dl2.vimm.net ferme parfois la connexion sans réponse ("RemoteDisconnected")
+                        # de façon transitoire (charge serveur / anti-hotlinking ponctuel), même quand
+                        # le même téléchargement fonctionne l'instant d'après. On retente avec
+                        # Connection: close pour forcer une connexion TCP fraîche plutôt que de
+                        # réutiliser une connexion du pool qui a pu être coupée côté serveur.
+                        vimm_retry_headers = download_headers.copy()
+                        vimm_retry_headers['Connection'] = 'close'
+                        header_variants.extend([vimm_retry_headers, vimm_retry_headers.copy()])
 
                     response = None
                     last_status = None
@@ -4034,14 +4262,24 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     last_error_type = None
                     browser_challenge_detected = False
 
-                    for attempt, hv in enumerate(header_variants, start=1):
+                    # Le rate-limit 429 de vimm.net (dl2.vimm.net) peut durer plus longtemps que
+                    # les quelques secondes couvertes par les variantes de headers habituelles ;
+                    # on s'autorise donc des tentatives supplémentaires dédiées, avec un backoff
+                    # exponentiel, spécifiquement en réaction à des 429 répétés.
+                    extra_429_retries = 4 if 'vimm.net' in url else 0
+                    total_max_attempts = len(header_variants) + extra_429_retries
+                    rate_limit_hits = 0
+                    attempt = 0
+                    while attempt < total_max_attempts:
+                        attempt += 1
+                        hv = header_variants[min(attempt - 1, len(header_variants) - 1)]
                         try:
                             if url in config.download_progress:
-                                config.download_progress[url]["status"] = f"Try {attempt}/{len(header_variants)}"
+                                config.download_progress[url]["status"] = f"Try {attempt}/{total_max_attempts}"
                                 config.download_progress[url]["progress_percent"] = 0
                                 config.needs_redraw = True
 
-                            logger.debug(f"Tentative téléchargement {attempt}/{len(header_variants)} avec headers: {_redact_headers(hv)}")
+                            logger.debug(f"Tentative téléchargement {attempt}/{total_max_attempts} avec headers: {_redact_headers(hv)}")
                             timeout_val = (60, 90) if 'archive.org' in url else 30
                             r = session.get(url, stream=True, timeout=timeout_val, allow_redirects=True, headers=hv)
                             last_status = r.status_code
@@ -4072,10 +4310,28 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                             last_error = str(e)
                             last_error_type = "connection"
                             logger.debug(f"Erreur connexion tentative {attempt}: {e}")
+                            if (('archive.org' in url) or ('vimm.net' in url)) and attempt < total_max_attempts:
+                                time.sleep(2)
                         except requests.HTTPError as e:
                             last_error = str(e)
                             last_error_type = "http"
                             logger.debug(f"Erreur HTTP tentative {attempt}: {e}")
+                            if last_status == 429:
+                                # Rate limit : on respecte l'en-tête Retry-After si présent, sinon
+                                # on patiente avec un backoff exponentiel (5s, 10s, 20s, 30s...)
+                                # avant de retenter, car ce type de limite est généralement temporaire
+                                # mais peut durer plus que quelques secondes.
+                                retry_after = None
+                                try:
+                                    retry_after = float(r.headers.get('Retry-After', ''))
+                                except Exception:
+                                    retry_after = None
+                                wait_time = min(max(retry_after or (5.0 * (2 ** rate_limit_hits)), 1.0), 30.0)
+                                rate_limit_hits += 1
+                                if attempt < total_max_attempts:
+                                    logger.debug(f"429 Too Many Requests, attente {wait_time:.1f}s avant nouvelle tentative")
+                                    time.sleep(wait_time)
+                                continue
                             if last_status not in (401, 403):
                                 break
                         except requests.RequestException as e:
@@ -4084,7 +4340,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                             logger.debug(f"Erreur requête tentative {attempt}: {e}")
                             if isinstance(e, requests.HTTPError) and last_status not in (401, 403):
                                 break
-                            if 'archive.org' in url and attempt < len(header_variants):
+                            if 'archive.org' in url and attempt < total_max_attempts:
                                 time.sleep(2)
 
                     if response is None:
@@ -4139,6 +4395,11 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                                 error_msg = _("network_auth_required").format(last_status) if _ else f"Authentication required (HTTP {last_status})"
                             elif last_status == 403:
                                 error_msg = _("network_access_denied").format(last_status) if _ else f"Access denied (HTTP {last_status})"
+                            elif last_status == 429 and 'vimm.net' in url:
+                                # Vimm.net limite apparemment à un seul téléchargement simultané par IP :
+                                # un 429 persistant après plusieurs tentatives est très probablement dû à
+                                # un autre téléchargement vimm.net déjà en cours, pas à un vrai blocage.
+                                error_msg = _("network_vimm_rate_limit") if _ else "Vimm.net limits downloads to one at a time per IP. Wait for the other download to finish and retry."
                             elif last_status >= 500:
                                 error_msg = _("network_server_error").format(last_status) if _ else f"Server error (HTTP {last_status})"
                             else:
@@ -4150,7 +4411,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                         else:
                             error_msg = _("network_no_response") if _ else "No response from server"
 
-                        attempts_count = len(header_variants)
+                        attempts_count = attempt
                         full_error_msg = _("network_connection_failed").format(attempts_count) if _ else f"Connection failed after {attempts_count} attempts"
                         full_error_msg += f" - {error_msg}"
                         if last_error:
@@ -4312,6 +4573,17 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
             else:
                 result[0] = True
                 result[1] = _("network_download_ok").format(game_name)
+
+            # Démarrer le seed torrent différé (le cas échéant) maintenant que le
+            # post-traitement (extraction ou non) est terminé : évite le conflit de
+            # verrou de fichier Windows entre aria2c (seed) et la suppression du zip
+            # source par l'extraction, et n'affiche "Seeding" qu'une fois l'extraction
+            # réellement terminée. Si le fichier a été extrait puis supprimé, le seed
+            # est simplement annulé (rien à seeder).
+            if os.path.exists(dest_path):
+                _start_pending_torrent_seed_if_any(task_id)
+            else:
+                _discard_pending_torrent_seed(task_id)
         except InsufficientDiskSpaceError as e:
             logger.warning(f"Téléchargement annulé par manque d'espace disque pour {url}: {e}")
             result[0] = False
@@ -4446,7 +4718,17 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                                         if _save_history_with_feedback("download_rom:progress"):
                                             last_saved_progress_percent = progress_percent
                                     break
-            await asyncio.sleep(0.1)
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                # La tâche asyncio a été annulée depuis l'UI (Cancel Download). Le thread
+                # d'arrière-plan a déjà reçu le signal coopératif via cancel_events
+                # (request_cancel) et va s'arrêter de lui-même : on sort de la boucle
+                # sans propager l'annulation, pour ne jamais sauter le nettoyage final
+                # (thread.join, drain de la queue, notify_download_finished) qui libère
+                # le slot de la file d'attente.
+                logger.debug(f"Boucle de progression annulée (Cancel Download) pour task_id={task_id}")
+                break
         except Exception as e:
             logger.error(f"Erreur mise à jour progression: {str(e)}")
     
@@ -4684,12 +4966,12 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                 platform_folder = None
                 for platform_dict in config.platform_dicts:
                     if platform_dict.get("platform_name") == platform:
-                        platform_folder = platform_dict.get("folder") or platform_dict.get("dossier") or normalize_platform_name(platform)
+                        platform_folder = platform_dict.get("folder") or platform_dict.get("dossier") or resolve_platform_folder(platform)
                         dest_dir = apply_symlink_path(config.ROMS_FOLDER, platform_folder)
                         break
                 if not dest_dir:
                     logger.warning(f"Aucun dossier 'folder'/'dossier' trouvé pour la plateforme {platform}")
-                    platform_folder = normalize_platform_name(platform)
+                    platform_folder = resolve_platform_folder(platform)
                     dest_dir = apply_symlink_path(config.ROMS_FOLDER, platform_folder)
             logger.debug(f"Répertoire destination déterminé: {dest_dir}")
 
@@ -5806,7 +6088,15 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                                     entry["speed"] = speed  # Ajout de la vitesse
                                     config.needs_redraw = True
                                     break
-            await asyncio.sleep(0.1)
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                # Cf. download_rom : on ne propage pas l'annulation ici pour garantir
+                # que thread.join()/notify_download_finished() s'exécutent toujours et
+                # libèrent le slot de la file d'attente (sinon active_download_count
+                # reste bloqué et la queue ne redémarre plus après un Cancel Download).
+                logger.debug(f"Boucle de progression annulée (Cancel Download) pour task_id={task_id}")
+                break
         except Exception as e:
             logger.error(f"Erreur mise à jour progression: {str(e)}")
 

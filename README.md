@@ -36,6 +36,29 @@ After installation:
    - **RetroBat**: Extract both `ports` and `windows` folders to `/roms/`
 3. **Refresh**: `Menu > Game Settings > Update game list`
 
+### Windows (RetroBat) Installation Details
+
+The BAT file (`RGSX Retrobat.bat`) handles Python detection and installation automatically:
+
+**Python Detection Priority:**
+1. `python.exe` in system PATH (user-installed Python)
+2. `py.exe` (Python Launcher)
+3. Local bundle: `%ROOT_DIR%\system\tools\Python\python.exe`
+   - If not found → automatically downloads and installs from `python.zip`
+
+**First Launch Process:**
+1. Checks for Python installation
+2. If missing → downloads `python.zip` (~53MB) from GitHub
+3. Extracts Python 3.13 embedded distribution to `system\tools\Python\`
+4. Installs required packages (pygame-ce, requests, libtorrent, etc.)
+5. Configures Windows Firewall rules
+6. Starts RGSX
+
+**Requirements:**
+- Windows 10/11
+- Internet connection (for first launch only)
+- No manual Python installation required (embedded Python is used automatically)
+
 ### Manual Update (if automatic update failed)
 Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameSets/RGSX/releases/latest/download/RGSX_full_latest.zip)
 
@@ -103,11 +126,19 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 - 🎯 **Smart System Detection** – Auto-discovers supported systems from `es_systems.cfg`
 - 📦 **Intelligent Archive Handling** – Auto-extracts archives when systems don't support ZIP files
 - 🔑 **Premium Unlocking** – 1Fichier API + AllDebrid/Debrid-Link/Real-Debrid/TorBox fallback for unlimited downloads
-- 🎨 **Fully Customizable** – Layout (3×3 to 4×4), fonts, font sizes (UI + footer), languages (EN/FR/DE/ES/IT/PT)
+- 🎨 **Fully Customizable** – Layout (3×3 to 4×4), fonts, font sizes (UI + footer), languages (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 - 🎮 **Controller-First Design** – Auto-mapping for popular controllers + custom remapping support
 - 🔍 **Advanced Filtering** – Search by name, hide/show unsupported systems, filter platforms
 - 📊 **Download Management** – Queue system, history tracking, progress notifications
 - ♿ **Accessibility** – Separate font scaling for UI and footer, keyboard-only mode support
+
+### Game List Status Indicators
+
+| Status | Marker | Color | Description |
+|--------|--------|-------|-------------|
+| Downloaded | `[>]` | 🟢 Green | ROM file exists locally |
+| Downloading | `[~] %` | 🟡 Yellow | Active download with progress |
+| Failed | `[X]` | 🔴 Red | Last download attempt failed
 
 > ### 🔑 API Keys Setup
 > For unlimited 1Fichier downloads, add your API key(s) to `/saves/ports/rgsx/`:
@@ -175,7 +206,7 @@ RGSX includes a web interface that launched automatically when using RGSX for re
 │   │   ├── network.py                 # Download manager
 │   │   ├── rgsx_settings.py           # Settings manager
 │   │   ├── assets/controls/           # Controller profiles
-│   │   ├── languages/                 # Translations (EN/FR/DE/ES/IT/PT)
+│   │   ├── languages/                 # Translations (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 │   │   └── logs/RGSX.log              # Runtime logs
 │   ├── gamelist.xml
 │   ├── images/
@@ -185,6 +216,8 @@ RGSX includes a web interface that launched automatically when using RGSX for re
     ├── gamelist.xml
     ├── images/
     └── videos/
+└── deps/
+    └── python.zip                     # Portable Python 3.13 (for automatic installation)
 
 /saves/ports/rgsx/
 ├── rgsx_settings.json        # User preferences
