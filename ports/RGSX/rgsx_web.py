@@ -20,7 +20,7 @@ import mimetypes
 from datetime import datetime, timezone
 from email.utils import formatdate, parsedate_to_datetime
 import config
-from history import load_history, save_history
+from history import load_history, save_history, load_downloaded_games
 from utils import load_sources, load_games, extract_data, get_clean_display_name, parse_torrent_download_url, request_torrent_manifest_refresh, _resolve_platform_image_path
 from network import download_rom, download_from_1fichier
 from pathlib import Path
@@ -372,6 +372,10 @@ logger.info("Chargement initial des données...")
 try:
     initial_sources = load_sources()  # Initialise config.games_count
     logger.info(f"{len(getattr(config, 'platforms', []))} plateformes chargées")
+    
+    # Charger les jeux déjà téléchargés (pour les indicateurs de statut)
+    config.downloaded_games = load_downloaded_games()
+    logger.info(f"Jeux téléchargés chargés: {len(config.downloaded_games)} plateformes")
     
     # Initialiser filter_platforms_selection depuis les settings (pour filtrer les plateformes)
     from rgsx_settings import load_rgsx_settings
@@ -825,13 +829,8 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     
                     history = load_history() or []
                     
-                    # İndirilen oyunlar
-                    downloaded = {}
-                    try:
-                        with open(config.DOWNLOADED_GAMES_PATH, 'r', encoding='utf-8') as f:
-                            downloaded = _json.load(f)
-                    except:
-                        pass
+                    # İndirilen oyunlar (config'den al, dosyadan değil)
+                    downloaded = getattr(config, 'downloaded_games', {})
                     
                     # Aktif indirmeler (progress)
                     in_progress = {}
@@ -1150,7 +1149,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
         config.download_active = True
         
         # Mettre à jour l'historique: queued -> Downloading
-        from history import load_history, save_history
         config.history = load_history()
         for entry in config.history:
             if entry.get('task_id') == task_id and entry.get('status') == 'Queued':
@@ -1486,7 +1484,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
                 
                 try:
                     from network import request_cancel
-                    from history import load_history, save_history
                     
                     # Trouver le task_id correspondant à l'URL dans l'historique
                     history = load_history() or []
