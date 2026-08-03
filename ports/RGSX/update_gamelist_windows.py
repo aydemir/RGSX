@@ -56,37 +56,37 @@ def update_gamelist():
                 elem = ET.SubElement(game_elem, key)
                 elem.text = value
             logger.info("Nouvelle entrée RGSX ajoutée")
-        # else:
-        #     # Fusionner: préserver les champs gérés par ES, compléter/mettre à jour nos champs
-        #     def ensure(tag, value):
-        #         elem = game_elem.find(tag)
-        #         if elem is None:
-        #             elem = ET.SubElement(game_elem, tag)
-        #         if elem.text is None or elem.text.strip() == "":
-        #             elem.text = value
+        else:
+            # Fusionner: préserver les champs gérés par ES, compléter/mettre à jour nos champs
+            def ensure(tag, value):
+                elem = game_elem.find(tag)
+                if elem is None:
+                    elem = ET.SubElement(game_elem, tag)
+                if elem.text is None or elem.text.strip() == "":
+                    elem.text = value
 
-        #     # S'assurer du chemin
-        #     ensure("path", RGSX_ENTRY["path"])
-        #     # Ne pas écraser le nom s'il existe déjà (ES peut le définir selon le fichier)
-        #     name_elem = game_elem.find("name")
-        #     existing_name = ""
-        #     if name_elem is not None and name_elem.text:
-        #         existing_name = name_elem.text.strip()
-        #     if not existing_name:
-        #         ensure("name", RGSX_ENTRY.get("name", "RGSX"))
+            # S'assurer du chemin
+            ensure("path", RGSX_ENTRY["path"])
+            # Ne pas écraser le nom s'il existe déjà (ES peut le définir selon le fichier)
+            name_elem = game_elem.find("name")
+            existing_name = ""
+            if name_elem is not None and name_elem.text:
+                existing_name = name_elem.text.strip()
+            if not existing_name:
+                ensure("name", RGSX_ENTRY.get("name", "RGSX"))
 
-        #     # Champs d'habillage que nous voulons imposer/mettre à jour
-        #     for tag in ("desc", "image", "video", "marquee", "thumbnail", "fanart", "developer", "genre", "releasedate"):
-        #         val = RGSX_ENTRY.get(tag)
-        #         if val:
-        #             elem = game_elem.find(tag)
-        #             if elem is None:
-        #                 elem = ET.SubElement(game_elem, tag)
-        #             # Toujours aligner ces champs sur nos valeurs pour garder l'expérience RGSX
-        #             elem.text = val
+            # Champs d'habillage que nous voulons imposer/mettre à jour
+            for tag in ("desc", "image", "video", "marquee", "thumbnail", "fanart", "developer", "genre", "releasedate"):
+                val = RGSX_ENTRY.get(tag)
+                if val:
+                    elem = game_elem.find(tag)
+                    if elem is None:
+                        elem = ET.SubElement(game_elem, tag)
+                    # Toujours aligner ces champs sur nos valeurs pour garder l'expérience RGSX
+                    elem.text = val
 
-        #     # Ne pas toucher aux champs: playcount, lastplayed, gametime, lang, favorite, kidgame, hidden, rating
-        #     logger.info("Entrée RGSX mise à jour (fusion)")
+            # Ne pas toucher aux champs: playcount, lastplayed, gametime, lang, favorite, kidgame, hidden, rating
+            logger.info("Entrée RGSX mise à jour (fusion)")
 
         # Générer le XML avec minidom pour une indentation correcte
         rough_string = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode')
