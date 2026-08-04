@@ -2211,6 +2211,7 @@ def draw_game_list(screen):
         # Vérifier si le jeu est en cours de téléchargement
         is_downloading = False
         download_percent = 0
+        # 1) Tâches locales (mode --ui-only / sans manager)
         for tid, (task, dl_url, dl_name, dl_platform) in getattr(config, 'download_tasks', {}).items():
             dl_name_stem = os.path.splitext(dl_name)[0] if dl_name else ""
             if dl_name_stem and dl_name_stem.lower() == game_name.lower():
@@ -2224,6 +2225,17 @@ def draw_game_list(screen):
                             download_percent = int(prog_data.get("progress_percent", 0))
                             break
                 break
+        # 2) Téléchargements du manager (état reflété via SSE)
+        if not is_downloading:
+            for prog_url, prog_data in getattr(config, 'download_progress', {}).items():
+                prog_name_stem = os.path.splitext(prog_data.get("game_name", "") or "")[0]
+                if prog_name_stem and prog_name_stem.lower() == game_name.lower():
+                    prog_status = str(prog_data.get("status", ""))
+                    if (prog_status in ("Downloading", "Connecting", "Extracting")
+                            or prog_status.startswith("Try ") or "Downloading" in prog_status):
+                        is_downloading = True
+                        download_percent = int(prog_data.get("progress_percent", 0))
+                    break
         
         # Vérifier si le jeu a échoué (dernière tentative dans l'historique)
         is_failed = False

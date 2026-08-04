@@ -1,0 +1,596 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+RGSX Download Manager daemon.
+
+Single background process that:
+  * runs the download queue worker (network.download_queue_worker)
+  * hosts the RGSX web UI + REST API on port 5000
+  * pushes real-time events over SSE (/api/events)
+  * lives in the system tray (Windows) so downloads keep running in the background
+
+Run directly:            python rgsx_manager.py [--port N] [--no-tray]
+Spawn helper:            python rgsx_manager.py --auto-start-install / --auto-start-remove
+"""
+import os
+import sys
+
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+
+# Headless: this process must never touch the pygame UI
+os.environ.setdefault("RGSX_HEADLESS", "1")
+
+import argparse
+import datetime
+import json
+import logging
+import queue as queue_module
+import threading
+import time
+import urllib.parse
+import urllib.request
+import webbrowser
+
+import config
+import rgsx_web
+from rgsx_web import RGSXHandler, get_cached_games, get_translation
+from utils import get_clean_display_name
+
+from network import (
+    download_queue_worker,
+    shutdown_downloads,
+    cancel_all_downloads,
+)
+from history import load_history, save_history
+
+logger = logging.getLogger("rgsx_manager")
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+STOP = threading.Event()
+
+SUBSCRIBERS = set()
+SUBSCRIBERS_LOCK = threading.Lock()
+
+_TRAY_ICON = None
+
+
+# ---------------------------------------------------------------------------
+# SSE
+# ---------------------------------------------------------------------------
+def _sse_event(event_type: str, data) -> str:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event_type}\ndata: {payload}\n\n"
+
+
+def _build_snapshot() -> dict:
+    try:
+        history = list(getattr(config, "history", []) or [])
+    except Exception:
+        history = []
+    try:
+        queue_state = list(getattr(config, "download_queue", []) or [])
+    except Exception:
+        queue_state = []
+    try:
+        progress = dict(getattr(config, "download_progress", {}) or {})
+    except Exception:
+        progress = {}
+    try:
+        downloaded = dict(getattr(config, "downloaded_games", {}) or {})
+    except Exception:
+        downloaded = {}
+    return {
+        "history": history,
+        "queue": queue_state,
+        "active": bool(getattr(config, "download_active", False)),
+        "progress": progress,
+        "downloaded": downloaded,
+    }
+
+
+def _broadcast(event_type: str, data=None):
+    if not SUBSCRIBERS:
+        return
+    msg = _sse_event(event_type, data if data is not None else {})
+    with SUBSCRIBERS_LOCK:
+        subs = list(SUBSCRIBERS)
+    for q in subs:
+        try:
+            q.put_nowait({"type": event_type, "raw": msg})
+        except Exception:
+            pass
+
+
+def _broadcaster_loop():
+    """Diff config state every ~250ms and push changed sections over SSE."""
+    last = {
+        "history": None,
+        "queue": None,
+        "progress": None,
+        "downloaded": None,
+    }
+    last_snapshot = 0.0
+    while not STOP.is_set():
+        time.sleep(0.25)
+        try:
+            hist = getattr(config, "history", None)
+            fp = repr(hist)
+            if fp != last["history"]:
+                last["history"] = fp
+                _broadcast("history", {"history": list(hist or [])})
+
+            qstate = getattr(config, "download_queue", None)
+            fp = repr(qstate)
+            if fp != last["queue"]:
+                last["queue"] = fp
+                _broadcast("queue", {
+                    "queue": list(qstate or []),
+                    "active": bool(getattr(config, "download_active", False)),
+                })
+
+            prog = getattr(config, "download_progress", None)
+            fp = repr(prog)
+            if fp != last["progress"]:
+                last["progress"] = fp
+                _broadcast("progress", {
+                    "progress": dict(prog or {}),
+                    "active": bool(getattr(config, "download_active", False)),
+                })
+
+            down = getattr(config, "downloaded_games", None)
+            fp = repr(down)
+            if fp != last["downloaded"]:
+                last["downloaded"] = fp
+                _broadcast("downloaded", {"downloaded": dict(down or {})})
+
+            now = time.time()
+            if now - last_snapshot >= 30.0:
+                last_snapshot = now
+                _broadcast("snapshot", _build_snapshot())
+        except Exception as e:
+            logger.debug(f"[MANAGER] broadcast loop error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# HTTP handler
+# ---------------------------------------------------------------------------
+class ManagerHandler(RGSXHandler):
+    """RGSX web handler + manager-specific endpoints."""
+
+    # -- GET ---------------------------------------------------------------
+    def do_GET(self):
+        parsed_path = urllib.parse.urlparse(self.path)
+        path = parsed_path.path
+
+        if path == "/api/health":
+            self._send_json({
+                "success": True,
+                "status": "ok",
+                "manager": True,
+                "version": getattr(config, "app_version", ""),
+                "pid": os.getpid(),
+            })
+            return
+
+        if path == "/api/events":
+            self._handle_sse()
+            return
+
+        super().do_GET()
+
+    # -- POST --------------------------------------------------------------
+    def do_POST(self):
+        parsed_path = urllib.parse.urlparse(self.path)
+        path = parsed_path.path
+
+        if path == "/api/download":
+            self._handle_download_worker()
+            return
+
+        if path == "/api/shutdown":
+            self._send_json({"success": True, "message": "Shutdown en cours..."})
+            threading.Thread(target=_trigger_shutdown, daemon=True).start()
+            return
+
+        super().do_POST()
+
+    # -- SSE ---------------------------------------------------------------
+    def _handle_sse(self):
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+        except Exception:
+            return
+
+        q = queue_module.Queue()
+        with SUBSCRIBERS_LOCK:
+            SUBSCRIBERS.add(q)
+
+        try:
+            self.wfile.write(_sse_event("snapshot", _build_snapshot()).encode("utf-8"))
+            self.wfile.flush()
+            while not STOP.is_set():
+                try:
+                    item = q.get(timeout=15)
+                    self.wfile.write(item["raw"].encode("utf-8"))
+                    self.wfile.flush()
+                except queue_module.Empty:
+                    self.wfile.write(_sse_event("snapshot", _build_snapshot()).encode("utf-8"))
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            with SUBSCRIBERS_LOCK:
+                SUBSCRIBERS.discard(q)
+
+    # -- Worker-based /api/download ----------------------------------------
+    def _handle_download_worker(self):
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode("utf-8")) if content_length > 0 else {}
+        except Exception as e:
+            self._send_json({"success": False, "error": str(e)}, status=400)
+            return
+
+        platform = data.get("platform")
+        game_index = data.get("game_index")
+        game_name_param = data.get("game_name")
+        direct_url = data.get("url")
+        mode = data.get("mode", "now")
+
+        if not platform or (game_index is None and not game_name_param and not direct_url):
+            self._send_json({
+                "success": False,
+                "error": "Paramètres manquants: platform et (game_index ou game_name) requis",
+            }, status=400)
+            return
+
+        game_name = None
+        game_url = None
+
+        if direct_url:
+            # Délégation directe (TV UI / CLI): url + game_name déjà connus
+            game_url = direct_url
+            game_name = game_name_param
+            if not game_name:
+                self._send_json({"success": False, "error": "Paramètre manquant: game_name requis avec url"}, status=400)
+                return
+            from utils import check_extension_before_download
+            check_result = check_extension_before_download(game_url, platform, game_name)
+            if not check_result:
+                self._send_json({
+                    "success": False,
+                    "error": "Extension non supportée ou erreur de vérification",
+                }, status=400)
+                return
+            is_zip_non_supported = check_result[3] if len(check_result) > 3 else False
+        else:
+            games, _, _ = get_cached_games(platform)
+
+            if game_name_param and game_index is None:
+                game_index = None
+                for idx, game in enumerate(games):
+                    if game.name == game_name_param:
+                        game_index = idx
+                        break
+                if game_index is None:
+                    self._send_json({"success": False, "error": f"Jeu non trouvé: {game_name_param}"}, status=400)
+                    return
+
+            if game_index is None or game_index < 0 or game_index >= len(games):
+                self._send_json({"success": False, "error": f"Index de jeu invalide: {game_index}"}, status=400)
+                return
+
+            game = games[game_index]
+            game_name = game.name
+            game_url = game.url
+
+            if not game_url:
+                self._send_json({
+                    "success": False,
+                    "error": get_translation("popup_torrent_in_maintenance", "torrent in maintenance"),
+                }, status=400)
+                return
+
+            from utils import check_extension_before_download
+            check_result = check_extension_before_download(game_url, platform, game_name)
+            if not check_result:
+                self._send_json({
+                    "success": False,
+                    "error": "Extension non supportée ou erreur de vérification",
+                }, status=400)
+                return
+
+            is_zip_non_supported = check_result[3] if len(check_result) > 3 else False
+
+        is_1fichier = "1fichier.com" in game_url
+        task_id = f"web_{int(time.time() * 1000)}"
+
+        # Push into the shared queue: the download_queue_worker picks it up
+        # within ~1s (immediately if a slot is free).
+        config.download_queue.append({
+            "url": game_url,
+            "platform": platform,
+            "game_name": game_name,
+            "is_zip_non_supported": is_zip_non_supported,
+            "is_1fichier": is_1fichier,
+            "task_id": task_id,
+            "status": "Queued",
+        })
+
+        queue_history_entry = {
+            "platform": platform,
+            "game_name": game_name,
+            "display_name": get_clean_display_name(game_name, platform),
+            "status": "Queued",
+            "url": game_url,
+            "progress": 0,
+            "message": get_translation("download_queued"),
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "downloaded_size": 0,
+            "total_size": 0,
+            "task_id": task_id,
+        }
+        config.history.append(queue_history_entry)
+        try:
+            save_history(config.history)
+        except Exception as e:
+            logger.warning(f"[MANAGER] save_history échec: {e}")
+
+        logger.info(f"[MANAGER] {game_name} ajouté à la queue (mode={mode}, position={len(config.download_queue)})")
+        self._send_json({
+            "success": True,
+            "message": f"{game_name} ajouté à la file d'attente",
+            "task_id": task_id,
+            "game_name": game_name,
+            "platform": platform,
+            "queued": True,
+            "queue_position": len(config.download_queue),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Auto-start (Windows registry)
+# ---------------------------------------------------------------------------
+_AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_AUTOSTART_NAME = "RGSXManager"
+
+
+def _autostart_command() -> str:
+    exe = sys.executable or "python"
+    if os.name == "nt":
+        base = os.path.splitext(exe)[0]
+        pythonw = base + "w.exe"
+        if os.path.exists(pythonw):
+            exe = pythonw
+    script = os.path.abspath(__file__)
+    return f'"{exe}" "{script}" --minimized'
+
+
+def is_autostart_enabled() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY) as k:
+            winreg.QueryValueEx(k, _AUTOSTART_NAME)
+        return True
+    except OSError:
+        return False
+
+
+def autostart_install() -> bool:
+    if os.name != "nt":
+        logger.warning("[MANAGER] Auto-start uniquement supporté sur Windows")
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, _AUTOSTART_NAME, 0, winreg.REG_SZ, _autostart_command())
+        logger.info("[MANAGER] Auto-start installé")
+        return True
+    except Exception as e:
+        logger.error(f"[MANAGER] Auto-start installation échouée: {e}")
+        return False
+
+
+def autostart_remove() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            winreg.DeleteValue(k, _AUTOSTART_NAME)
+        logger.info("[MANAGER] Auto-start supprimé")
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        logger.error(f"[MANAGER] Auto-start suppression échouée: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# System tray
+# ---------------------------------------------------------------------------
+def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
+    global _TRAY_ICON
+    if no_tray:
+        return None
+    try:
+        import pystray
+        from PIL import Image
+    except ImportError:
+        logger.warning("[MANAGER] pystray/Pillow non installés, tray désactivé")
+        return None
+
+    try:
+        image = Image.open(icon_path)
+    except Exception as e:
+        logger.warning(f"[MANAGER] Icône tray introuvable ({e}), icône par défaut")
+        image = None
+
+    def _open_ui(icon, item):
+        webbrowser.open(f"http://localhost:{port}")
+
+    def _open_downloads(icon, item):
+        folder = getattr(config, "ROMS_FOLDER", "")
+        if not folder or not os.path.isdir(folder):
+            icon.notify("Downloads folder not found", "RGSX")
+            return
+        if os.name == "nt":
+            os.startfile(folder)
+        else:
+            webbrowser.open(folder)
+
+    def _open_logs(icon, item):
+        log_dir = getattr(config, "log_dir", "")
+        if not log_dir or not os.path.isdir(log_dir):
+            icon.notify("Logs folder not found", "RGSX")
+            return
+        if os.name == "nt":
+            os.startfile(log_dir)
+        else:
+            webbrowser.open(log_dir)
+
+    def _toggle_autostart(icon, item):
+        if is_autostart_enabled():
+            autostart_remove()
+            icon.notify("Auto-start disabled", "RGSX")
+        else:
+            autostart_install()
+            icon.notify("Auto-start enabled", "RGSX")
+
+    def _quit(icon, item):
+        _trigger_shutdown()
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Open Web UI", _open_ui, default=True),
+        pystray.MenuItem("Downloads folder", _open_downloads),
+        pystray.MenuItem("Logs folder", _open_logs),
+        pystray.MenuItem("Auto-start on boot", _toggle_autostart,
+                         checked=lambda item: is_autostart_enabled()),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Exit", _quit),
+    )
+
+    try:
+        _TRAY_ICON = pystray.Icon("RGSX Manager", image, "RGSX Download Manager", menu)
+        _TRAY_ICON.run_detached()
+        logger.info("[MANAGER] Tray démarré")
+    except Exception as e:
+        logger.warning(f"[MANAGER] Tray impossible: {e}")
+        _TRAY_ICON = None
+    return _TRAY_ICON
+
+
+# ---------------------------------------------------------------------------
+# Shutdown / health
+# ---------------------------------------------------------------------------
+def _trigger_shutdown():
+    logger.info("[MANAGER] Arrêt demandé")
+    try:
+        shutdown_downloads()
+    except Exception as e:
+        logger.warning(f"[MANAGER] shutdown_downloads: {e}")
+    try:
+        cancel_all_downloads()
+    except Exception as e:
+        logger.warning(f"[MANAGER] cancel_all_downloads: {e}")
+    STOP.set()
+
+    httpd = getattr(rgsx_web, "CURRENT_HTTPD", None)
+    if httpd is not None:
+        try:
+            threading.Thread(target=httpd.shutdown, daemon=True).start()
+        except Exception:
+            pass
+
+    global _TRAY_ICON
+    if _TRAY_ICON is not None:
+        try:
+            _TRAY_ICON.stop()
+        except Exception:
+            pass
+
+
+def manager_healthy(host: str = "127.0.0.1", port: int = 5000, timeout: float = 2.0) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode("utf-8"))
+            return bool(data.get("success") and data.get("manager"))
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(description="RGSX Download Manager")
+    parser.add_argument("--host", default="0.0.0.0", help="Adresse d'écoute (défaut: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=5000, help="Port HTTP (défaut: 5000)")
+    parser.add_argument("--no-tray", action="store_true", help="Désactiver l'icône système")
+    parser.add_argument("--minimized", action="store_true", help="Lancé en arrière-plan (auto-start)")
+    parser.add_argument("--auto-start-install", action="store_true", help="Installer le démarrage auto puis quitter")
+    parser.add_argument("--auto-start-remove", action="store_true", help="Supprimer le démarrage auto puis quitter")
+    args = parser.parse_args()
+
+    if args.auto_start_install:
+        ok = autostart_install()
+        print("RGSX Manager: auto-start installed" if ok else "RGSX Manager: auto-start install FAILED")
+        return 0 if ok else 1
+    if args.auto_start_remove:
+        ok = autostart_remove()
+        print("RGSX Manager: auto-start removed" if ok else "RGSX Manager: auto-start remove FAILED")
+        return 0 if ok else 1
+
+    if manager_healthy("127.0.0.1", args.port):
+        logger.info(f"[MANAGER] Un manager est déjà actif sur le port {args.port}")
+        print(f"RGSX Manager already running on http://localhost:{args.port}")
+        return 0
+
+    logger.info("=" * 60)
+    logger.info("[MANAGER] RGSX Download Manager démarre")
+    logger.info(f"[MANAGER] http://localhost:{args.port}")
+    logger.info("=" * 60)
+
+    threading.Thread(target=download_queue_worker, daemon=True, name="queue-worker").start()
+    threading.Thread(target=_broadcaster_loop, daemon=True, name="sse-broadcaster").start()
+
+    icon_path = os.path.join(_APP_DIR, "assets", "images", "favicon_rgsx.ico")
+    if not args.no_tray:
+        _setup_tray(icon_path, args.port, no_tray=False)
+
+    try:
+        rgsx_web.run_server(host=args.host, port=args.port, handler_class=ManagerHandler)
+    finally:
+        STOP.set()
+        httpd = getattr(rgsx_web, "CURRENT_HTTPD", None)
+        if httpd is not None:
+            try:
+                httpd.server_close()
+            except Exception:
+                pass
+        global _TRAY_ICON
+        if _TRAY_ICON is not None:
+            try:
+                _TRAY_ICON.stop()
+            except Exception:
+                pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

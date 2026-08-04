@@ -661,8 +661,45 @@ def _queue_download(url: str, platform: str, game_name: str, is_zip_non_supporte
     return task_id
 
 
+def _delegate_download_to_manager(url: str, platform: str, game_name: str, display_name: str | None = None):
+    """Délègue un téléchargement au manager RGSX via HTTP (en arrière-plan)."""
+    import urllib.request
+    port = getattr(config, 'manager_port', 5000)
+    shown_name = display_name or get_clean_display_name(game_name, platform)
+
+    def _post():
+        try:
+            body = json.dumps({
+                'platform': platform,
+                'game_name': game_name,
+                'url': url,
+                'mode': 'now',
+            }).encode('utf-8')
+            req = urllib.request.Request(
+                f'http://127.0.0.1:{port}/api/download',
+                data=body,
+                headers={'Content-Type': 'application/json'},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            if data.get('success'):
+                show_toast(f"{shown_name}\n{_('download_started') if _ else 'Download started'}")
+            else:
+                logger.error(f"[MANAGER] /api/download refusé: {data.get('error')}")
+        except Exception as e:
+            logger.error(f"[MANAGER] délégation échouée: {e}")
+
+    threading.Thread(target=_post, daemon=True).start()
+    config.needs_redraw = True
+    return ("queued", "manager")
+
+
 def start_or_queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None, force_start: bool = False) -> tuple[str, str]:
     """Démarre un téléchargement si un slot est libre, sinon le place en queue."""
+    # Mode manager: tous les téléchargements passent par le daemon (tray/web/TV unifiés).
+    if getattr(config, 'manager_available', False):
+        return _delegate_download_to_manager(url, platform, game_name, display_name)
+
     max_dl = getattr(config, 'max_simultaneous_downloads', 5)
     active = getattr(config, 'active_download_count', 0)
 

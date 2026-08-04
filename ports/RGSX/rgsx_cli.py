@@ -421,6 +421,35 @@ async def _run_download_with_progress(url: str, platform_name: str, game_name: s
         return 1
 
 
+def _manager_healthy(port=5000, timeout=2.0):
+    """Vérifie qu'un manager RGSX (daemon/tray) répond sur /api/health."""
+    try:
+        resp = requests.get(f'http://127.0.0.1:{port}/api/health', timeout=timeout)
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return bool(data.get('success') and data.get('manager'))
+    except Exception:
+        return False
+
+
+def _delegate_download(platform_name, game_name, url):
+    """Soumet un téléchargement au manager RGSX. Retourne (ok, message)."""
+    port = getattr(config, 'manager_port', 5000)
+    try:
+        resp = requests.post(
+            f'http://127.0.0.1:{port}/api/download',
+            json={'platform': platform_name, 'game_name': game_name, 'url': url, 'mode': 'now'},
+            timeout=15,
+        )
+        data = resp.json() if resp.content else {}
+        if resp.status_code == 200 and data.get('success'):
+            return True, data.get('message') or 'Download queued on RGSX manager'
+        return False, data.get('error') or f'HTTP {resp.status_code}'
+    except Exception as e:
+        return False, str(e)
+
+
 def cmd_download(args):
     ensure_data_present(getattr(args, 'verbose', False))
     sources = load_sources()
@@ -623,6 +652,19 @@ def cmd_download(args):
             sys.exit(3)
 
     title, url = match
+
+    # Manager RGSX joignable ? Déléguer au daemon (tray) qui télécharge en arrière-plan.
+    if _manager_healthy():
+        ok, msg = _delegate_download(
+            platform.get('platform_name') or platform.get('platform') or args.platform,
+            title,
+            url,
+        )
+        if ok:
+            print(msg)
+            return
+        print(f"Manager refused download ({msg}), falling back to local", file=sys.stderr)
+
     # Determine if we should force ZIP extraction (only when we can safely check extensions)
     is_zip_non_supported = False
     exts = None
