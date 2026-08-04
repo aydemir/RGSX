@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 import json
 import urllib.parse
 import urllib.request
@@ -77,6 +77,9 @@ games_cache = {}
 
 watchdog_observer = None
 watchdog_started = False
+
+# Dernier serveur HTTP démarré (utilisé par rgsx_manager pour l'arrêt propre)
+CURRENT_HTTPD = None
 
 
 def _now_utc() -> datetime:
@@ -828,7 +831,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
             # Route: API - Durum göstergeleri (indirilen/indiriliyor/başarısız)
             elif path == '/api/game-status':
                 try:
-                    from history import load_history, is_game_downloaded
                     import json as _json
                     
                     history = load_history() or []
@@ -1313,7 +1315,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
                             'task_id': task_id
                         }
                         config.history.append(queue_history_entry)
-                        from history import save_history
                         save_history(config.history)
                         self._send_json({
                             'success': True,
@@ -1397,7 +1398,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     config.history.append(queue_history_entry)
                     
                     # Sauvegarder l'historique
-                    from history import save_history
                     save_history(config.history)
                     
                     logger.info(f"📋 {game_name} ajouté à la file d'attente (mode=queue, active={active_count}/{max_dl})")
@@ -1434,7 +1434,6 @@ class RGSXHandler(BaseHTTPRequestHandler):
                         'task_id': task_id
                     }
                     config.history.append(download_history_entry)
-                    from history import save_history
                     save_history(config.history)
                     
                     if is_1fichier:
@@ -2153,12 +2152,13 @@ DO NOT share this file publicly as it may contain sensitive information.
                 .replace('{version}', config.app_version))
 
 
-def run_server(host='0.0.0.0', port=5000):
+def run_server(host='0.0.0.0', port=5000, handler_class=RGSXHandler):
     """Démarre le serveur HTTP"""
     server_address = (host, port)
     
     # Créer une classe HTTPServer personnalisée qui réutilise le port
-    class ReuseAddrHTTPServer(HTTPServer):
+    # (multithread pour supporter les connexions SSE longues)
+    class ReuseAddrHTTPServer(ThreadingHTTPServer):
         allow_reuse_address = True
     
     # Tuer les processus existants utilisant le port (plateforme spécifique)
@@ -2208,7 +2208,10 @@ def run_server(host='0.0.0.0', port=5000):
     # Attendre un peu pour que le port se libère
     time.sleep(1)
     
-    httpd = ReuseAddrHTTPServer(server_address, RGSXHandler)
+    httpd = ReuseAddrHTTPServer(server_address, handler_class)
+    
+    global CURRENT_HTTPD
+    CURRENT_HTTPD = httpd
     
     logger.info("=" * 60)
     logger.info("RGSX Web Server démarré !")
@@ -2257,16 +2260,75 @@ def run_server(host='0.0.0.0', port=5000):
 
 
 if __name__ == '__main__':
+    # =========================================================================
+    # SHIM: rgsx_web.py est un point d'entrée de compatibilité.
+    # Tout le travail réel est fait par le daemon rgsx_manager.py qui héberge
+    # le serveur HTTP + la queue de téléchargement + le tray. Ce shim garantit
+    # qu'un manager est actif, puis quitte (le manager sert le port 5000).
+    # =========================================================================
     print("="*60, flush=True)
-    print("Demarrage du serveur RGSX Web...", flush=True)
-    print(f"Fichier de log prevu: {config.log_file_web}", flush=True)
+    print("RGSX Web (shim) - verification du manager RGSX...", flush=True)
     print("="*60, flush=True)
-    
-    parser = argparse.ArgumentParser(description='RGSX Web Server')
+
+    parser = argparse.ArgumentParser(description='RGSX Web Server (shim)')
     parser.add_argument('--host', default='0.0.0.0', help='Adresse IP (défaut: 0.0.0.0)')
     parser.add_argument('--port', type=int, default=5000, help='Port (défaut: 5000)')
-    
     args = parser.parse_args()
-    
-    print(f"Lancement sur {args.host}:{args.port}...", flush=True)
-    run_server(host=args.host, port=args.port)
+
+    import subprocess
+    port = args.port
+
+    def _healthy(timeout=2.0):
+        try:
+            with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=timeout) as resp:
+                if resp.status != 200:
+                    return False
+                data = json.loads(resp.read().decode('utf-8'))
+                return bool(data.get('success') and data.get('manager'))
+        except Exception:
+            return False
+
+    if _healthy():
+        print(f"RGSX Manager déjà actif sur http://localhost:{port}", flush=True)
+        sys.exit(0)
+
+    manager_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rgsx_manager.py')
+    if not os.path.exists(manager_script):
+        print(f"ERREUR: {manager_script} introuvable. Le manager RGSX est requis.", file=sys.stderr, flush=True)
+        sys.exit(1)
+
+    exe = sys.executable or 'python'
+    try:
+        if os.name == 'nt':
+            CREATE_NO_WINDOW = 0x08000000
+            proc = subprocess.Popen(
+                [exe, manager_script, f'--port={port}', '--minimized'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                creationflags=CREATE_NO_WINDOW,
+            )
+        else:
+            proc = subprocess.Popen(
+                [exe, manager_script, f'--port={port}', '--minimized'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+            )
+    except Exception as e:
+        print(f"ERREUR: Impossible de lancer le manager RGSX: {e}", file=sys.stderr, flush=True)
+        sys.exit(1)
+
+    print("Manager RGSX lancé, attente du serveur HTTP...", flush=True)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        time.sleep(0.5)
+        if _healthy():
+            print(f"RGSX Manager actif sur http://localhost:{port}", flush=True)
+            sys.exit(0)
+        if proc.poll() is not None:
+            print(f"ERREUR: Le manager RGSX s'est arrêté (code {proc.returncode})", file=sys.stderr, flush=True)
+            sys.exit(1)
+
+    print(f"ERREUR: Le manager RGSX n'a pas démarré dans le délai imparti", file=sys.stderr, flush=True)
+    sys.exit(1)

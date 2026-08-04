@@ -114,6 +114,43 @@ _grain_cache = {"surface": None, "size": None}
 
 ---
 
+## RGSX Download Manager (v2.6.5.2)
+
+**Yeni dosya:** `rgsx_manager.py`
+
+TV UI (Pygame) ve indirme motoru aynı process'te çalışıyordu; TV UI kapatıldığında tüm indirmeler ölüyordu. Artık bağımsız bir **RGSX Download Manager** daemon'ı indirmeleri arka planda (sistem tepsisi / tray) yönetiyor.
+
+**Mimari:**
+- `rgsx_manager.py` → Bağımsız daemon. HTTP + SSE sunar, kuyruk işçi thread'i (`download_queue_worker`) çalıştırır, tepsi ikonu gösterir, Windows otomatik başlatma (Registry `Run` anahtarı) kurar.
+- `rgsx_web.py` → Web sunucusu. `__main__` kısmı artık **shim**: manager sağlıklıysa 0 ile çıkar, değilse manager'ı arka planda başlatıp bekler.
+- `__main__.py` → TV UI. `ensure_manager()` ile manager'ı garanti eder, SSE client ile manager durumunu `config.*`'a yansıtır.
+- `rgsx_cli.py` → İndirme komutları manager sağlıklıysa HTTP ile delege edilir, değilse yerel fallback.
+- `controls.py` → TV UI'de indirme istekleri manager'a delege edilir (`config.manager_available`).
+- `display.py` → Manager tarafından yansıtılan `config.download_progress` ile oyun listesinde indirme göstergeleri.
+- `static/js/app.js` → SSE (`/api/events`) ile canlı güncelleme; 30 sn'lik `snapshot` oyun listesini platform listesine döndürmez.
+
+**Manager API:**
+| Endpoint | Metot | Açıklama |
+|----------|-------|----------|
+| `/api/health` | GET | Manager durumu (`success`, `manager`, `version`, `pid`) |
+| `/api/events` | GET (SSE) | `snapshot` / `progress` / `history` / `queue` / `downloaded` olayları |
+| `/api/download` | POST | İndirme ekle (`game_index`, `game_name` veya doğrudan `url` ile) |
+| `/api/shutdown` | POST | Manager'ı kapatır |
+
+**Başlatma seçenekleri:**
+- `python rgsx_manager.py` → Tepsi ikonlu çalıştır
+- `--no-tray`, `--port=N`, `--minimized`, `--auto-start-install`, `--auto-start-remove`
+- TV UI fallback: `--ui-only` argümanı veya `RGSX_NO_MANAGER=1` env → manager olmadan yerel kuyruk
+
+**SSE Durum Yansıması:** Manager'daki değişiklikler TV UI'a `config.history`, `config.download_queue`, `config.download_active`, `config.download_progress`, `config.downloaded_games` olarak yansıtılır; `config.needs_redraw` ile yeniden çizim tetiklenir.
+
+**Düzeltilen hatalar:**
+- `__main__.py`: eksik `import json` → `_manager_healthy()` hep `False` dönüyordu (SSE yansıması da bozuktu).
+- `rgsx_web.py`: `do_GET`/`do_POST` içindeki yerel `from history import load_history/save_history` import'ları modül seviyesini gölgeliyordu → `/api/history`, `/api/cancel`, `/api/queue/clear`, `/api/queue/remove` `UnboundLocalError` veriyordu.
+- Web UI: SSE 30 sn'lik `snapshot` olayı oyun listesini silip platform listesine döndürüyordu; artık liste yerinde kalıp yalnızca `[✓]`/`[~]%`/`[✗]` göstergeleri yerinde güncelleniyor.
+
+---
+
 ## Orijinal RGSX Özellikleri
 
 ### v2.6.4.9
@@ -146,4 +183,4 @@ _grain_cache = {"surface": None, "size": None}
 - REST API (localhost:6999/api/downloads)
 - TV UI ve Web UI istemci olarak bağlanır
 
-**Durum:** [ ] Tasarım tamamlandı, [ ] Uygulanacak
+**Durum:** [x] Tasarım tamamlandı, [x] Uygulandı (bkz. yukarıdaki "RGSX Download Manager (v2.6.5.2)" bölümü)

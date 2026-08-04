@@ -64,6 +64,7 @@ import datetime
 from datetime import timezone
 import subprocess
 import sys
+import json
 import threading
 import config
 
@@ -466,88 +467,189 @@ def _apply_joystick_controls(js, reason: str) -> None:
     logger.info(reason)
 
 
-# ===== GESTION DU SERVEUR WEB =====
-web_server_process = None
+# ===== GESTION DU MANAGER RGSX (daemon + tray + queue) =====
 
-def start_web_server():
-    """Démarre le serveur web en arrière-plan dans un processus séparé."""
-    global web_server_process
+def _manager_healthy(port=None):
+    """Vérifie qu'un manager RGSX répond sur /api/health."""
+    port = port or getattr(config, 'manager_port', 5000)
     try:
-        web_server_script = os.path.join(config.APP_FOLDER, "rgsx_web.py")
-        
-        if not os.path.exists(web_server_script):
-            logger.warning(f"Script serveur web introuvable: {web_server_script}")
-            return False
-        
-        exe = sys.executable or "python"
-        logger.info(f"Exécutable Python: {exe}")
-        logger.info(f"Répertoire de travail: {config.APP_FOLDER}")
-        logger.info(f"Système: {config.OPERATING_SYSTEM}")
-        
-        # Créer un fichier de log pour les erreurs du serveur web
-        web_server_log = os.path.join(config.log_dir, "rgsx_web_startup.log")
-        
-        # Démarrer le processus en arrière-plan sans fenêtre console sur Windows
-        if config.OPERATING_SYSTEM == "Windows":
-            # Utiliser DETACHED_PROCESS pour cacher la console sur Windows
-            CREATE_NO_WINDOW = 0x08000000
-            logger.info(f"🚀 Lancement du serveur web (mode Windows CREATE_NO_WINDOW)...")
-            
-            # Rediriger stdout/stderr vers un fichier de log pour capturer les erreurs
-            with open(web_server_log, 'w', encoding='utf-8') as log_file:
-                web_server_process = subprocess.Popen(
-                    [exe, web_server_script],
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    cwd=config.APP_FOLDER,
-                    creationflags=CREATE_NO_WINDOW
-                )
-        else:
-            logger.info(f"🚀 Lancement du serveur web (mode Linux/Unix)...")
-            with open(web_server_log, 'w', encoding='utf-8') as log_file:
-                web_server_process = subprocess.Popen(
-                    [exe, web_server_script],
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    cwd=config.APP_FOLDER
-                )
-        
-        logger.info(f"✅ Serveur web démarré (PID: {web_server_process.pid})")
-        logger.info(f"🌐 Serveur accessible sur http://localhost:5000")
-        
-        # Attendre un peu pour voir si le processus crash immédiatement
-        import time
-        time.sleep(0.5)
-        if web_server_process.poll() is not None:
-            logger.error(f"❌ Le serveur web s'est arrêté immédiatement (code: {web_server_process.returncode})")
-            logger.error(f"📝 Vérifiez les logs: {web_server_log}")
-            return False
-        
-        return True
-    except Exception as e:
-        logger.error(f"❌ Erreur lors du démarrage du serveur web: {e}")
-        logger.exception("Détails de l'exception:")
+        import urllib.request
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=2) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode('utf-8'))
+            return bool(data.get('success') and data.get('manager'))
+    except Exception:
         return False
 
+
+def ensure_manager():
+    """Garantit qu'un manager RGSX est actif et expose config.manager_available.
+
+    Retourne True si un manager est disponible (délégation HTTP des téléchargements),
+    False en mode local (--ui-only / fallback : la TV UI gère sa propre queue).
+    """
+    config.manager_port = getattr(config, 'manager_port', 5000)
+    config.manager_available = False
+
+    # Mode local explicite: pas de manager, pas de délégation
+    if '--ui-only' in sys.argv or os.environ.get('RGSX_NO_MANAGER') == '1':
+        logger.info('Mode --ui-only : démarrage sans manager')
+        return False
+
+    port = config.manager_port
+
+    if _manager_healthy(port):
+        config.manager_available = True
+        logger.info(f'✅ Manager RGSX déjà actif sur http://localhost:{port}')
+        return True
+
+    manager_script = os.path.join(config.APP_FOLDER, 'rgsx_manager.py')
+    if not os.path.exists(manager_script):
+        logger.warning(f'Manager introuvable: {manager_script}, mode local')
+        return False
+
+    # Tenter de démarrer le manager en arrière-plan
+    try:
+        spawn_log = os.path.join(config.log_dir, 'rgsx_manager_spawn.log')
+        with open(spawn_log, 'w', encoding='utf-8') as log_file:
+            if config.OPERATING_SYSTEM == 'Windows':
+                CREATE_NO_WINDOW = 0x08000000
+                proc = subprocess.Popen(
+                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    cwd=config.APP_FOLDER, creationflags=CREATE_NO_WINDOW)
+            else:
+                proc = subprocess.Popen(
+                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    cwd=config.APP_FOLDER)
+
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if _manager_healthy(port):
+                config.manager_available = True
+                logger.info('✅ Manager RGSX démarré')
+                return True
+            if proc.poll() is not None:
+                logger.warning(f'Manager arrêté immédiatement (code {proc.returncode}), mode local')
+                return False
+            time.sleep(0.5)
+        logger.warning('Manager non prêt après 30s, mode local')
+        return False
+    except Exception as e:
+        logger.error(f'Erreur démarrage manager: {e}')
+        return False
+
+
 def stop_web_server():
-    """Arrête proprement le serveur web."""
-    global web_server_process
-    if web_server_process is not None:
+    """Compatible avec l'ancien flux: le serveur web est désormais géré par le manager."""
+    pass
+
+
+# ===== CLIENT SSE DU MANAGER (TV UI) =====
+# Reflète l'état du manager (progress/history/queue/downloaded) dans les objets
+# config lus par display.py, sans bloquer la boucle pygame.
+
+def _start_manager_sse_listener():
+    threading.Thread(target=_manager_sse_worker, daemon=True, name="manager-sse").start()
+
+
+def _manager_sse_worker():
+    import urllib.request
+    last_seen = {}
+    while True:
+        if not getattr(config, 'manager_available', False):
+            time.sleep(2)
+            continue
+        port = getattr(config, 'manager_port', 5000)
         try:
-            logger.info("Arrêt du serveur web...")
-            web_server_process.terminate()
-            # Attendre jusqu'à 5 secondes que le processus se termine
-            try:
-                web_server_process.wait(timeout=5)
-                logger.info("Serveur web arrêté proprement")
-            except subprocess.TimeoutExpired:
-                logger.warning("Serveur web ne répond pas, forçage de l'arrêt...")
-                web_server_process.kill()
-                web_server_process.wait()
-                logger.info("Serveur web forcé à l'arrêt")
-            web_server_process = None
+            resp = urllib.request.urlopen(f'http://127.0.0.1:{port}/api/events', timeout=60)
+            _stream_sse(resp, last_seen)
         except Exception as e:
-            logger.error(f"Erreur lors de l'arrêt du serveur web: {e}")
+            logger.debug(f"[MANAGER-SSE] connexion perdue: {e}")
+        time.sleep(3)
+
+
+def _stream_sse(resp, last_seen):
+    buffer = b""
+    event_type = None
+    data_lines = []
+    while True:
+        chunk = resp.read(4096)
+        if not chunk:
+            break
+        buffer += chunk
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            text = line.decode("utf-8", "replace").rstrip("\r")
+            if text == "":
+                if event_type and data_lines:
+                    try:
+                        payload = json.loads("\n".join(data_lines))
+                    except Exception:
+                        payload = {}
+                    _apply_manager_event(event_type, payload, last_seen)
+                event_type = None
+                data_lines = []
+            elif text.startswith("event:"):
+                event_type = text[len("event:"):].strip()
+            elif text.startswith("data:"):
+                data_lines.append(text[len("data:"):].strip())
+
+
+def _apply_manager_event(event_type, payload, last_seen):
+    dirty = False
+
+    if event_type in ("snapshot", "history"):
+        history = payload.get("history")
+        if isinstance(history, list):
+            config.history = history
+            _detect_download_completions(history, last_seen)
+            dirty = True
+
+    if event_type in ("snapshot", "progress"):
+        progress = payload.get("progress")
+        if isinstance(progress, dict):
+            config.download_progress = progress
+            dirty = True
+
+    if event_type in ("snapshot", "queue"):
+        qstate = payload.get("queue")
+        if isinstance(qstate, list):
+            config.download_queue = qstate
+        config.download_active = bool(payload.get("active", config.download_active))
+        dirty = True
+
+    if event_type in ("snapshot", "downloaded"):
+        downloaded = payload.get("downloaded")
+        if isinstance(downloaded, dict):
+            config.downloaded_games = downloaded
+            dirty = True
+
+    if dirty:
+        config.needs_redraw = True
+
+
+def _detect_download_completions(history, last_seen):
+    """Affiche un toast quand un téléchargement du manager se termine."""
+    in_progress_statuses = ("Downloading", "Téléchargement", "Connecting", "Extracting")
+    for entry in history:
+        url = entry.get("url")
+        status = entry.get("status", "")
+        if not url:
+            continue
+        prev = last_seen.get(url)
+        last_seen[url] = status
+        if prev is None:
+            continue
+        was_running = prev in in_progress_statuses or str(prev).startswith("Try ")
+        if not was_running:
+            continue
+        if status in ("Download_OK", "Completed"):
+            show_toast(f"[OK] {entry.get('game_name', '?')}\n{_('download_completed') if _ else 'Download completed'}", 3000)
+        elif status in ("Erreur", "Error"):
+            show_toast(f"[ERROR] {entry.get('game_name', '?')}\n{_('download_failed') if _ else 'Download failed'}", 3000)
 
 
 # Boucle principale
@@ -572,8 +674,12 @@ async def main():
         logger.error(f"Erreur lors du chargement des filtres: {e}")
         config.game_filter_obj = None
     
-    # Démarrer le serveur web en arrière-plan
-    start_web_server()
+    # Garantir qu'un manager RGSX (daemon + tray) est actif.
+    # S'il est joignable, les téléchargements sont délégués au manager via HTTP.
+    ensure_manager()
+
+    # Démarrer le client SSE pour refléter l'état du manager dans la TV UI.
+    _start_manager_sse_listener()
     
     # Le scheduler de queue est géré par controls.py (callbacks sur fin de tâche).
 
@@ -1796,26 +1902,21 @@ async def main():
     except Exception as e:
         logger.debug(f"Erreur lors du shutdown des téléchargements: {e}")
     
-    # Arrêter le serveur web
-    stop_web_server()
+    # Le manager RGSX (daemon + tray) reste actif en arrière-plan : les
+    # téléchargements continuent et le serveur web reste joignable.
 
     if config.OPERATING_SYSTEM == "Windows":
         logger.debug(f"Mise à jour liste des jeux ignorée sur {config.OPERATING_SYSTEM}")
         try:
             result = subprocess.run(["taskkill", "/f", "/im", "emulatorLauncher.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            result2 = subprocess.run(["taskkill", "/f", "/im", "python.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            # NOTE: on ne tue plus python.exe ici: le manager RGSX (persistant)
+            # s'exécute aussi sous python.exe et doit survivre à la fermeture de la TV UI.
             if getattr(result, "returncode", 1) == 0:
                 logger.debug("Quitté avec succès: emulatorLauncher.exe")
                 print(f"Arret Emulatorlauncher ok")
             else:
                 logger.debug("Erreur lors de la tentative d'arrêt d'emulatorLauncher.exe")
                 print(f"Arret Emulatorlauncher ko")
-            if getattr(result2, "returncode", 1) == 0:
-                logger.debug("Quitté avec succès: Python.Exe")
-                print(f"Arret Python ok")
-            else:
-                logger.debug("Erreur lors de la tentative d'arrêt de Python.exe ")
-                print(f"Arret Python ko")
         except FileNotFoundError:
             logger.debug("taskkill introuvable, saut de l'étape d'arrêt d'emulatorLauncher.exe")
     else:

@@ -1416,8 +1416,9 @@
                     }
                     
                     html += `
-                        <div class="game-item">
-                            <span class="game-name">${statusIndicator}${g.name}</span>
+                        <div class="game-item" data-game="${encodeURIComponent(gameStem)}">
+                            <span class="game-status-indicator">${statusIndicator}</span>
+                            <span class="game-name">${g.name}</span>
                             ${g.size ? `<span class="game-size">${g.size}</span>` : ''}
                             <div class="download-btn-group" style="display: flex; gap: 4px;">
                                 <button class="download-btn" title="${downloadTitle} (now)" onclick='downloadGame("${platform.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", "${g.name.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", ${idx}, "now")'>⬇️</button>
@@ -1450,6 +1451,7 @@
         
         // Retour aux plateformes avec historique
         function goBackToPlatforms() {
+            currentPlatform = null;
             window.history.pushState({ tab: 'platforms' }, '', '/');
             loadPlatforms();
         }
@@ -2669,12 +2671,113 @@
             }
         }
         
+        // ===== SSE (événements temps réel du manager RGSX) =====
+        // Le manager pousse les changements (queue/history/progress/downloaded) via
+        // Server-Sent Events. Le polling existant reste en fallback.
+        const sseTimers = {};
+
+        function debounceSse(key, fn, ms) {
+            if (sseTimers[key]) clearTimeout(sseTimers[key]);
+            sseTimers[key] = setTimeout(fn, ms);
+        }
+
+        function isTabVisible(id) {
+            const el = document.getElementById(id + '-content');
+            return !!el && el.style.display !== 'none';
+        }
+
+        function refreshFromSse(type) {
+            if (type === 'progress' || type === 'snapshot') {
+                if (isTabVisible('downloads')) debounceSse('progress', () => loadProgress(false), 250);
+            }
+            if (type === 'history' || type === 'snapshot') {
+                if (isTabVisible('history')) debounceSse('history', loadHistory, 800);
+            }
+            if (type === 'queue' || type === 'snapshot') {
+                if (isTabVisible('queue')) debounceSse('queue', loadQueue, 300);
+            }
+            if (type === 'downloaded' || type === 'snapshot') {
+                if (isTabVisible('platforms')) {
+                    // Une liste de jeux est affichée dans l'onglet plateformes:
+                    // mettre à jour les indicateurs en place, sans revenir à la liste des plateformes.
+                    if (currentPlatform) {
+                        debounceSse('platforms', updateGameStatusIndicators, 600);
+                    } else {
+                        debounceSse('platforms', loadPlatforms, 1000);
+                    }
+                }
+            }
+            if (type === 'progress') {
+                // Progression active: rafraîchir les % sur la liste de jeux en cours de visualisation.
+                if (currentPlatform && isTabVisible('platforms')) {
+                    debounceSse('platforms-progress', updateGameStatusIndicators, 1000);
+                }
+            }
+        }
+
+        // Met à jour les indicateurs [✓]/[~]/[✗] sur la liste de jeux affichée,
+        // sans re-rendre toute la liste (pas de retour à la liste des plateformes).
+        async function updateGameStatusIndicators() {
+            if (!currentPlatform) return;
+            try {
+                const response = await fetch('/api/game-status');
+                const data = await response.json();
+                if (!data.success) return;
+                const statuses = data.statuses || {};
+                document.querySelectorAll('.game-item').forEach(item => {
+                    const indicatorEl = item.querySelector('.game-status-indicator');
+                    if (!indicatorEl) return;
+                    const key = decodeURIComponent(item.getAttribute('data-game') || '');
+                    const nameLower = (item.querySelector('.game-name')?.textContent || '').trim().toLowerCase();
+                    const status = statuses[key] || statuses[nameLower];
+                    let indicator = '';
+                    if (status) {
+                        if (status.status === 'downloaded') {
+                            indicator = '<span style="color: #66ff66; font-weight: bold; margin-right: 6px;">[✓]</span>';
+                        } else if (status.status === 'downloading') {
+                            const pct = status.progress || 0;
+                            indicator = `<span style="color: #ffcc00; font-weight: bold; margin-right: 6px;">[~] ${pct}%</span>`;
+                        } else if (status.status === 'failed') {
+                            indicator = '<span style="color: #ff5555; font-weight: bold; margin-right: 6px;">[✗]</span>';
+                        }
+                    }
+                    indicatorEl.innerHTML = indicator;
+                });
+            } catch (err) { /* silencieux */ }
+        }
+
+        function setupSse() {
+            if (!window.EventSource) return;
+            const source = new EventSource('/api/events');
+
+            source.addEventListener('snapshot', (e) => refreshFromSse('snapshot'));
+
+            source.addEventListener('progress', (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.progress) lastProgressUpdate = Date.now();
+                } catch (err) { /* ignore */ }
+                refreshFromSse('progress');
+            });
+
+            source.addEventListener('history', (e) => refreshFromSse('history'));
+            source.addEventListener('queue', (e) => refreshFromSse('queue'));
+            source.addEventListener('downloaded', (e) => refreshFromSse('downloaded'));
+
+            source.onerror = () => {
+                // EventSource se reconnecte automatiquement; rien à faire.
+            };
+        }
+
         // Initialisation au démarrage
         async function init() {
             await loadTranslations();  // Charger les traductions
             applyTranslations();         // Appliquer les traductions à l'interface
             loadPlatforms();            // Charger les plateformes
             updateRegionPriorityDisplay(); // Update initial display
+            
+            // Connexion SSE temps réel (manager RGSX)
+            setupSse();
             
             // Vérifier les téléchargements complétés toutes les 2 secondes
             setInterval(checkCompletedDownloads, 2000);

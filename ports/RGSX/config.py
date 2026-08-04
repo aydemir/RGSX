@@ -29,6 +29,11 @@ except Exception:
 # Version actuelle de l'application
 app_version = "2.6.5.2"
 
+# RGSX Download Manager (daemon): True si le manager est joignable.
+# Les téléchargements sont alors délégués via HTTP au manager (tray).
+manager_port = 5000
+manager_available = False
+
 # Nombre de jours avant de proposer la mise à jour de la liste des jeux
 GAMELIST_UPDATE_DAYS = 1
 
