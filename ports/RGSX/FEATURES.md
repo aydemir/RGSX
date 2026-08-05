@@ -135,6 +135,7 @@ TV UI (Pygame) ve indirme motoru aynı process'te çalışıyordu; TV UI kapatı
 | `/api/health` | GET | Manager durumu (`success`, `manager`, `version`, `pid`) |
 | `/api/events` | GET (SSE) | `snapshot` / `progress` / `history` / `queue` / `downloaded` olayları |
 | `/api/download` | POST | İndirme ekle (`game_index`, `game_name` veya doğrudan `url` ile) |
+| `/api/cancel` | POST | İndirmeyi iptal eder (kuyruktan `pop` yapmadan, işçi thread'i ile senkronize) |
 | `/api/shutdown` | POST | Manager'ı kapatır |
 
 **Başlatma seçenekleri:**
@@ -148,6 +149,14 @@ TV UI (Pygame) ve indirme motoru aynı process'te çalışıyordu; TV UI kapatı
 - `__main__.py`: eksik `import json` → `_manager_healthy()` hep `False` dönüyordu (SSE yansıması da bozuktu).
 - `rgsx_web.py`: `do_GET`/`do_POST` içindeki yerel `from history import load_history/save_history` import'ları modül seviyesini gölgeliyordu → `/api/history`, `/api/cancel`, `/api/queue/clear`, `/api/queue/remove` `UnboundLocalError` veriyordu.
 - Web UI: SSE 30 sn'lik `snapshot` olayı oyun listesini silip platform listesine döndürüyordu; artık liste yerinde kalıp yalnızca `[✓]`/`[~]%`/`[✗]` göstergeleri yerinde güncelleniyor.
+- `/api/cancel`: `rgsx_manager.py` içinde `_handle_cancel_worker` override'ı — kuyruktan `pop`/`_process_queued_download` yaymadan `request_cancel(task_id)` ile senkronize iptal; iptal edilen indirme akmaz, diğer indirmeler kuyrukta etkilenmez.
+
+**Doğrulanan davranışlar (manuel testler):**
+- Fallback: `RGSX_NO_MANAGER=1` ve `--ui-only` → `ensure_manager()` `False` (yerel kuyruk), manager sağlıklıyken `True` (HTTP delege). Yerel modda `start_or_queue_download` manager'a delege etmeden yerel `download_rom` görevi başlatır.
+- Auto-start: `--auto-start-install` → `HKCU\...\Run\RGSXManager` değeri `pythonw.exe ...\rgsx_manager.py --minimized` yazılır; `--auto-start-remove` → değer silinir.
+- Tray: 5 menü öğesi (Open Web UI / Downloads folder / Logs folder / Auto-start on boot / Exit); Web UI `localhost:port`, klasörler `startfile`, auto-start toggle Registry'yi çevirir, Exit `_trigger_shutdown` (STOP + temiz kapanış). Eksik klasörde notify gösterir, çökmez.
+- İptal: yavaş sunucudan 2 indirme (2 slot) → `/api/cancel` ile biri iptal (aktarım durur), diğeri kuyrukta devam eder; deadlock/yarış yok.
+- Linux/Batocera: shim ve manager cross-platform — üst seviyede Windows-only import yok (`winreg`/`pystray` fonksiyon içinde), tray/auto-start Linux'ta zarifçe devre dışı kalır, port serbest bırakma `lsof`+`kill` ile çalışır, Batocera servisi `batocera-services` ile kurulur.
 
 ---
 

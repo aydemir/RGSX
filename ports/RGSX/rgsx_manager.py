@@ -42,6 +42,7 @@ from network import (
     download_queue_worker,
     shutdown_downloads,
     cancel_all_downloads,
+    request_cancel,
 )
 from history import load_history, save_history
 
@@ -189,6 +190,10 @@ class ManagerHandler(RGSXHandler):
 
         if path == "/api/download":
             self._handle_download_worker()
+            return
+
+        if path == "/api/cancel":
+            self._handle_cancel_worker()
             return
 
         if path == "/api/shutdown":
@@ -356,6 +361,55 @@ class ManagerHandler(RGSXHandler):
             "queued": True,
             "queue_position": len(config.download_queue),
         })
+
+    # -- Cancel via worker semantics ----------------------------------------
+    def _handle_cancel_worker(self):
+        """Annule un téléchargement sans manipuler la queue manuellement.
+
+        Le download_queue_worker est l'unique consommateur de config.download_queue:
+        on ne fait donc PAS de pop() ni de spawn de _process_queued_download ici.
+        Le worker enchaîne tout seul sur l'élément suivant une fois que
+        notify_download_finished() libère le slot.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode("utf-8")) if content_length > 0 else {}
+        except Exception as e:
+            self._send_json({"success": False, "error": str(e)}, status=400)
+            return
+
+        url = data.get("url")
+        if not url:
+            self._send_json({"success": False, "error": "Paramètre manquant: url requis"}, status=400)
+            return
+
+        try:
+            history = load_history() or []
+            task_id = None
+            for entry in history:
+                if entry.get("url") == url and entry.get("status") in ["Downloading", "Téléchargement", "Connecting"]:
+                    entry["status"] = "Canceled"
+                    entry["progress"] = 0
+                    entry["message"] = get_translation("web_download_canceled")
+                    task_id = entry.get("task_id")
+                    break
+
+            if task_id:
+                request_cancel(task_id)
+
+            save_history(history)
+            if isinstance(getattr(config, "history", None), list):
+                config.history = history
+            self._send_json({
+                "success": True,
+                "message": "Téléchargement annulé",
+                "url": url,
+                "task_id": task_id,
+            })
+        except Exception as e:
+            logger.error(f"[MANAGER] Erreur annulation: {e}")
+            self._send_json({"success": False, "error": str(e)}, status=500)
 
 
 # ---------------------------------------------------------------------------
