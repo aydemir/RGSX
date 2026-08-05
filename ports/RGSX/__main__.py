@@ -85,7 +85,8 @@ from controls_mapper import map_controls, draw_controls_mapping, get_actions
 from controls import load_controls_config
 from utils import (
     load_sources, check_extension_before_download, extract_data,
-    play_random_music, load_music_config, load_api_keys, _refresh_loading_feedback, _format_size_bytes, get_disk_usage
+    play_random_music, load_music_config, load_api_keys, _refresh_loading_feedback, _format_size_bytes, get_disk_usage,
+    parse_torrent_download_url
 )
 from history import load_history, save_history, load_downloaded_games, check_history_write_access, get_history_write_status
 from config import OTA_data_ZIP
@@ -573,6 +574,17 @@ def _prewarm_qbittorrent_startup() -> None:
         logger.debug(f"Pré-lancement qBittorrent non disponible: {e}")
 
 
+def _is_torrent_resume_entry(entry: dict) -> bool:
+    """True si l'entrée d'historique correspond à une reprise torrent."""
+    try:
+        url = str(entry.get("url") or "").strip()
+        if not url:
+            return False
+        return parse_torrent_download_url(url) is not None
+    except Exception:
+        return False
+
+
 # Boucle principale
 async def main():
     global current_music, music_files, music_folder, joystick, screen
@@ -598,11 +610,6 @@ async def main():
     # Démarrer le serveur web en arrière-plan
     start_web_server()
 
-    # Démarrer qBittorrent dès l'ouverture de RGSX pour accélérer la reprise torrent.
-    _prewarm_qbittorrent_startup()
-    
-    # Le scheduler de queue est géré par controls.py (callbacks sur fin de tâche).
-
     # Reprendre les téléchargements interrompus (statut "Téléchargement"/"Downloading")
     # Ces entrées proviennent d'une session précédente fermée proprement sans annulation.
     try:
@@ -610,6 +617,15 @@ async def main():
             e for e in config.history
             if e.get("status") in ("Téléchargement", "Downloading") and e.get("url")
         ]
+
+        # Pré-lance qB seulement si une reprise torrent est réellement détectée.
+        interrupted_torrents = [e for e in interrupted if _is_torrent_resume_entry(e)]
+        if interrupted_torrents:
+            logger.info(
+                f"[RESUME] {len(interrupted_torrents)} reprise(s) torrent détectée(s): pré-lancement qBittorrent"
+            )
+            _prewarm_qbittorrent_startup()
+
         if interrupted:
             logger.info(f"[RESUME] {len(interrupted)} téléchargement(s) interrompu(s) détecté(s), reprise...")
         for entry in interrupted:
