@@ -2296,25 +2296,6 @@ def _schedule_windows_file_replace_when_unlocked(source_path: str, target_path: 
         return False
 
 
-def _find_windows_update_source_root(extract_root: str) -> str | None:
-    if not extract_root or not os.path.isdir(extract_root):
-        return None
-
-    candidates = [
-        os.path.join(extract_root, "windows"),
-        os.path.join(extract_root, "roms", "windows"),
-    ]
-    for candidate in candidates:
-        if os.path.isdir(candidate):
-            return candidate
-
-    for root, dirs, _files in os.walk(extract_root):
-        for name in dirs:
-            if name.lower() == "windows":
-                return os.path.join(root, name)
-    return None
-
-
 def _copy_windows_update_tree(source_root: str, target_root: str) -> tuple[int, int, list[str]]:
     """Copie une arborescence windows update; diffère le .bat s'il est verrouillé."""
     updated_files = 0
@@ -2396,9 +2377,9 @@ async def _apply_pending_windows_update(latest_version: str) -> tuple[bool, str]
         if not ok_extract:
             return False, f"Windows update extraction failed: {msg_extract}"
 
-        source_root = _find_windows_update_source_root(extract_root)
-        if not source_root:
-            return False, "Windows update zip does not contain a windows folder"
+        # The Windows update zip is expected to contain the direct content
+        # of roms/windows at archive root.
+        source_root = extract_root
 
         target_root = os.path.join(config.ROMS_FOLDER, "windows")
         os.makedirs(target_root, exist_ok=True)
