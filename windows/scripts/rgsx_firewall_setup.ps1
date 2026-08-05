@@ -19,7 +19,9 @@ function Write-Log {
     param([string]$Message)
 
     $line = "RGSX firewall: $Message"
-    Write-Output $line
+    if (-not ($LogFile -and $LogFile.Trim())) {
+        Write-Output $line
+    }
 
     if ($LogFile -and $LogFile.Trim()) {
         try {
@@ -27,7 +29,34 @@ function Write-Log {
             if ($logDir -and -not (Test-Path -LiteralPath $logDir)) {
                 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
             }
-            Add-Content -LiteralPath $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $line"
+
+            $logLine = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $line"
+            $written = $false
+            for ($attempt = 0; $attempt -lt 3 -and -not $written; $attempt++) {
+                try {
+                    $fileStream = [System.IO.File]::Open(
+                        $LogFile,
+                        [System.IO.FileMode]::Append,
+                        [System.IO.FileAccess]::Write,
+                        [System.IO.FileShare]::ReadWrite
+                    )
+                    try {
+                        $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+                        $writer = New-Object System.IO.StreamWriter($fileStream, $utf8NoBom)
+                        try {
+                            $writer.WriteLine($logLine)
+                            $writer.Flush()
+                            $written = $true
+                        } finally {
+                            $writer.Dispose()
+                        }
+                    } finally {
+                        $fileStream.Dispose()
+                    }
+                } catch {
+                    # Retry silently; this log is best effort and must never block startup.
+                }
+            }
         } catch {
             # Ne pas bloquer le script si le log echoue
         }
