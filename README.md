@@ -53,6 +53,13 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 - Auto-configures controls if your controller is recognized
 - **Controls broken?** Delete `/saves/ports/rgsx/controls.json` and restart
 
+**Retrobat / first Windows launch**
+
+- It is recommended to launch `RGSX Retrobat.bat` manually once, outside the Retrobat interface, to verify that everything is working.
+- Allow Windows firewall prompts when they appear, especially for qBittorrent on first launch.
+- Retrobat hides some system windows by default, so a first manual launch helps avoid missing an important prompt.
+- The launcher then configures a local rule for the embedded qBittorrent binary and for the TCP `18572` WebUI.
+
 **Keyboard Mode**: When no controller is detected, controls display as `[Key]` instead of icons.
 
 ### Pause Menu Structure
@@ -125,6 +132,20 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 2. **Direct Download**: Press `Confirm`
 3. **Queue Download**: Press `X` (West button)
 4. Track progress in **History** menu or via popup notifications
+
+## Embedded qBittorrent torrent backend
+
+Torrent downloads now run through an embedded qBittorrent binary on both Windows and Linux/Batocera.
+
+- LAN debug WebUI: `http://YOUR_DEVICE_IP:18572`
+- Default credentials: `admin` / `RGSXqbt`
+- The RGSX web interface now includes a `qBittorrent` button that opens this WebUI directly.
+
+Useful notes:
+- This WebUI is intended for debugging and advanced torrent monitoring from a phone or another PC on the same local network.
+- If LAN access to the WebUI does not work, first check the local Windows firewall.
+- Do not expose port `18572` directly to the Internet: it is the WebUI admin port, not the BitTorrent performance port.
+- If torrent connectivity is poor, prefer UPnP or forwarding the actual BitTorrent listening port configured inside qBittorrent.
 
 ## 🌐 Web Interface (Batocera/Knulli Only)
 

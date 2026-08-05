@@ -2027,22 +2027,24 @@ DO NOT share this file publicly as it may contain sensitive information.
             
             <!-- Navigation mobile avec icônes uniquement -->
             <nav class="mobile-tabs" role="navigation" aria-label="Main navigation (mobile)">
-                <button class="mobile-tab active" onclick="showTab('platforms')" data-translate-title="web_tooltip_platforms" title="Platforms list" aria-current="page">🎮</button>
-                <button class="mobile-tab" onclick="showTab('downloads')" data-translate-title="web_tooltip_downloads" title="Downloads">⬇️</button>
-                <button class="mobile-tab" onclick="showTab('queue')" data-translate-title="web_tooltip_queue" title="Queue">📋</button>
-                <button class="mobile-tab" onclick="showTab('history')" data-translate-title="web_tooltip_history" title="History">📜</button>
-                <button class="mobile-tab" onclick="showTab('settings')" data-translate-title="web_tooltip_settings" title="Settings">⚙️</button>                
+                <button class="mobile-tab active" data-tab="platforms" onclick="showTab('platforms')" data-translate-title="web_tooltip_platforms" title="Platforms list" aria-current="page">🎮</button>
+                <button class="mobile-tab" data-tab="downloads" onclick="showTab('downloads')" data-translate-title="web_tooltip_downloads" title="Downloads">⬇️</button>
+                <button class="mobile-tab" data-tab="queue" onclick="showTab('queue')" data-translate-title="web_tooltip_queue" title="Queue">📋</button>
+                <button class="mobile-tab" data-tab="history" onclick="showTab('history')" data-translate-title="web_tooltip_history" title="History">📜</button>
+                <button class="mobile-tab" data-tab="settings" onclick="showTab('settings')" data-translate-title="web_tooltip_settings" title="Settings">⚙️</button>
+                <button class="mobile-tab" onclick="openQbittorrentWebUi()" title="Open qBittorrent WebUI">🌐</button>
                 <button class="mobile-tab" onclick="updateGamesList()" data-translate-title="web_tooltip_update" title="Update games list">🔄</button>
                 <button class="mobile-tab" onclick="generateSupportZip()" data-translate-title="web_support" title="Support">🆘</button>
             </nav>
         </header>
         
         <nav class="tabs" role="navigation" aria-label="Main navigation (desktop)">
-            <button class="tab active" onclick="showTab('platforms')" aria-current="page">🎮 <span data-translate="web_tab_platforms">Platforms List</span></button>
-            <button class="tab" onclick="showTab('downloads')">⬇️ <span data-translate="web_tab_downloads">Downloads</span></button>
-            <button class="tab" onclick="showTab('queue')">📋 <span data-translate="web_tab_queue">Queue</span></button>
-            <button class="tab" onclick="showTab('history')">📜 <span data-translate="web_tab_history">History</span></button>
-            <button class="tab" onclick="showTab('settings')">⚙️ <span data-translate="web_tab_settings">Settings</span></button>
+            <button class="tab active" data-tab="platforms" onclick="showTab('platforms')" aria-current="page">🎮 <span data-translate="web_tab_platforms">Platforms List</span></button>
+            <button class="tab" data-tab="downloads" onclick="showTab('downloads')">⬇️ <span data-translate="web_tab_downloads">Downloads</span></button>
+            <button class="tab" data-tab="queue" onclick="showTab('queue')">📋 <span data-translate="web_tab_queue">Queue</span></button>
+            <button class="tab" data-tab="history" onclick="showTab('history')">📜 <span data-translate="web_tab_history">History</span></button>
+            <button class="tab" data-tab="settings" onclick="showTab('settings')">⚙️ <span data-translate="web_tab_settings">Settings</span></button>
+            <button class="tab" onclick="openQbittorrentWebUi()">🌐 <span>qBittorrent</span></button>
             <button class="tab" onclick="updateGamesList()">🔄 <span data-translate="web_tab_update">Update games list</span></button>
             <button class="tab" onclick="generateSupportZip()">🆘 <span data-translate="web_support">Support</span></button>
         </nav>

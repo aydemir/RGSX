@@ -27,7 +27,7 @@ except Exception:
     pygame = None  # type: ignore
 
 # Version actuelle de l'application
-app_version = "2.6.5.2"
+app_version = "2.6.5.3"
 
 # Nombre de jours avant de proposer la mise à jour de la liste des jeux
 GAMELIST_UPDATE_DAYS = 1
@@ -283,8 +283,7 @@ PS3DEC_EXE = os.path.join(APP_FOLDER,"assets", "progs", "ps3dec_win.exe")
 PS3DEC_LINUX = os.path.join(APP_FOLDER,"assets", "progs", "ps3dec_linux")
 SEVEN_Z_LINUX = os.path.join(APP_FOLDER,"assets", "progs", "7zz")
 SEVEN_Z_EXE = os.path.join(APP_FOLDER,"assets", "progs", "7z.exe")
-ARIA2C_EXE = os.path.join(APP_FOLDER,"assets", "progs", "aria2c.exe")
-ARIA2C_LINUX = os.path.join(APP_FOLDER,"assets", "progs", "aria2c_linux")
+TORRENT_QBITTORRENT_WEBUI_PASSWORD = "RGSXqbt"
 
 # Détection du système d'exploitation (une seule fois au démarrage)
 OPERATING_SYSTEM = platform.system()

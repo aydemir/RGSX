@@ -3332,7 +3332,7 @@ def handle_ps3(dest_dir, new_dirs=None, extracted_basename=None, url=None, archi
             logger.debug(f"URL jeu: {url}")
             logger.debug(f"Base URL des clés PS3: {ps3_keys_base_url}")
             
-            # Chercher le fichier .iso déjà extrait
+            # Chercher uniquement l'ISO correspondant au fichier téléchargé/extrait.
             iso_files = [f for f in os.listdir(dest_dir) if f.endswith('.iso') and not f.endswith('_decrypted.iso')]
             if not iso_files:
                 # Vérifier si le jeu est déjà extrait dans un dossier
@@ -3357,10 +3357,62 @@ def handle_ps3(dest_dir, new_dirs=None, extracted_basename=None, url=None, archi
                     return True, f"Jeu PS3 déjà extrait dans {game_folder}"
                 else:
                     return False, "Aucun fichier .iso trouvé après extraction"
-            
-            iso_file = iso_files[0]
+
+            def _normalize_ps3_name(name: str) -> str:
+                base_name = os.path.splitext(os.path.basename(name or ""))[0]
+                return re.sub(r"\s+", " ", base_name).strip().casefold()
+
+            candidate_bases = []
+
+            def _add_candidate_base(base_name):
+                if not base_name:
+                    return
+                cleaned = str(base_name).strip()
+                if not cleaned:
+                    return
+                if cleaned.lower().endswith('.dkey'):
+                    cleaned = cleaned[:-5]
+                normalized = _normalize_ps3_name(cleaned)
+                if normalized and normalized not in candidate_bases:
+                    candidate_bases.append(normalized)
+
+            if archive_name:
+                _add_candidate_base(os.path.splitext(os.path.basename(archive_name))[0])
+            if extracted_basename:
+                _add_candidate_base(extracted_basename)
+
+            matching_iso_files = []
+            for iso_name in iso_files:
+                if _normalize_ps3_name(iso_name) in candidate_bases:
+                    matching_iso_files.append(iso_name)
+
+            if len(matching_iso_files) == 1:
+                iso_file = matching_iso_files[0]
+            elif len(matching_iso_files) > 1:
+                iso_file = sorted(matching_iso_files)[0]
+                logger.warning(
+                    "Plusieurs ISO PS3 correspondent au fichier téléchargé dans %s, sélection de %s",
+                    dest_dir,
+                    iso_file,
+                )
+            elif len(iso_files) == 1:
+                iso_file = iso_files[0]
+                logger.warning(
+                    "Un seul ISO PS3 présent dans %s, sélection par défaut de %s car aucun nom ne correspond au téléchargement courant",
+                    dest_dir,
+                    iso_file,
+                )
+            else:
+                logger.error(
+                    "Plusieurs ISO PS3 présents dans %s mais aucun ne correspond au téléchargement courant (%s / %s)",
+                    dest_dir,
+                    archive_name,
+                    extracted_basename,
+                )
+                return False, "Impossible d'identifier l'ISO PS3 correspondant au fichier téléchargé"
+
             iso_path = os.path.join(dest_dir, iso_file)
-            logger.info(f"Fichier ISO trouvé: {iso_path}")
+            logger.info(f"Fichier ISO correspondant trouvé: {iso_path}")
             
             # Étape 1: Télécharger directement la clé .dkey depuis la nouvelle source
             dkey_path = None

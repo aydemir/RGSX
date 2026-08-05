@@ -326,6 +326,20 @@
         }
         
         // ===== FONCTIONS UTILITAIRES =====
+
+        function openQbittorrentWebUi() {
+            try {
+                const qbUrl = new URL(window.location.href);
+                qbUrl.port = '18572';
+                qbUrl.pathname = '/';
+                qbUrl.search = '';
+                qbUrl.hash = '';
+                window.open(qbUrl.toString(), '_blank', 'noopener,noreferrer');
+            } catch (error) {
+                console.error('Erreur ouverture qBittorrent WebUI:', error);
+                showToast('Unable to open qBittorrent WebUI', 'error', 3500);
+            }
+        }
                
         // Fonction pour mettre à jour la liste des jeux (clear cache)
         async function updateGamesList() {
@@ -397,8 +411,8 @@
             }
             
             // Mettre à jour l'UI - tabs desktop
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            const tabButtons = Array.from(document.querySelectorAll('.tab'));
+            document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
+            const tabButtons = Array.from(document.querySelectorAll('.tab[data-tab]'));
             const tabNames = ['platforms', 'downloads', 'queue', 'history', 'settings'];
             const tabIndex = tabNames.indexOf(tab);
             if (tabIndex >= 0 && tabButtons[tabIndex]) {
@@ -406,8 +420,8 @@
             }
             
             // Mettre à jour l'UI - tabs mobile
-            document.querySelectorAll('.mobile-tab').forEach(t => t.classList.remove('active'));
-            const mobileTabButtons = Array.from(document.querySelectorAll('.mobile-tab'));
+            document.querySelectorAll('.mobile-tab[data-tab]').forEach(t => t.classList.remove('active'));
+            const mobileTabButtons = Array.from(document.querySelectorAll('.mobile-tab[data-tab]'));
             if (tabIndex >= 0 && mobileTabButtons[tabIndex]) {
                 mobileTabButtons[tabIndex].classList.add('active');
             }
