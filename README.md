@@ -130,6 +130,7 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 - 🎮 **Controller-First Design** – Auto-mapping for popular controllers + custom remapping support
 - 🔍 **Advanced Filtering** – Search by name, hide/show unsupported systems, filter platforms
 - 📊 **Download Management** – Queue system, history tracking, progress notifications
+- 🕹️ **Background Download Manager** – Independent daemon with system tray; downloads keep running even if the TV UI or web UI is closed (Windows/RetroBat)
 - ♿ **Accessibility** – Separate font scaling for UI and footer, keyboard-only mode support
 
 ### Game List Status Indicators
@@ -157,9 +158,9 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 3. **Queue Download**: Press `X` (West button)
 4. Track progress in **History** menu or via popup notifications
 
-## 🌐 Web Interface (Batocera/Knulli Only)
+## 🌐 Web Interface
 
-RGSX includes a web interface that launched automatically when using RGSX for remote browsing and downloading games from any device on your network.
+RGSX includes a web interface for remote browsing and downloading games from any device on your network. It is available on **Batocera/Knulli** and, since v2.6.5.2, on **Windows/RetroBat** through the background Download Manager.
 
 ### Accessing the Web Interface
 
@@ -194,6 +195,43 @@ RGSX includes a web interface that launched automatically when using RGSX for re
 
 ---
 
+## 🕹️ RGSX Download Manager (Windows / RetroBat)
+
+Since v2.6.5.2, downloads on Windows run through an independent background daemon (`rgsx_manager.py`). You can close the TV UI or the web UI without stopping your downloads.
+
+### What it does
+
+- Runs downloads in the background with a **system tray** icon
+- Hosts the **web interface on port 5000** (Windows included)
+- Pushes real-time progress to the TV UI and web UI over **SSE** (`/api/events`)
+- **Auto-start on boot** (Windows Registry `Run` key)
+- **Unified queue**: downloads started from the TV UI, web UI, or CLI share the same manager queue
+
+### Tray menu
+
+| Item | Action |
+|------|--------|
+| Open Web UI | Opens `http://localhost:5000` in your browser |
+| Downloads folder | Opens the ROMs folder |
+| Logs folder | Opens the logs folder |
+| Auto-start on boot | Toggles Windows startup (checkbox reflects current state) |
+| Exit | Stops the manager (and cancels pending downloads) |
+
+### Manual control
+
+```bash
+python rgsx_manager.py --port=5000          # run with tray icon
+python rgsx_manager.py --no-tray --port=5000
+python rgsx_manager.py --auto-start-install # enable start with Windows
+python rgsx_manager.py --auto-start-remove  # disable start with Windows
+```
+
+### Fallback mode
+
+If the manager cannot start — or you launch with `--ui-only` / set `RGSX_NO_MANAGER=1` — the TV UI and web UI fall back to an in-process queue. Downloads still work, but they stop when the app is closed.
+
+---
+
 ## 📁 File Structure
 
 ```
@@ -201,6 +239,8 @@ RGSX includes a web interface that launched automatically when using RGSX for re
 ├── ports/
 │   ├── RGSX/
 │   │   ├── __main__.py                # Entry point
+│   │   ├── rgsx_manager.py            # Background download daemon (Windows/RetroBat)
+│   │   ├── rgsx_web.py                # Web server + REST/SSE API
 │   │   ├── controls.py                # Input handling
 │   │   ├── display.py                 # Rendering engine
 │   │   ├── network.py                 # Download manager

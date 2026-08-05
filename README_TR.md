@@ -124,6 +124,7 @@ Bu komut masaüstüne "RGSX Web UI" kısayolu oluşturur.
 - 🎮 **Kontrolcü Odaklı Tasarım** – Popüler kontrolcüler için otomatik eşleme + özel yeniden eşleme
 - 🔍 **Gelişmiş Filtreleme** – İisme göre arama, desteklenmeyen sistemleri gizleme/gösterme, platform filtreleme
 - 📊 **İndirme Yönetimi** – Kuyruk sistemi, geçmiş takibi, ilerleme bildirimleri
+- 🕹️ **Arka Plan İndirme Yöneticisi** – Bağımsız daemon + sistem tepsisi; TV UI veya web UI kapalı olsa bile indirmeler devam eder (Windows/RetroBat)
 - ♿ **Erişilebilirlik** – UI ve alt bilgi için ayrı font ölçekleme, klavye modu desteği
 - 🌐 **Web Arayüzü** – Batocera/Knulli için uzaktan indirme (port 5000)
 - 🇹🇷 **Türkçe Dil Desteği** – Tam Türkçe arayüz ve çeviri
@@ -149,9 +150,9 @@ Bu komut masaüstüne "RGSX Web UI" kısayolu oluşturur.
 
 ---
 
-## 🌐 Web Arayüzü (Sadece Batocera/Knulli)
+## 🌐 Web Arayüzü
 
-RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için otomatik olarak başlatılan bir web arayüzü içerir.
+RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için otomatik olarak başlatılan bir web arayüzü içerir. **Batocera/Knulli** ve v2.6.5.2'den itibaren arka plan İndirme Yöneticisi sayesinde **Windows/RetroBat** üzerinde de kullanılabilir.
 
 ### Web Arayüzüne Erişim
 
@@ -173,6 +174,43 @@ RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için oto
 
 ---
 
+## 🕹️ RGSX İndirme Yöneticisi (Windows / RetroBat)
+
+v2.6.5.2'den itibaren Windows'taki indirmeler bağımsız bir arka plan daemon'ı (`rgsx_manager.py`) tarafından yönetilir. TV UI'ı veya web UI'ı kapatabilirsiniz; indirmeleriniz durmaz.
+
+### Ne yapar?
+
+- İndirmeleri **sistem tepsisi** ikonuyla arka planda çalıştırır
+- **5000 numaralı portta web arayüzünü** sunar (Windows dahil)
+- Gerçek zamanlı ilerlemeyi TV UI ve web UI'a **SSE** (`/api/events`) ile iletir
+- Windows'ta **otomatik başlatma** (Registry `Run` anahtarı)
+- **Birleşik kuyruk**: TV UI, web UI ve CLI'dan başlatılan indirmeler aynı kuyruğu paylaşır
+
+### Tepsi menüsü
+
+| Öğe | İşlev |
+|-----|-------|
+| Open Web UI | Tarayıcıda `http://localhost:5000` açar |
+| Downloads folder | ROMs klasörünü açar |
+| Logs folder | Günlük klasörünü açar |
+| Auto-start on boot | Windows başlangıcını açar/kapatır (onay işareti mevcut durumu gösterir) |
+| Exit | Yöneticiyi durdurur (bekleyen indirmeleri iptal eder) |
+
+### Manuel kontrol
+
+```bash
+python rgsx_manager.py --port=5000          # tepsi ikonlu çalıştır
+python rgsx_manager.py --no-tray --port=5000
+python rgsx_manager.py --auto-start-install # Windows ile başlatmayı etkinleştir
+python rgsx_manager.py --auto-start-remove  # Windows ile başlatmayı kaldır
+```
+
+### Yedek mod (fallback)
+
+Yönetici başlatılamazsa — veya `--ui-only` ile başlatılırsa / `RGSX_NO_MANAGER=1` ayarlanırsa — TV UI ve web UI uygulama içi kuyruğa geçer. İndirmeler yine çalışır, ancak uygulama kapatıldığında durur.
+
+---
+
 ## 📁 Dosya Yapısı
 
 ```
@@ -180,6 +218,8 @@ RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için oto
 ├── ports/
 │   ├── RGSX/
 │   │   ├── __main__.py                # Giriş noktası
+│   │   ├── rgsx_manager.py            # Arka plan indirme daemon'ı (Windows/RetroBat)
+│   │   ├── rgsx_web.py                # Web sunucusu + REST/SSE API
 │   │   ├── controls.py                # Giriş işleme
 │   │   ├── display.py                 # Render motoru
 │   │   ├── network.py                 # İndirme yöneticisi

@@ -126,9 +126,9 @@ Télécharger la dernière release : [RGSX_update_latest.zip](https://github.com
 3. **File d'attente** : appuyez sur `X` (bouton Ouest)
 4. Suivez la progression dans le menu **Historique** ou via les notifications popup
 
-## 🌐 Interface Web (Batocera/Knulli uniquement)
+## 🌐 Interface Web
 
-RGSX inclut une interface web qui se lance automatiquement quand vous utilisez RGSX, pour parcourir et télécharger des jeux à distance depuis n'importe quel appareil de votre réseau.
+RGSX inclut une interface web pour parcourir et télécharger des jeux à distance depuis n'importe quel appareil de votre réseau. Elle est disponible sur **Batocera/Knulli** et, depuis la v2.6.5.2, sur **Windows/RetroBat** via le gestionnaire de téléchargement en arrière-plan.
 
 ### Accéder à l'interface web
 
@@ -151,6 +151,11 @@ RGSX inclut une interface web qui se lance automatiquement quand vous utilisez R
 
 
 ### Activer/Désactiver le service web au démarrage, sans lancer RGSX
+
+**Sur Windows/RetroBat**, les téléchargements passent par un daemon en arrière-plan (`rgsx_manager.py`) avec icône système :
+- Téléchargements en arrière-plan, même si l'interface TV est fermée
+- Menu de l'icône : ouvrir l'interface web, dossiers des ROMs/génériques (logs), démarrage automatique au boot, quitter
+- Démarrage automatique Windows : `python rgsx_manager.py --auto-start-install` / `--auto-start-remove`
 
 **Depuis le menu RGSX**
 1. Ouvrez le **menu pause** (Start/ALTGr)
