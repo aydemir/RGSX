@@ -118,6 +118,153 @@ def _apply_sorted_active_filters() -> list[Game]:
     return config.games
 
 
+_platform_torrent_support_cache: dict[str, bool] = {}
+
+
+def _is_arm_device() -> bool:
+    architecture = str(getattr(config, 'SYSTEM_INFO', {}).get('architecture') or '').lower().strip()
+    if not architecture:
+        try:
+            import platform as _platform
+            architecture = (_platform.machine() or '').lower().strip()
+        except Exception:
+            architecture = ''
+    return any(token in architecture for token in ('arm', 'aarch64', 'arm64', 'armv7', 'armv8'))
+
+
+def _platform_has_torrents(platform_id: str) -> bool:
+    cached = _platform_torrent_support_cache.get(platform_id)
+    if cached is not None:
+        return cached
+
+    try:
+        games = load_games(platform_id)
+        has_torrents = any(
+            parse_torrent_download_url(game.url) is not None
+            for game in games
+            if getattr(game, 'url', None)
+        )
+    except Exception as exc:
+        logger.debug(f"Impossible de déterminer la présence de torrents pour {platform_id}: {exc}")
+        has_torrents = False
+
+    _platform_torrent_support_cache[platform_id] = has_torrents
+    return has_torrents
+
+
+def _warn_torrents_unavailable_on_arm(platform_label: str | None = None) -> None:
+    message = "Les téléchargements torrent ne sont pas encore disponibles sur les appareils ARM pour le moment."
+    if platform_label:
+        message = f"{platform_label}\n{message}"
+    try:
+        show_toast(message, duration=5000)
+    except Exception:
+        pass
+    try:
+        config.popup_message = message
+        config.popup_timer = 5000
+    except Exception:
+        pass
+    config.needs_redraw = True
+
+
+def _is_1fichier_platform(platform_id: str, platform_label: str) -> bool:
+    markers = [str(marker or "").lower().replace(" ", "") for marker in getattr(config, "PREMIUM_HOST_MARKERS", [])]
+    haystacks = [str(platform_id or ""), str(platform_label or "")]
+    for text in haystacks:
+        normalized = text.lower().replace(" ", "")
+        if "1fichier" in normalized:
+            return True
+        if any(marker and marker in normalized for marker in markers):
+            return True
+    return False
+
+
+def _warn_missing_api_key_for_1fichier_platform(platform_label: str | None = None) -> None:
+    try:
+        ensure_download_provider_keys(False)
+    except Exception:
+        pass
+
+    try:
+        no_api_keys = missing_all_provider_keys()
+    except Exception:
+        no_api_keys = not any([
+            getattr(config, "API_KEY_1FICHIER", ""),
+            getattr(config, "API_KEY_ALLDEBRID", ""),
+            getattr(config, "API_KEY_DEBRIDLINK", ""),
+            getattr(config, "API_KEY_REALDEBRID", ""),
+        ])
+
+    if not no_api_keys:
+        return
+
+    warning_line = _("platform_1fichier_no_api_warning") if _ else "No API key configured: this 1fichier source runs in free mode and may fail."
+    if warning_line == "platform_1fichier_no_api_warning":
+        warning_line = "No API key configured: this 1fichier source runs in free mode and may fail."
+    advice_line = _("free_mode_premium_advice") if _ else "For unlimited, on-demand, full-speed downloads, you need a premium account or debrid service and must enter its API key in RGSX."
+    if advice_line == "free_mode_premium_advice":
+        advice_line = "For unlimited, on-demand, full-speed downloads, you need a premium account or debrid service and must enter its API key in RGSX."
+
+    lines = [warning_line, advice_line]
+    message = "\n".join(line for line in lines if line)
+    if platform_label:
+        message = f"{platform_label}\n{message}"
+
+    try:
+        show_toast(message, duration=6500)
+    except Exception:
+        pass
+    try:
+        config.popup_message = message
+        config.popup_timer = 6500
+    except Exception:
+        pass
+    config.needs_redraw = True
+    logger.warning("Plateforme 1fichier ouverte sans clé API: affichage avertissement mode gratuit")
+
+
+def _open_selected_platform(screen) -> bool:
+    if not config.platforms:
+        return False
+
+    platform_entry = config.platforms[config.selected_platform]
+    platform_id = _get_platform_id(platform_entry)
+    platform_label = _get_platform_label(platform_id)
+
+    if _is_arm_device() and _platform_has_torrents(platform_id):
+        logger.warning(f"Plateforme torrent bloquée sur ARM: {platform_id}")
+        _warn_torrents_unavailable_on_arm(platform_label)
+        return False
+
+    if _is_1fichier_platform(platform_id, platform_label):
+        _warn_missing_api_key_for_1fichier_platform(platform_label)
+
+    config.current_platform = config.selected_platform
+    config.games = load_games(platform_id)
+
+    # Apply saved filters automatically if any
+    if config.game_filter_obj and config.game_filter_obj.is_active():
+        config.filtered_games = _apply_sorted_active_filters()
+        config.filter_active = True
+    else:
+        config.filtered_games = config.games
+        config.filter_active = False
+
+    config.current_game = 0
+    config.scroll_offset = 0
+
+    # Désactiver l'animation de transition en mode performance (light mode)
+    from rgsx_settings import get_light_mode
+    if not get_light_mode():
+        draw_validation_transition(screen, config.current_platform)
+
+    config.menu_state = "game"
+    config.needs_redraw = True
+    logger.debug(f"Navigation vers les jeux de {platform_id}")
+    return True
+
+
 def _is_windows_os() -> bool:
     return str(getattr(config, 'OPERATING_SYSTEM', '') or '').lower() == "windows" or os.name == 'nt'
 
@@ -1755,7 +1902,8 @@ def handle_controls(event, sources, joystick, screen):
                     task_id = entry.get("task_id")
                     url = entry.get("url")
                     game_name = entry.get("game_name", "Unknown")
-                    
+                    was_seeding = entry.get("status") == "Seeding"
+
                     # Annuler via cancel_events (pour les threads de téléchargement)
                     try:
                         request_cancel(task_id)
@@ -1789,12 +1937,20 @@ def handle_controls(event, sources, joystick, screen):
                                 logger.debug(f"Erreur lors de l'annulation de la tâche asyncio: {e}")
                             break
                     
-                    # Mettre à jour l'entrée historique
-                    entry["status"] = "Canceled"
-                    entry["progress"] = 0
-                    entry["message"] = _("download_canceled") if _ else "Download canceled"
+                    # Mettre à jour l'entrée historique : un arrêt de partage n'est pas une
+                    # annulation, le fichier est bien téléchargé (statut "terminé", pas "annulé").
+                    if was_seeding:
+                        entry["status"] = "Download_OK"
+                        entry["progress"] = 100
+                        entry.pop("seeds", None)
+                        entry.pop("ul_speed", None)
+                        logger.debug(f"Partage arrêté: {game_name}")
+                    else:
+                        entry["status"] = "Canceled"
+                        entry["progress"] = 0
+                        entry["message"] = _("download_canceled") if _ else "Download canceled"
+                        logger.debug(f"Téléchargement annulé: {game_name}")
                     save_history(config.history)
-                    logger.debug(f"Téléchargement annulé: {game_name}")
                     
                     config.menu_state = "history"
                     config.needs_redraw = True
@@ -1968,7 +2124,7 @@ def handle_controls(event, sources, joystick, screen):
                                     (event.axis, event.value) if event.type == pygame.JOYAXISMOTION else 
                                     event.value)
                     config.needs_redraw = True
-                    logger.debug(f"history_game_options: UP sel={config.history_game_option_selection}/{total_options}")
+                    # logger.debug(f"history_game_options: UP sel={config.history_game_option_selection}/{total_options}")
                 elif is_input_matched(event, "down"):
                     config.history_game_option_selection = (sel + 1) % total_options
                     update_key_state("down", True, event.type, event.key if event.type == pygame.KEYDOWN else 
@@ -1976,10 +2132,10 @@ def handle_controls(event, sources, joystick, screen):
                                     (event.axis, event.value) if event.type == pygame.JOYAXISMOTION else 
                                     event.value)
                     config.needs_redraw = True
-                    logger.debug(f"history_game_options: DOWN sel={config.history_game_option_selection}/{total_options}")
+                    # logger.debug(f"history_game_options: DOWN sel={config.history_game_option_selection}/{total_options}")
                 elif is_input_matched(event, "confirm"):
                     selected_option = options[sel]
-                    logger.debug(f"history_game_options: CONFIRM option={selected_option}")
+                    # logger.debug(f"history_game_options: CONFIRM option={selected_option}")
                     
                     if selected_option == "force_download":
                         # Forcer le démarrage immédiat d'un téléchargement en file d'attente,
@@ -4424,29 +4580,7 @@ def handle_controls(event, sources, joystick, screen):
                     press_duration = current_time - getattr(config, 'platform_confirm_press_start_time', 0)
                     # Si appui court (< 2 secondes) et pas déjà traité par l'appui long
                     if press_duration < config.confirm_long_press_threshold and not getattr(config, 'platform_confirm_long_press_triggered', False):
-                        # Naviguer vers les jeux
-                        if config.platforms:
-                            config.current_platform = config.selected_platform
-                            config.games = load_games(config.platforms[config.current_platform])
-                            
-                            # Apply saved filters automatically if any
-                            if config.game_filter_obj and config.game_filter_obj.is_active():
-                                config.filtered_games = _apply_sorted_active_filters()
-                                config.filter_active = True
-                            else:
-                                config.filtered_games = config.games
-                                config.filter_active = False
-                            
-                            config.current_game = 0
-                            config.scroll_offset = 0
-                            
-                            # Désactiver l'animation de transition en mode performance (light mode)
-                            from rgsx_settings import get_light_mode
-                            if not get_light_mode():
-                                draw_validation_transition(screen, config.current_platform)
-                            
-                            config.menu_state = "game"
-                            config.needs_redraw = True
+                        if _open_selected_platform(screen):
                             logger.debug(f"Appui court clavier sur confirm ({press_duration}ms), navigation vers les jeux de {config.platforms[config.current_platform]}")
                     # Réinitialiser les flags platform
                     config.platform_confirm_press_start_time = 0
@@ -4549,29 +4683,7 @@ def handle_controls(event, sources, joystick, screen):
                     press_duration = current_time - getattr(config, 'platform_confirm_press_start_time', 0)
                     # Si appui court (< 2 secondes) et pas déjà traité par l'appui long
                     if press_duration < config.confirm_long_press_threshold and not getattr(config, 'platform_confirm_long_press_triggered', False):
-                        # Naviguer vers les jeux
-                        if config.platforms:
-                            config.current_platform = config.selected_platform
-                            config.games = load_games(config.platforms[config.current_platform])
-                            
-                            # Apply saved filters automatically if any
-                            if config.game_filter_obj and config.game_filter_obj.is_active():
-                                config.filtered_games = config.game_filter_obj.apply_filters(config.games)
-                                config.filter_active = True
-                            else:
-                                config.filtered_games = config.games
-                                config.filter_active = False
-                            
-                            config.current_game = 0
-                            config.scroll_offset = 0
-                            
-                            # Désactiver l'animation de transition en mode performance (light mode)
-                            from rgsx_settings import get_light_mode
-                            if not get_light_mode():
-                                draw_validation_transition(screen, config.current_platform)
-                            
-                            config.menu_state = "game"
-                            config.needs_redraw = True
+                        if _open_selected_platform(screen):
                             logger.debug(f"Appui court sur confirm ({press_duration}ms), navigation vers les jeux de {config.platforms[config.current_platform]}")
                     # Réinitialiser les flags platform
                     config.platform_confirm_press_start_time = 0

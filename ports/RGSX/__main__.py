@@ -66,6 +66,7 @@ import subprocess
 import sys
 import threading
 import config
+import qbittorrent_backend
 
 from display import (
     init_display, draw_loading_screen, draw_error_screen, draw_platform_grid,
@@ -93,8 +94,8 @@ from accessibility import  load_accessibility_settings
 
 # Configuration du logging
 # RotatingFileHandler : 20 MB max par fichier, 2 backups → 60 MB total maximum.
-# Évite les fichiers RGSX.log de 1.5 GB causés par le flood aria2c debug (résolu
-# par aria2_trace_enabled=False dans network.py, mais la rotation sert de garde-fou).
+# Évite les fichiers RGSX.log de 1.5 GB causés par un flood de logs torrent, la rotation
+# servant de garde-fou.
 try:
     os.makedirs(config.log_dir, exist_ok=True)
     from logging.handlers import RotatingFileHandler as _RotatingFileHandler
@@ -552,6 +553,26 @@ def stop_web_server():
             logger.error(f"Erreur lors de l'arrêt du serveur web: {e}")
 
 
+def _is_arm_machine() -> bool:
+    machine = (platform.machine() or "").lower()
+    return ("arm" in machine) or ("aarch64" in machine)
+
+
+def _prewarm_qbittorrent_startup() -> None:
+    """Lance qBittorrent en parallèle du boot RGSX pour faciliter la reprise torrent."""
+    try:
+        if _is_arm_machine():
+            logger.info("Pré-lancement qBittorrent ignoré sur architecture ARM")
+            return
+        if not qbittorrent_backend.is_available():
+            logger.info("Pré-lancement qBittorrent ignoré: backend indisponible")
+            return
+        qbittorrent_backend.prewarm_startup_async()
+        logger.info("Pré-lancement qBittorrent déclenché")
+    except Exception as e:
+        logger.debug(f"Pré-lancement qBittorrent non disponible: {e}")
+
+
 # Boucle principale
 async def main():
     global current_music, music_files, music_folder, joystick, screen
@@ -576,6 +597,9 @@ async def main():
     
     # Démarrer le serveur web en arrière-plan
     start_web_server()
+
+    # Démarrer qBittorrent dès l'ouverture de RGSX pour accélérer la reprise torrent.
+    _prewarm_qbittorrent_startup()
     
     # Le scheduler de queue est géré par controls.py (callbacks sur fin de tâche).
 
