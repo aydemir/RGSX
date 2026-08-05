@@ -39,6 +39,19 @@ jobs:
           cp -f "dist/RGSX_update_latest.zip" "dist/RGSX_latest.zip" 
           
           echo "✓ RGSX package created successfully"
+
+          echo ""
+          echo "Building RGSX Windows update package (includes windows/ directory only)…"
+          cd windows
+
+          zip -r "../dist/RGSX_update_windows_latest.zip" . \
+            -x "logs/*" \
+               "logs/**" \
+               "*.log"
+
+          cd ..
+
+          echo "✓ RGSX Windows update package created successfully"
           
           echo ""
           echo "Building RGSX Full package (includes ports/ and windows/ directories)…"
@@ -111,12 +124,18 @@ jobs:
 
           ## 📥 Manual Update (only if automatic doesn't work for some obscure reason)
 
-          #### Batocera/Knulli/Retrobat
+          #### Batocera/Knulli
           1. Download latest update : https://github.com/RetroGameSets/RGSX/releases/latest/download/RGSX_update_latest.zip
           2. Extract zip content in `/userdata/roms/ports/RGSX`
           3. Launch RGSX
           
-          
+          #### Retrobat
+          1. Download latest RGSX update : https://github.com/RetroGameSets/RGSX/releases/latest/download/RGSX_update_latest.zip 
+          2. Extract zip content in `retrobat\roms\ports\rgsx\`
+          3. Download latest RGSX retrobat launcher update : https://github.com/RetroGameSets/RGSX/releases/latest/download/RGSX_update_windows_latest.zip
+          4. Extract zip content in `retrobat\roms\windows\rgsx\`
+          5. Launch RGSX
+
           ### 📖 Documentation
           [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
 
@@ -145,6 +164,7 @@ jobs:
           body_path: dist/RELEASE_NOTES.md
           files: |
             dist/RGSX_update_latest.zip
+            dist/RGSX_update_windows_latest.zip
             dist/RGSX_full_latest.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
