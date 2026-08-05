@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-set "VERSION=1.5"
+set "VERSION=1.6"
 :: =============================================================================
 :: RGSX Retrobat Launcher v%VERSION%
 :: =============================================================================
