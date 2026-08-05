@@ -27,7 +27,7 @@ except Exception:
     pygame = None  # type: ignore
 
 # Version actuelle de l'application
-app_version = "2.6.5.3"
+app_version = "2.6.5.4"
 
 # Nombre de jours avant de proposer la mise à jour de la liste des jeux
 GAMELIST_UPDATE_DAYS = 1
@@ -221,6 +221,7 @@ GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 # URLs pour les mises à jour OTA (Over-The-Air)
 # Utilise le fichier RGSX_latest.zip qui pointe toujours vers la dernière version
 OTA_UPDATE_ZIP = f"{GITHUB_RELEASES_URL}/latest/download/RGSX_update_latest.zip"
+OTA_UPDATE_WINDOWS_ZIP = f"{GITHUB_RELEASES_URL}/latest/download/RGSX_update_windows_latest.zip"
 OTA_VERSION_ENDPOINT = "https://raw.githubusercontent.com/RetroGameSets/RGSX/refs/heads/main/version.json"  # Endpoint pour vérifier la version disponible
 
 # URLs legacy (conservées pour compatibilité)

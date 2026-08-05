@@ -16,7 +16,7 @@ try:
         pygame = None  # type: ignore
 except Exception:
     pygame = None  # type: ignore
-from config import OTA_VERSION_ENDPOINT,APP_FOLDER, UPDATE_FOLDER, OTA_UPDATE_ZIP
+from config import OTA_VERSION_ENDPOINT,APP_FOLDER, UPDATE_FOLDER, OTA_UPDATE_ZIP, OTA_UPDATE_WINDOWS_ZIP
 from utils import sanitize_filename, extract_zip, extract_rar, extract_7z, handle_ps3, load_api_key_1fichier, load_api_key_alldebrid, normalize_platform_name, resolve_platform_folder, load_api_keys, load_archive_org_cookie, get_clean_display_name, parse_torrent_download_url, load_games, get_disk_usage
 from history import save_history, check_history_write_access, get_history_write_status
 from display import show_toast
@@ -2250,6 +2250,180 @@ def _safe_remove_file(file_path, retries=8, delay=0.25):
     return False
 
 
+def _schedule_windows_file_replace_when_unlocked(source_path: str, target_path: str) -> bool:
+    """Planifie un remplacement différé d'un fichier verrouillé (ex: .bat en cours d'exécution)."""
+    if config.OPERATING_SYSTEM != "Windows":
+        return False
+    if not source_path or not target_path:
+        return False
+
+    try:
+        ps_script = (
+            "$src = [IO.Path]::GetFullPath($args[0]); "
+            "$dst = [IO.Path]::GetFullPath($args[1]); "
+            "for ($i = 0; $i -lt 240; $i++) { "
+            "  try { "
+            "    Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop; "
+            "    Remove-Item -LiteralPath $src -Force -ErrorAction SilentlyContinue; "
+            "    exit 0; "
+            "  } catch { Start-Sleep -Milliseconds 500 } "
+            "} "
+            "exit 1"
+        )
+        creationflags = 0
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                ps_script,
+                source_path,
+                target_path,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        return True
+    except Exception as exc:
+        logger.warning(f"Impossible de planifier le remplacement différé de {target_path}: {exc}")
+        return False
+
+
+def _find_windows_update_source_root(extract_root: str) -> str | None:
+    if not extract_root or not os.path.isdir(extract_root):
+        return None
+
+    candidates = [
+        os.path.join(extract_root, "windows"),
+        os.path.join(extract_root, "roms", "windows"),
+    ]
+    for candidate in candidates:
+        if os.path.isdir(candidate):
+            return candidate
+
+    for root, dirs, _files in os.walk(extract_root):
+        for name in dirs:
+            if name.lower() == "windows":
+                return os.path.join(root, name)
+    return None
+
+
+def _copy_windows_update_tree(source_root: str, target_root: str) -> tuple[int, int, list[str]]:
+    """Copie une arborescence windows update; diffère le .bat s'il est verrouillé."""
+    updated_files = 0
+    deferred_files = 0
+    errors: list[str] = []
+
+    for current_root, _dirs, files in os.walk(source_root):
+        rel_root = os.path.relpath(current_root, source_root)
+        if rel_root == ".":
+            rel_root = ""
+        dest_root = os.path.join(target_root, rel_root) if rel_root else target_root
+        os.makedirs(dest_root, exist_ok=True)
+
+        for filename in files:
+            src_file = os.path.join(current_root, filename)
+            dst_file = os.path.join(dest_root, filename)
+            dst_is_launcher = filename.lower() == "rgsx retrobat.bat"
+
+            try:
+                if os.path.exists(dst_file):
+                    try:
+                        os.chmod(dst_file, 0o666)
+                    except Exception:
+                        pass
+
+                shutil.copy2(src_file, dst_file)
+                updated_files += 1
+                continue
+            except PermissionError:
+                pass
+            except OSError:
+                pass
+            except Exception as exc:
+                errors.append(f"{dst_file}: {exc}")
+                continue
+
+            if dst_is_launcher:
+                pending_path = dst_file + ".pending_update"
+                try:
+                    shutil.copy2(src_file, pending_path)
+                    if _schedule_windows_file_replace_when_unlocked(pending_path, dst_file):
+                        deferred_files += 1
+                    else:
+                        errors.append(f"{dst_file}: impossible de planifier le remplacement différé")
+                except Exception as exc:
+                    errors.append(f"{dst_file}: {exc}")
+            else:
+                errors.append(f"{dst_file}: fichier verrouillé ou inaccessible")
+
+    return updated_files, deferred_files, errors
+
+
+async def _apply_pending_windows_update(latest_version: str) -> tuple[bool, str]:
+    """Applique le ZIP update_windows sur Windows sans bloquer en cas de .bat verrouillé."""
+    if config.OPERATING_SYSTEM != "Windows":
+        return True, "Windows update skipped (non-Windows OS)"
+
+    windows_zip_url = OTA_UPDATE_WINDOWS_ZIP
+    windows_zip_path = os.path.join(UPDATE_FOLDER, f"RGSX_update_windows_v{latest_version}.zip")
+    extract_root = os.path.join(UPDATE_FOLDER, f"RGSX_update_windows_extract_{latest_version}")
+
+    try:
+        logger.debug(f"Téléchargement du ZIP Windows update: {windows_zip_url}")
+        with requests.get(windows_zip_url, stream=True, timeout=10) as r:
+            if r.status_code == 404:
+                logger.info("ZIP update_windows introuvable (404): mise à jour Windows spécifique ignorée")
+                return True, "Windows update zip not published"
+            r.raise_for_status()
+            with open(windows_zip_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+
+        if os.path.isdir(extract_root):
+            shutil.rmtree(extract_root, ignore_errors=True)
+        os.makedirs(extract_root, exist_ok=True)
+
+        ok_extract, msg_extract = await asyncio.to_thread(extract_update, windows_zip_path, extract_root, windows_zip_url)
+        if not ok_extract:
+            return False, f"Windows update extraction failed: {msg_extract}"
+
+        source_root = _find_windows_update_source_root(extract_root)
+        if not source_root:
+            return False, "Windows update zip does not contain a windows folder"
+
+        target_root = os.path.join(config.ROMS_FOLDER, "windows")
+        os.makedirs(target_root, exist_ok=True)
+
+        updated_count, deferred_count, copy_errors = _copy_windows_update_tree(source_root, target_root)
+        for error_text in copy_errors[:8]:
+            logger.warning(f"Windows update: {error_text}")
+        if len(copy_errors) > 8:
+            logger.warning(f"Windows update: {len(copy_errors) - 8} erreurs supplémentaires omises")
+
+        if copy_errors and updated_count == 0 and deferred_count == 0:
+            return False, "Windows update copy failed"
+
+        return True, f"Windows update applied ({updated_count} fichiers, {deferred_count} différé(s))"
+    except Exception as exc:
+        return False, f"Windows update failed: {exc}"
+    finally:
+        _safe_remove_file(windows_zip_path)
+        try:
+            if os.path.isdir(extract_root):
+                shutil.rmtree(extract_root, ignore_errors=True)
+        except Exception:
+            pass
+
+
 async def apply_pending_update(latest_version):
     UPDATE_ZIP = OTA_UPDATE_ZIP
     logger.debug(f"URL de mise à jour : {UPDATE_ZIP} (version {latest_version})")
@@ -2291,6 +2465,18 @@ async def apply_pending_update(latest_version):
 
     if _safe_remove_file(update_zip_path):
         logger.debug(f"Fichier ZIP {update_zip_path} supprimé")
+
+    # Mise à jour complémentaire des assets Windows (launcher/scripts), uniquement sous Windows.
+    if config.OPERATING_SYSTEM == "Windows":
+        config.current_loading_system = "Applying Windows launcher update..."
+        config.loading_progress = 85.0
+        _set_loading_details("Applying Windows-specific update package")
+        win_ok, win_msg = await _apply_pending_windows_update(latest_version)
+        if win_ok:
+            logger.info(f"Windows update: {win_msg}")
+        else:
+            # Ne pas annuler l'update principale si le package Windows échoue.
+            logger.warning(f"Windows update non bloquant: {win_msg}")
 
     config.current_loading_system = _("network_update_completed")
     config.loading_progress = 100.0
