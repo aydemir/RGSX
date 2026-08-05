@@ -129,10 +129,17 @@ def _preseed_windows_profile() -> None:
             "WebUI\\Enabled": "true",
             "WebUI\\Port": str(_TARGET_PORT),
             "WebUI\\Address": "127.0.0.1",
+            "WebUI\\LocalHostAuth": "false",
+            "WebUI\\AuthSubnetWhitelistEnabled": "true",
+            "WebUI\\AuthSubnetWhitelist": "127.0.0.1/32",
             "General\\SystemTrayEnabled": "true",
             "General\\StartMinimized": "true",
             "General\\MinimizeToTray": "true",
             "General\\CloseToTray": "true",
+            # Evite le popup "Torrent file association" au premier lancement.
+            # Certaines versions utilisent la clé historiquement mal orthographiée.
+            "Win32\\NeverCheckFileAssocation": "true",
+            "Win32\\NeverCheckFileAssociation": "true",
         },
     })
 
@@ -193,6 +200,77 @@ _launch_lock = threading.Lock()
 _qbt_process: "subprocess.Popen | None" = None
 _prewarm_lock = threading.Lock()
 _prewarm_thread: "threading.Thread | None" = None
+
+
+def _suppress_qbittorrent_window_windows(launcher_pid: int | None, duration_seconds: float = 8.0) -> None:
+    """Empêche qBittorrent de voler le focus au démarrage sur Windows.
+
+    Le lanceur portable peut brièvement afficher une fenêtre avant la minimisation
+    interne de qBittorrent. Cette routine masque agressivement toute fenêtre
+    qBittorrent détectée pendant quelques secondes.
+    """
+    if config.OPERATING_SYSTEM != "Windows":
+        return
+
+    def _run() -> None:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            SW_HIDE = 0
+            WM_CLOSE = 0x0010
+
+            enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+            end_time = time.time() + max(duration_seconds, 1.0)
+            while time.time() < end_time:
+                handles_to_hide: list[int] = []
+
+                @enum_windows_proc
+                def _enum_cb(hwnd, _lparam):
+                    if not user32.IsWindowVisible(hwnd):
+                        return True
+
+                    title_len = user32.GetWindowTextLengthW(hwnd)
+                    title = ""
+                    if title_len > 0:
+                        buf = ctypes.create_unicode_buffer(title_len + 1)
+                        user32.GetWindowTextW(hwnd, buf, title_len + 1)
+                        title = (buf.value or "").strip()
+
+                    window_pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+
+                    # Ferme immédiatement la popup d'association torrent/magnet qui
+                    # bloque le bootstrap WebUI au premier lancement.
+                    title_lower = title.lower()
+                    if "torrent file association" in title_lower:
+                        try:
+                            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+                        except Exception:
+                            pass
+                        return True
+
+                    title_matches = "qbittorrent" in title.lower()
+                    pid_matches = launcher_pid is not None and int(window_pid.value) == int(launcher_pid)
+                    if title_matches or pid_matches:
+                        handles_to_hide.append(int(hwnd))
+                    return True
+
+                user32.EnumWindows(_enum_cb, 0)
+
+                for hwnd in handles_to_hide:
+                    try:
+                        user32.ShowWindow(wintypes.HWND(hwnd), SW_HIDE)
+                    except Exception:
+                        pass
+
+                time.sleep(0.2)
+        except Exception as exc:
+            logger.debug("qbittorrent_backend: suppression fenêtre Windows non disponible: %s", exc)
+
+    threading.Thread(target=_run, daemon=True, name="qbt-hide-window").start()
 
 
 def _wait_for_webui(session: requests.Session, base_url: str, timeout: float) -> bool:
@@ -292,6 +370,16 @@ def _terminate_existing_qbittorrent_processes() -> None:
 def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", timeout: float = 8.0) -> bool:
     headers = {"Referer": base_url, "Origin": base_url, "X-Requested-With": "XMLHttpRequest"}
 
+    def _try_localhost_bypass() -> bool:
+        try:
+            resp = session.get(f"{base_url}/api/v2/app/preferences", timeout=3)
+            if resp.status_code == 200:
+                logger.debug("qbittorrent_backend: WebUI localhost accessible sans login")
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        return False
+
     def _extract_temp_password() -> str | None:
         for line in stdout_lines:
             for pattern in _TEMP_PASSWORD_PATTERNS:
@@ -357,6 +445,9 @@ def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", 
         if banned:
             return False
 
+    if _try_localhost_bypass():
+        return True
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         temp_password = _extract_temp_password()
@@ -374,6 +465,9 @@ def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", 
                 return True
             if banned:
                 return False
+
+        if _try_localhost_bypass():
+            return True
         time.sleep(0.25)
 
     return False
@@ -423,19 +517,38 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
 
         stdout_lines: list[str] = []
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                cwd=os.path.dirname(exe_path) or None,
-            )
+            popen_kwargs = {
+                "cwd": os.path.dirname(exe_path) or None,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "bufsize": 1,
+            }
+
+            if is_windows:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+
+                creationflags = 0
+                if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                    creationflags |= subprocess.CREATE_NO_WINDOW
+
+                popen_kwargs.update({
+                    "stdin": subprocess.DEVNULL,
+                    "startupinfo": startupinfo,
+                    "creationflags": creationflags,
+                })
+
+            process = subprocess.Popen(cmd, **popen_kwargs)
         except Exception as exc:
             logger.error("qbittorrent_backend: impossible de lancer qBittorrent: %s", exc)
             return None
+
+        if is_windows:
+            _suppress_qbittorrent_window_windows(getattr(process, "pid", None), duration_seconds=8.0)
 
         def _drain() -> None:
             if not process.stdout:
