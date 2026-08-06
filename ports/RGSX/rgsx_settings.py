@@ -739,3 +739,44 @@ def set_autostart_on_boot(enabled: bool) -> bool:
     except Exception as e:
         logger.error(f"Error setting autostart_on_boot: {e}")
     return bool(enabled)
+
+
+# ----------------------- Manager server (port/host) ----------------------- #
+
+def get_manager_port(settings=None) -> int:
+    """Port du serveur web/manager (défaut: 5000)."""
+    if settings is None:
+        settings = load_rgsx_settings()
+    try:
+        return int(settings.get("manager_port", 5000))
+    except (TypeError, ValueError):
+        return 5000
+
+
+def set_manager_port(port: int) -> int:
+    """Persiste le port du serveur web/manager."""
+    try:
+        settings = load_rgsx_settings()
+        settings["manager_port"] = int(port)
+        save_rgsx_settings(settings)
+    except Exception as e:
+        logger.error(f"Error setting manager_port: {e}")
+    return int(port)
+
+
+def get_manager_host(settings=None) -> str:
+    """Adresse d'écoute du serveur web/manager (défaut: 0.0.0.0)."""
+    if settings is None:
+        settings = load_rgsx_settings()
+    return str(settings.get("manager_host", "0.0.0.0"))
+
+
+def set_manager_host(host: str) -> str:
+    """Persiste l'adresse d'écoute du serveur web/manager."""
+    try:
+        settings = load_rgsx_settings()
+        settings["manager_host"] = str(host)
+        save_rgsx_settings(settings)
+    except Exception as e:
+        logger.error(f"Error setting manager_host: {e}")
+    return str(host)

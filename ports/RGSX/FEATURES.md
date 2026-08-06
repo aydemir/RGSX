@@ -1,5 +1,21 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Systray "Sunucu Ayarları" Penceresi (2026.08.06)
+
+**Olay:** RGSX Download Manager systray menüsüne "Sunucu Ayarları..." Tkinter penceresi eklendi. WebUI `/settings` (oyun/uygulama ayarları) korundu; sunucu seviyesindeki ayarlar (port, host, auto-start) ayrı bir açılır pencereden yönetiliyor.
+
+**Neden:** Port/host değiştirmek servis restart'ı gerektirir; o sırada WebUI bağlantısı kopar (chicken-egg). Systray'dan bağımsız Tkinter penceresi bu sorunu çözer. tkinter stdlib'de mevcuttur (`pythonw` ile ek bağımlılık yok).
+
+**Yapılan değişiklikler:**
+- **`settings_dialog.py` (yeni):** Tkinter modal dialog — port (doğrulama + 1-65535), host, auto-start toggle, "Kaydet ve Yeniden Başlat" / "İptal". Port doluysa uyarır; sistem tray'den ayrı thread'de açılır.
+- **`rgsx_manager.py`:** Systray menüye "Sunucu Ayarları..." öğesi eklendi; `_on_server_cfg_saved` ayarları `rgsx_settings.json`'a yazar ve port/host değiştiyse `_restart_manager_for_settings()` ile servisi yeniden spawn edip kapatır. `main()` artık port/host'u CLI argümanı verilmediğinde kalıcı ayarlardan okur.
+- **`rgsx_settings.py`:** `get/set_manager_port`, `get/set_manager_host` eklendi (varsayılan 5000 / 0.0.0.0).
+- **`__main__.py`:** `ensure_manager()` manager portunu kalıcı ayarlardan okur (TVUI → manager delegasyonu doğru porta gider).
+
+**Doğrulama:** `py_compile` + import + dialog smoke test geçti; port 5000→5001→5000 geçişi canlı manager'da uçtan uca doğrulandı (health endpoint her portta OK, restart spawn çalışıyor). Çalışan manager: v2.6.5.6, port 5000.
+
+---
+
 ## Tray Menü + İndirme Duraklatma + Yeniden Başlatmada Sürdürme (2026.08.06)
 
 **Olay:** RGSX Download Manager tray menüsüne yeni eylemler eklendi; indirmelerin bilgisayar/manager yeniden başlatıldığında kaldığı yerden devam etmesi sağlandı.
