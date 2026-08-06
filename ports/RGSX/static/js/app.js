@@ -4,6 +4,11 @@
         let currentGames = [];  // Stocke les jeux actuels pour le tri
         const loggedUnparsedSizeTexts = new Set();
         let lastProgressUpdate = Date.now();
+        // Version stable par session pour le cache navigateur des images de plateformes :
+        // évite de re-télécharger les 148 images à chaque re-rendu (un rechargement complet
+        // de la page génère une nouvelle version => images rafraîchies).
+        const platformImageCacheBuster = Date.now();
+        let lastPlatformsSignature = null;
         let autoRefreshTimeout = null;
         let progressInterval = null;
         let queueInterval = null;
@@ -367,8 +372,10 @@
             const downloadsTab = document.getElementById('downloads-content');
             if (downloadsTab && downloadsTab.style.display !== 'none') {
                 if (timeSinceLastUpdate > 30000) {
-                    console.warn('[AUTO-REFRESH] Aucune mise à jour depuis 30s, rafraîchissement...');
-                    location.reload();
+                    console.warn('[AUTO-REFRESH] Aucune mise à jour depuis 30s, rafraîchissement des données...');
+                    // Rafraîchir les données par HTTP au lieu de recharger toute la page
+                    loadProgress(false);
+                    lastProgressUpdate = Date.now();
                 }
             }
         }
@@ -1265,22 +1272,33 @@
         // Charger les plateformes
         async function loadPlatforms() {
             const container = document.getElementById('platforms-content');
-            container.innerHTML = '<div class="loading">⏳ ' + t('web_loading_platforms') + '</div>';
-            
+
             try {
                 const response = await fetch('/api/platforms');
                 const data = await response.json();
-                
+
                 if (!data.success) throw new Error(data.error);
-                
+
                 if (data.platforms.length === 0) {
-                    container.innerHTML = '<p>' + t('web_no_platforms') + '</p>';
+                    if (!container.querySelector('.platform-grid')) {
+                        container.innerHTML = '<p>' + t('web_no_platforms') + '</p>';
+                    }
                     return;
                 }
-                
+
+                // Ne pas re-rendre la grille si la liste des plateformes n'a pas changé
+                // (le snapshot SSE arrive toutes les ~15s) : évite le flicker et évite
+                // de re-télécharger les images à chaque fois.
+                const signature = JSON.stringify(data.platforms.map(p => [p.platform_name, p.games_count || 0]));
+                if (signature === lastPlatformsSignature && container.querySelector('.platform-grid')) {
+                    return;
+                }
+                lastPlatformsSignature = signature;
+
+                container.innerHTML = '<div class="loading">⏳ ' + t('web_loading_platforms') + '</div>';
+
                 // Construire le HTML avec les traductions
                 let searchPlaceholder = t('web_search_platform');
-                const platformImageCacheBuster = Date.now();
                 let html = `
                     <div class="search-box">
                         <input type="text" id="platform-search" placeholder="🔍 ${searchPlaceholder}" 

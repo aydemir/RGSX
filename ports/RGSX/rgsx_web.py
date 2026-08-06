@@ -1901,7 +1901,6 @@ DO NOT share this file publicly as it may contain sensitive information.
     
     def _serve_platform_image(self, platform_name):
         """Sert l'image d'une plateforme en utilisant le mapping de systems_list.json"""
-        print(f"[DEBUG] Image demandée pour: {platform_name}", flush=True)  # DEBUG
         try:
             # Trouver la plateforme dans platform_dicts pour obtenir le platform_image
             platform_dict = None
@@ -1926,12 +1925,12 @@ DO NOT share this file publicly as it may contain sensitive information.
                 with open(image_path, 'rb') as f:
                     image_data = f.read()
 
-                # Ajouter les headers de cache (1 heure)
+                # Cache navigateur (1 heure) : la grille de plateformes n'est pas
+                # re-téléchargée à chaque re-rendu. Le client ajoute une version par
+                # session (?v=...) pour rafraîchir après un update-cache.
                 self.send_response(200)
                 self.send_header('Content-type', content_type)
-                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-                self.send_header('Pragma', 'no-cache')
-                self.send_header('Expires', '0')
+                self.send_header('Cache-Control', 'public, max-age=3600')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(image_data)
