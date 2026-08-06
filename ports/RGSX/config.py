@@ -27,7 +27,7 @@ except Exception:
     pygame = None  # type: ignore
 
 # Version actuelle de l'application
-app_version = "2.6.5.2"
+app_version = "2.6.5.6"
 
 # RGSX Download Manager (daemon): True si le manager est joignable.
 # Les téléchargements sont alors délégués via HTTP au manager (tray).
@@ -226,6 +226,7 @@ GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 # URLs pour les mises à jour OTA (Over-The-Air)
 # Utilise le fichier RGSX_latest.zip qui pointe toujours vers la dernière version
 OTA_UPDATE_ZIP = f"{GITHUB_RELEASES_URL}/latest/download/RGSX_update_latest.zip"
+OTA_UPDATE_WINDOWS_ZIP = f"{GITHUB_RELEASES_URL}/latest/download/RGSX_update_windows_latest.zip"
 OTA_VERSION_ENDPOINT = "https://raw.githubusercontent.com/RetroGameSets/RGSX/refs/heads/main/version.json"  # Endpoint pour vérifier la version disponible
 
 # URLs legacy (conservées pour compatibilité)
@@ -288,8 +289,7 @@ PS3DEC_EXE = os.path.join(APP_FOLDER,"assets", "progs", "ps3dec_win.exe")
 PS3DEC_LINUX = os.path.join(APP_FOLDER,"assets", "progs", "ps3dec_linux")
 SEVEN_Z_LINUX = os.path.join(APP_FOLDER,"assets", "progs", "7zz")
 SEVEN_Z_EXE = os.path.join(APP_FOLDER,"assets", "progs", "7z.exe")
-ARIA2C_EXE = os.path.join(APP_FOLDER,"assets", "progs", "aria2c.exe")
-ARIA2C_LINUX = os.path.join(APP_FOLDER,"assets", "progs", "aria2c_linux")
+TORRENT_QBITTORRENT_WEBUI_PASSWORD = "RGSXqbt"
 
 # Détection du système d'exploitation (une seule fois au démarrage)
 OPERATING_SYSTEM = platform.system()

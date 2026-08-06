@@ -53,6 +53,13 @@ Télécharger la dernière release : [RGSX_update_latest.zip](https://github.com
 - Configure automatiquement les contrôles si votre manette est reconnue
 - **Contrôles cassés ?** Supprimez `/saves/ports/rgsx/controls.json` puis redémarrez
 
+**Retrobat / premier lancement Windows**
+
+- Il est recommandé de lancer une première fois `RGSX Retrobat.bat` manuellement, hors interface Retrobat, pour valider l’environnement.
+- Autorisez les demandes Windows de pare-feu quand elles apparaissent, surtout pour qBittorrent au premier lancement.
+- Retrobat masque certaines fenêtres système par défaut : un premier lancement manuel évite de manquer une invite importante.
+- Le lanceur configure ensuite une règle locale pour le binaire qBittorrent intégré et pour la WebUI TCP `18572`.
+
 **Mode clavier** : lorsqu'aucune manette n'est détectée, les contrôles s'affichent sous forme de `[Touche]` au lieu d'icônes.
 
 ### Structure du menu pause
@@ -125,6 +132,20 @@ Télécharger la dernière release : [RGSX_update_latest.zip](https://github.com
 2. **Téléchargement direct** : appuyez sur `Confirmer`
 3. **File d'attente** : appuyez sur `X` (bouton Ouest)
 4. Suivez la progression dans le menu **Historique** ou via les notifications popup
+
+## Torrent via qBittorrent intégré
+
+Les téléchargements torrent passent maintenant par un binaire qBittorrent intégré dans RGSX, sur Windows comme sur Linux/Batocera.
+
+- WebUI de debug LAN : `http://IP_DE_VOTRE_MACHINE:18572`
+- Identifiants par défaut : `admin` / `RGSXqbt`
+- Depuis l’interface web RGSX, un bouton `qBittorrent` ouvre directement cette WebUI.
+
+Notes utiles :
+- Cette WebUI sert au debug et au suivi avancé des torrents depuis un téléphone ou un autre PC du réseau local.
+- Si l’accès LAN à la WebUI ne fonctionne pas, vérifiez d’abord le pare-feu local Windows.
+- N’ouvrez pas directement le port `18572` sur Internet : c’est le port d’administration WebUI, pas le port BitTorrent de performance.
+- En cas de souci de connectivité torrent, préférez l’UPnP ou l’ouverture du port d’écoute BitTorrent configuré dans qBittorrent.
 
 ## 🌐 Interface Web
 

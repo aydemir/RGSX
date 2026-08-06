@@ -67,6 +67,7 @@ import sys
 import json
 import threading
 import config
+import qbittorrent_backend
 
 from display import (
     init_display, draw_loading_screen, draw_error_screen, draw_platform_grid,
@@ -85,7 +86,8 @@ from controls_mapper import map_controls, draw_controls_mapping, get_actions
 from controls import load_controls_config
 from utils import (
     load_sources, check_extension_before_download, extract_data,
-    play_random_music, load_music_config, load_api_keys, _refresh_loading_feedback, _format_size_bytes, get_disk_usage
+    play_random_music, load_music_config, load_api_keys, _refresh_loading_feedback, _format_size_bytes, get_disk_usage,
+    parse_torrent_download_url
 )
 from history import load_history, save_history, load_downloaded_games, check_history_write_access, get_history_write_status
 from config import OTA_data_ZIP
@@ -94,8 +96,8 @@ from accessibility import  load_accessibility_settings
 
 # Configuration du logging
 # RotatingFileHandler : 20 MB max par fichier, 2 backups → 60 MB total maximum.
-# Évite les fichiers RGSX.log de 1.5 GB causés par le flood aria2c debug (résolu
-# par aria2_trace_enabled=False dans network.py, mais la rotation sert de garde-fou).
+# Évite les fichiers RGSX.log de 1.5 GB causés par un flood de logs torrent, la rotation
+# servant de garde-fou.
 try:
     os.makedirs(config.log_dir, exist_ok=True)
     from logging.handlers import RotatingFileHandler as _RotatingFileHandler
@@ -652,6 +654,37 @@ def _detect_download_completions(history, last_seen):
             show_toast(f"[ERROR] {entry.get('game_name', '?')}\n{_('download_failed') if _ else 'Download failed'}", 3000)
 
 
+def _is_arm_machine() -> bool:
+    machine = (platform.machine() or "").lower()
+    return ("arm" in machine) or ("aarch64" in machine)
+
+
+def _prewarm_qbittorrent_startup() -> None:
+    """Lance qBittorrent en parallèle du boot RGSX pour faciliter la reprise torrent."""
+    try:
+        if _is_arm_machine():
+            logger.info("Pré-lancement qBittorrent ignoré sur architecture ARM")
+            return
+        if not qbittorrent_backend.is_available():
+            logger.info("Pré-lancement qBittorrent ignoré: backend indisponible")
+            return
+        qbittorrent_backend.prewarm_startup_async()
+        logger.info("Pré-lancement qBittorrent déclenché")
+    except Exception as e:
+        logger.debug(f"Pré-lancement qBittorrent non disponible: {e}")
+
+
+def _is_torrent_resume_entry(entry: dict) -> bool:
+    """True si l'entrée d'historique correspond à une reprise torrent."""
+    try:
+        url = str(entry.get("url") or "").strip()
+        if not url:
+            return False
+        return parse_torrent_download_url(url) is not None
+    except Exception:
+        return False
+
+
 # Boucle principale
 async def main():
     global current_music, music_files, music_folder, joystick, screen
@@ -676,6 +709,7 @@ async def main():
     
     # Garantir qu'un manager RGSX (daemon + tray) est actif.
     # S'il est joignable, les téléchargements sont délégués au manager via HTTP.
+    # Le serveur web est alors fourni par le manager (rgsx_manager -> rgsx_web.run_server).
     ensure_manager()
 
     # Démarrer le client SSE pour refléter l'état du manager dans la TV UI.
@@ -690,6 +724,15 @@ async def main():
             e for e in config.history
             if e.get("status") in ("Téléchargement", "Downloading") and e.get("url")
         ]
+
+        # Pré-lance qB seulement si une reprise torrent est réellement détectée.
+        interrupted_torrents = [e for e in interrupted if _is_torrent_resume_entry(e)]
+        if interrupted_torrents:
+            logger.info(
+                f"[RESUME] {len(interrupted_torrents)} reprise(s) torrent détectée(s): pré-lancement qBittorrent"
+            )
+            _prewarm_qbittorrent_startup()
+
         if interrupted:
             logger.info(f"[RESUME] {len(interrupted)} téléchargement(s) interrompu(s) détecté(s), reprise...")
         for entry in interrupted:
