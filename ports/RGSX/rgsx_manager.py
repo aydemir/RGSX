@@ -27,6 +27,7 @@ import datetime
 import json
 import logging
 import queue as queue_module
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -37,6 +38,7 @@ import config
 import rgsx_web
 from rgsx_web import RGSXHandler, get_cached_games, get_translation
 from utils import get_clean_display_name
+from settings_dialog import open_server_settings_dialog
 
 from network import (
     download_queue_worker,
@@ -567,6 +569,41 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
     def _open_settings(icon, item):
         webbrowser.open(f"http://localhost:{port}/settings")
 
+    def _get_current_server_cfg():
+        from rgsx_settings import get_manager_port, get_manager_host, get_autostart_on_boot
+        return {
+            "port": get_manager_port(),
+            "host": get_manager_host(),
+            "autostart": get_autostart_on_boot(),
+        }
+
+    def _on_server_cfg_saved(cfg):
+        if not cfg:
+            return
+        try:
+            from rgsx_settings import (
+                set_manager_port, set_manager_host, set_autostart_on_boot,
+            )
+            set_manager_port(cfg["port"])
+            set_manager_host(cfg["host"])
+            set_autostart_on_boot(cfg["autostart"])
+            _set_autostart_pref(cfg["autostart"])
+            logger.info(
+                f"[MANAGER] Sunucu ayarları kaydedildi: port={cfg['port']} host={cfg['host']} "
+                f"autostart={cfg['autostart']} restart={cfg.get('restart')}"
+            )
+            if cfg.get("restart"):
+                threading.Thread(target=_restart_manager_for_settings, daemon=True).start()
+        except Exception as e:
+            logger.warning(f"[MANAGER] Ayar kaydı: {e}")
+
+    def _open_server_settings(icon, item):
+        open_server_settings_dialog(
+            on_save=_on_server_cfg_saved,
+            get_current=_get_current_server_cfg,
+            app_dir=_APP_DIR,
+        )
+
     def _toggle_pause_all(icon, item):
         try:
             if is_any_download_paused():
@@ -584,6 +621,7 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
     menu = pystray.Menu(
         pystray.MenuItem("Open Web UI", _open_ui, default=True),
         pystray.MenuItem("Ayarlar", _open_settings),
+        pystray.MenuItem("Sunucu Ayarları...", _open_server_settings),
         pystray.MenuItem("İndirmeleri Durdur/Sürdür", _toggle_pause_all,
                          checked=lambda item: is_any_download_paused()),
         pystray.MenuItem("Downloads folder", _open_downloads),
@@ -602,6 +640,37 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
         logger.warning(f"[MANAGER] Tray impossible: {e}")
         _TRAY_ICON = None
     return _TRAY_ICON
+
+
+def _restart_manager_for_settings():
+    """Yeni port/host ayarlarıyla servisi yeniden başlat.
+
+    Kısa bir gecikmeyle kendini tekrar spawn eder, ardından mevcut süreci kapatır.
+    """
+    try:
+        time.sleep(0.8)
+        from rgsx_settings import get_manager_port, get_manager_host
+        new_port = get_manager_port()
+        new_host = get_manager_host()
+        cmd = [sys.executable, os.path.abspath(__file__),
+               f"--port={new_port}", f"--host={new_host}", "--minimized"]
+        if os.name == "nt":
+            CREATE_NO_WINDOW = 0x08000000
+            subprocess.Popen(cmd, cwd=os.path.dirname(os.path.abspath(__file__)),
+                             creationflags=CREATE_NO_WINDOW,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen(cmd, cwd=os.path.dirname(os.path.abspath(__file__)),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info(f"[MANAGER] Restart: port={new_port} host={new_host}")
+    except Exception as e:
+        logger.warning(f"[MANAGER] Restart spawn hatası: {e}")
+        return
+    # Eski süreci kapat (yeni süreç portu serbest bulacak)
+    try:
+        _trigger_shutdown()
+    except Exception as e:
+        logger.warning(f"[MANAGER] Restart shutdown hatası: {e}")
 
 
 def _resume_interrupted_downloads() -> int:
@@ -697,13 +766,18 @@ def manager_healthy(host: str = "127.0.0.1", port: int = 5000, timeout: float = 
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="RGSX Download Manager")
-    parser.add_argument("--host", default="0.0.0.0", help="Adresse d'écoute (défaut: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=5000, help="Port HTTP (défaut: 5000)")
+    parser.add_argument("--host", default=None, help="Adresse d'écoute (défaut: rgsx_settings.json)")
+    parser.add_argument("--port", type=int, default=None, help="Port HTTP (défaut: rgsx_settings.json)")
     parser.add_argument("--no-tray", action="store_true", help="Désactiver l'icône système")
     parser.add_argument("--minimized", action="store_true", help="Lancé en arrière-plan (auto-start)")
     parser.add_argument("--auto-start-install", action="store_true", help="Installer le démarrage auto puis quitter")
     parser.add_argument("--auto-start-remove", action="store_true", help="Supprimer le démarrage auto puis quitter")
     args = parser.parse_args()
+
+    # CLI argümanı verilmediyse kalıcı ayarlardan oku (Sunucu Ayarları penceresi yazıyor).
+    from rgsx_settings import get_manager_port, get_manager_host
+    args.port = args.port if args.port is not None else get_manager_port()
+    args.host = args.host if args.host else get_manager_host()
 
     if args.auto_start_install:
         ok = autostart_install()

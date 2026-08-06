@@ -491,7 +491,11 @@ def ensure_manager():
     Retourne True si un manager est disponible (délégation HTTP des téléchargements),
     False en mode local (--ui-only / fallback : la TV UI gère sa propre queue).
     """
-    config.manager_port = getattr(config, 'manager_port', 5000)
+    try:
+        from rgsx_settings import get_manager_port
+        config.manager_port = get_manager_port()
+    except Exception:
+        config.manager_port = getattr(config, 'manager_port', 5000)
     config.manager_available = False
 
     # Mode local explicite: pas de manager, pas de délégation
