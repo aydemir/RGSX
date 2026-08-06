@@ -2,6 +2,27 @@
 
 ## Yapılan Özelleştirmeler (RetroBat Entegrasyonu)
 
+### Tray Auto-Start Varsayılan AÇIK (v2.6.5.2 sonrası)
+
+**Dosyalar:** `rgsx_manager.py`, `rgsx_settings.py`
+
+- `rgsx_settings.json`'a `autostart_on_boot` anahtarı eklendi (varsayılan `true`).
+- Manager ilk başladığında (tray olmadan) tercih `true` ise Registry'ye otomatik kurulur.
+- Kullanıcı tray'den kapatırsa tercih kalıcı olarak `false` yazılır; yeniden başlatmada açılmaz.
+- `--auto-start-install` / `--auto-start-remove` da tercihi günceller.
+
+---
+
+### WebUI Platform Listesi Render/Yenilenme İyileştirmeleri
+
+**Dosyalar:** `rgsx_web.py`, `static/js/app.js`
+
+- SSE snapshot (~15 sn) sırasında platform grid'i yeniden render edilmiyor (imza karşılaştırması).
+- Platform görüntüleri için oturum bazlı stabil `?v=` cache-buster (her render'da değişen `Date.now()` yerine oturum sabiti).
+- `rgsx_web.py`: image yanıtlarında `Cache-Control: public, max-age=3600` (`no-store` kaldırıldı) → platform görselleri re-render'da tekrar indirilmiyor.
+- 30 sn'lik auto-refresh artık `location.reload()` yerine sadece verileri HTTP ile yeniliyor (tam sayfa yeniden yüklemesi yok).
+- Doğrulama: snapshot sonrası re-render yok, 148 platform görseli tek seferde yükleniyor.
+
 ### v2.6.4.9-TR2 - Web UI Masaüstü Kısayolu
 
 **Dosyalar:** `windows/RGSX Retrobat.bat`, `windows/create_shortcut.vbs`

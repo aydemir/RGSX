@@ -155,7 +155,7 @@ RGSX inclut une interface web pour parcourir et télécharger des jeux à distan
 **Sur Windows/RetroBat**, les téléchargements passent par un daemon en arrière-plan (`rgsx_manager.py`) avec icône système :
 - Téléchargements en arrière-plan, même si l'interface TV est fermée
 - Menu de l'icône : ouvrir l'interface web, dossiers des ROMs/génériques (logs), démarrage automatique au boot, quitter
-- Démarrage automatique Windows : `python rgsx_manager.py --auto-start-install` / `--auto-start-remove`
+- Démarrage automatique Windows : `python rgsx_manager.py --auto-start-install` / `--auto-start-remove` (**activé par défaut**, désactivable depuis le menu de l'icône)
 
 **Depuis le menu RGSX**
 1. Ouvrez le **menu pause** (Start/ALTGr)
