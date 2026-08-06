@@ -1,5 +1,26 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## v2.6.5.6 Upstream Birleştirmesi (2026.08.06)
+
+**Olay:** Upstream `RetroGameSets/RGSX` → `v2.6.5.6` (`0a317db`), custom `v2.6.5.2` tabanına merge edildi. Tüm custom özellikler (RGSX Download Manager, tray auto-start, SSE, WebUI oyun-durumu göstergeleri, ROM tarama, Türkçe) korunarak upstream'in yeni qBittorrent torrent altyapısı aktif edildi.
+
+**Upstream'den gelenler:**
+- Torrent motoru değişimi: aria2c → **gömülü qBittorrent** (`network.py` yeniden yazıldı, `qbittorrent_backend.py` eklendi; asset'ler: `qbittorrent-portable.7z`, `qbittorrent-nox_linux`).
+- `version.json` ve `config.py`: `2.6.5.6`.
+- Windows güncelleme mekanizması: `RGSX_update_windows_latest.zip` in-app uygulaması (`_apply_pending_windows_update`).
+- qBittorrent WebUI butonu (`:18572`, `admin`/`RGSXqbt`) — web UI'da ve firewall scriptinde.
+- TV UI: `Paused` durumu, seed durdurma ayrımı, ARM platform/1fichier uyarıları (`_open_selected_platform` refactor).
+
+**Custom tarafta korunanlar / birleştirme kararları:**
+- `__main__.py`: upstream `start_web_server()` çağrısı yerine custom mimari korundu — `ensure_manager()` + `_start_manager_sse_listener()` (web sunucusunu manager başlatır). Upstream'in `qbittorrent_backend` import'u ve torrent-resume prewarm (`_prewarm_qbittorrent_startup`) aynı akışa entegre.
+- `controls.py`: platform açma upstream'in `_open_selected_platform()` (ARM/1fichier uyarıları dahil) ile yapılıyor; custom `scan_platform_roms_on_enter()` çağrısı bu fonksiyonun içine taşındı.
+- `config.py`: `manager_port`/`manager_available` (custom) + `OTA_UPDATE_WINDOWS_ZIP`/`TORRENT_QBITTORRENT_WEBUI_PASSWORD` (upstream) birlikte.
+- `display.py` / `rgsx_web.py` / `app.js`: her iki tarafın değişiklikleri de korundu (manager SSE yansıması + qBittorrent butonu; game-status göstergeleri + tab render iyileştirmeleri).
+
+**Doğrulama:** Tüm Python dosyaları `py_compile` geçti; `network` API'si (download_rom, download_from_1fichier, download_queue_worker, cancel_all_downloads, request_cancel, ...) custom çağrıcılarıyla uyumlu doğrulandı.
+
+---
+
 ## Yapılan Özelleştirmeler (RetroBat Entegrasyonu)
 
 ### Tray Auto-Start Varsayılan AÇIK (v2.6.5.2 sonrası)

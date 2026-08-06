@@ -2612,7 +2612,7 @@ def draw_history_list(screen):
     else:
         current_history_item_inverted = 0
 
-    active_statuses = {"Téléchargement", "Downloading", "Extracting", "Converting", "Connecting", "Queued"}
+    active_statuses = {"Téléchargement", "Downloading", "Extracting", "Converting", "Connecting", "Queued", "Paused"}
     completed_statuses = {"Download_OK", "Completed"}
     error_statuses = {"Erreur", "Error"}
     canceled_statuses = {"Canceled", "Cancelled", "Annulé", "Annule"}
@@ -2663,13 +2663,14 @@ def draw_history_list(screen):
                 _sd = int(display_entry.get("seeds", 0) or 0)
                 _cn = int(display_entry.get("connections", 0) or 0)
             title_text = f"{title_text}  [{_sd}SD/{_cn}CN]"
-        # Afficher l'étape aria2c courante dans le titre (connecting / verifying / waiting).
+        # Afficher l'étape torrent courante dans le titre (connecting / verifying / waiting).
         # On ne montre rien quand on télécharge activement (speed > 0) car l'info de vitesse suffit.
         _aria2_phase = str(display_entry.get("aria2_phase") or "")
         _phase_labels = {
             "connecting": _("aria2_phase_connecting"),
             "verifying":  _("aria2_phase_verifying"),
             "waiting":    _("aria2_phase_waiting"),
+            "paused":     _("aria2_phase_paused"),
         }
         _phase_label = _phase_labels.get(_aria2_phase, "")
         if _phase_label:
@@ -5622,7 +5623,7 @@ def draw_history_game_options(screen):
         option_labels.append(_("history_option_cancel_download"))
     elif status == "Seeding":
         options.append("cancel_download")
-        option_labels.append(_("history_option_cancel_download"))
+        option_labels.append(_("history_option_stop_seeding"))
         # Vérifier si c'est une archive ET si le fichier existe
         if actual_filename and file_exists:
             ext = os.path.splitext(actual_filename)[1].lower()

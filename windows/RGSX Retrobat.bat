@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-set "VERSION=1.4"
+set "VERSION=1.6"
 :: =============================================================================
 :: RGSX Retrobat Launcher v%VERSION%
 :: =============================================================================
@@ -153,7 +153,9 @@ set "PYTHON_BUNDLE_NEEDS_INSTALL=0"
 for /f "delims=" %%I in ('where python.exe 2^>nul') do (
     set "PYTHON_CANDIDATE=%%~fI"
     if exist "!PYTHON_CANDIDATE!" (
-        echo !PYTHON_CANDIDATE! | find /I "\Microsoft\WindowsApps\python.exe" >nul
+        rem Utiliser findstr.exe explicite (System32) pour eviter le conflit
+        rem avec GNU find (Git/MSYS) present dans le PATH.
+        echo !PYTHON_CANDIDATE! | "%SystemRoot%\System32\findstr.exe" /I /C:"\Microsoft\WindowsApps\python.exe" >nul
         if !ERRORLEVEL! NEQ 0 (
             "!PYTHON_CANDIDATE!" --version >nul 2>&1
             if !ERRORLEVEL! EQU 0 if not defined PYTHON_EXE (
@@ -490,13 +492,12 @@ if defined MISSING_PACKAGES (
 :: =============================================================================
 :: Configuration automatique du pare-feu Windows (une seule fois, transparente)
 :: =============================================================================
-:: Ajoute des regles entrantes pour aria2c.exe (BitTorrent) et python.exe (UPnP)
-:: afin que les telechargements torrent et la decouverte UPnP fonctionnent sans
-:: que l'utilisateur ait a configurer quoi que ce soit manuellement. Peut demander
-:: une elevation UAC une seule fois (marqueur ecrit dans tous les cas pour ne
-:: jamais redemander a chaque lancement).
-set "ARIA2C_EXE=%ROOT_DIR%\roms\ports\RGSX\assets\progs\aria2c.exe"
-set "FIREWALL_SCRIPT=%ROOT_DIR%\roms\ports\RGSX\assets\scripts\rgsx_firewall_setup.ps1"
+:: Ajoute des regles entrantes pour le binaire qBittorrent integre et pour le
+:: port TCP 18572 de la WebUI, afin que le debug LAN fonctionne des le premier
+:: lancement manuel. Peut demander une elevation UAC une seule fois (marqueur
+:: ecrit dans tous les cas pour ne jamais redemander a chaque lancement).
+set "QBITTORRENT_EXE=%ROOT_DIR%\saves\ports\rgsx\qbittorrent-portable\qbittorrent-portable.exe"
+set "FIREWALL_SCRIPT=%ROOT_DIR%\roms\windows\scripts\rgsx_firewall_setup.ps1"
 set "FIREWALL_MARKER_DIR=%ROOT_DIR%\saves\ports\rgsx"
 set "FIREWALL_MARKER=%FIREWALL_MARKER_DIR%\.firewall_rules_configured"
 
@@ -506,7 +507,7 @@ if not exist "%FIREWALL_MARKER%" (
         if not exist "%FIREWALL_MARKER_DIR%" mkdir "%FIREWALL_MARKER_DIR%" 2>nul
         echo [%DATE% %TIME%] Firewall setup attempted >> "%FIREWALL_MARKER%" 2>nul
         echo [%DATE% %TIME%] One-time firewall setup: launching %FIREWALL_SCRIPT% detached/hidden in background >> "%LOG_FILE%"
-        start "" /B powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -Aria2cPath "%ARIA2C_EXE%" -PythonPath "!PYTHON_EXE!" >> "%LOG_FILE%" 2>&1
+        start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -QbittorrentPath "%QBITTORRENT_EXE%" -WebUiPort 18572 -LogFile "%LOG_FILE%" >nul 2>&1
     ) else (
         echo [%DATE% %TIME%] Firewall setup script not found, skipping >> "%LOG_FILE%"
     )
