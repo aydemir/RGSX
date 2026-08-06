@@ -719,3 +719,23 @@ def set_max_simultaneous_downloads(value: int) -> int:
     except Exception as e:
         logger.error(f"Error setting max_simultaneous_downloads: {e}")
     return value
+
+
+# ----------------------- Auto-start on boot (tray) ----------------------- #
+
+def get_autostart_on_boot(settings=None) -> bool:
+    """Retourne True si le manager doit démarrer automatiquement au boot (défaut: True)."""
+    if settings is None:
+        settings = load_rgsx_settings()
+    return bool(settings.get("autostart_on_boot", True))
+
+
+def set_autostart_on_boot(enabled: bool) -> bool:
+    """Persiste la préférence utilisateur auto-start au boot (indépendante du registre)."""
+    try:
+        settings = load_rgsx_settings()
+        settings["autostart_on_boot"] = bool(enabled)
+        save_rgsx_settings(settings)
+    except Exception as e:
+        logger.error(f"Error setting autostart_on_boot: {e}")
+    return bool(enabled)

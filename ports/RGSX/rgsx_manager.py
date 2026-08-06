@@ -473,6 +473,23 @@ def autostart_remove() -> bool:
         return False
 
 
+def _get_autostart_pref() -> bool:
+    """Préférence utilisateur persistée (défaut: True => auto-start au boot activé par défaut)."""
+    try:
+        from rgsx_settings import get_autostart_on_boot
+        return bool(get_autostart_on_boot())
+    except Exception:
+        return True
+
+
+def _set_autostart_pref(enabled: bool) -> bool:
+    try:
+        from rgsx_settings import set_autostart_on_boot
+        return bool(set_autostart_on_boot(enabled))
+    except Exception:
+        return bool(enabled)
+
+
 # ---------------------------------------------------------------------------
 # System tray
 # ---------------------------------------------------------------------------
@@ -519,9 +536,11 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
     def _toggle_autostart(icon, item):
         if is_autostart_enabled():
             autostart_remove()
+            _set_autostart_pref(False)
             icon.notify("Auto-start disabled", "RGSX")
         else:
             autostart_install()
+            _set_autostart_pref(True)
             icon.notify("Auto-start enabled", "RGSX")
 
     def _quit(icon, item):
@@ -603,10 +622,12 @@ def main():
 
     if args.auto_start_install:
         ok = autostart_install()
+        _set_autostart_pref(True)
         print("RGSX Manager: auto-start installed" if ok else "RGSX Manager: auto-start install FAILED")
         return 0 if ok else 1
     if args.auto_start_remove:
         ok = autostart_remove()
+        _set_autostart_pref(False)
         print("RGSX Manager: auto-start removed" if ok else "RGSX Manager: auto-start remove FAILED")
         return 0 if ok else 1
 
@@ -614,6 +635,11 @@ def main():
         logger.info(f"[MANAGER] Un manager est déjà actif sur le port {args.port}")
         print(f"RGSX Manager already running on http://localhost:{args.port}")
         return 0
+
+    # Auto-start par défaut: si l'utilisateur ne l'a pas désactivé, l'installer au boot
+    if os.name == "nt" and _get_autostart_pref() and not is_autostart_enabled():
+        if autostart_install():
+            logger.info("[MANAGER] Auto-start activé (préférence par défaut)")
 
     logger.info("=" * 60)
     logger.info("[MANAGER] RGSX Download Manager démarre")
