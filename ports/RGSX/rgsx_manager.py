@@ -43,6 +43,9 @@ from network import (
     shutdown_downloads,
     cancel_all_downloads,
     request_cancel,
+    pause_all_downloads,
+    resume_all_downloads,
+    is_any_download_paused,
 )
 from history import load_history, save_history
 
@@ -199,6 +202,24 @@ class ManagerHandler(RGSXHandler):
         if path == "/api/shutdown":
             self._send_json({"success": True, "message": "Shutdown en cours..."})
             threading.Thread(target=_trigger_shutdown, daemon=True).start()
+            return
+
+        if path == "/api/pause":
+            try:
+                n = pause_all_downloads()
+                self._send_json({"success": True, "paused": n})
+            except Exception as e:
+                logger.warning(f"[MANAGER] /api/pause: {e}")
+                self._send_json({"success": False, "message": str(e)}, status=500)
+            return
+
+        if path == "/api/resume":
+            try:
+                n = resume_all_downloads()
+                self._send_json({"success": True, "resumed": n})
+            except Exception as e:
+                logger.warning(f"[MANAGER] /api/resume: {e}")
+                self._send_json({"success": False, "message": str(e)}, status=500)
             return
 
         super().do_POST()
@@ -543,11 +564,28 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
             _set_autostart_pref(True)
             icon.notify("Auto-start enabled", "RGSX")
 
+    def _open_settings(icon, item):
+        webbrowser.open(f"http://localhost:{port}/settings")
+
+    def _toggle_pause_all(icon, item):
+        try:
+            if is_any_download_paused():
+                n = resume_all_downloads()
+                icon.notify(f"{n} indirme sürdürüldü", "RGSX")
+            else:
+                n = pause_all_downloads()
+                icon.notify(f"{n} indirme durduruldu", "RGSX")
+        except Exception as e:
+            logger.warning(f"[MANAGER] pause toggle: {e}")
+
     def _quit(icon, item):
         _trigger_shutdown()
 
     menu = pystray.Menu(
         pystray.MenuItem("Open Web UI", _open_ui, default=True),
+        pystray.MenuItem("Ayarlar", _open_settings),
+        pystray.MenuItem("İndirmeleri Durdur/Sürdür", _toggle_pause_all,
+                         checked=lambda item: is_any_download_paused()),
         pystray.MenuItem("Downloads folder", _open_downloads),
         pystray.MenuItem("Logs folder", _open_logs),
         pystray.MenuItem("Auto-start on boot", _toggle_autostart,
@@ -564,6 +602,53 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
         logger.warning(f"[MANAGER] Tray impossible: {e}")
         _TRAY_ICON = None
     return _TRAY_ICON
+
+
+def _resume_interrupted_downloads() -> int:
+    """Après un redémarrage, remet en file les téléchargements interrompus/en pause.
+
+    - Torrents: qBittorrent conserve les données partielles → reprise à l'endroit laissé.
+    - HTTP direct: reprise depuis le début (pas de Range), mais la file est relancée.
+    """
+    try:
+        history = load_history() or []
+    except Exception as e:
+        logger.warning(f"[RESUME] load_history: {e}")
+        return 0
+
+    interrupted = [
+        e for e in history
+        if e.get("status") in ("Téléchargement", "Downloading", "Paused")
+        and e.get("url")
+    ]
+    if not interrupted:
+        return 0
+
+    for entry in interrupted:
+        url = str(entry.get("url") or "").strip()
+        if not url:
+            continue
+        task_id = entry.get("task_id") or f"resume_{int(time.time() * 1000)}"
+        config.download_queue.append({
+            "url": url,
+            "platform": entry.get("platform", ""),
+            "game_name": entry.get("game_name", ""),
+            "is_zip_non_supported": bool(entry.get("is_zip_non_supported", False)),
+            "task_id": task_id,
+            "status": "Queued",
+        })
+        entry["status"] = "Queued"
+        entry["message"] = "Queued (reprise après redémarrage)"
+
+    try:
+        save_history(history)
+        if isinstance(getattr(config, "history", None), list):
+            config.history = history
+    except Exception as e:
+        logger.warning(f"[RESUME] save_history: {e}")
+
+    logger.info(f"[RESUME] {len(interrupted)} téléchargement(s) remis en file après redémarrage")
+    return len(interrupted)
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +733,11 @@ def main():
 
     threading.Thread(target=download_queue_worker, daemon=True, name="queue-worker").start()
     threading.Thread(target=_broadcaster_loop, daemon=True, name="sse-broadcaster").start()
+
+    try:
+        _resume_interrupted_downloads()
+    except Exception as e:
+        logger.warning(f"[MANAGER] _resume_interrupted_downloads: {e}")
 
     icon_path = os.path.join(_APP_DIR, "assets", "images", "favicon_rgsx.ico")
     if not args.no_tray:

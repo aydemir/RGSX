@@ -2918,6 +2918,95 @@ def is_download_paused(task_id: str) -> bool:
         return ev.is_set()
     return False
 
+def _set_bulk_history_status(from_statuses: tuple, to_status: str, message: str | None) -> int:
+    """Met à jour le statut des entrées d'historique (chargé depuis le disque)."""
+    try:
+        history = load_history() or []
+    except Exception:
+        return 0
+    changed = 0
+    for entry in history:
+        if entry.get("status") in from_statuses:
+            entry["status"] = to_status
+            if message:
+                entry["message"] = message
+            changed += 1
+    if changed:
+        try:
+            save_history(history)
+            if isinstance(getattr(config, "history", None), list):
+                config.history = history
+        except Exception as e:
+            logger.debug(f"_set_bulk_history_status: save échec: {e}")
+    return changed
+
+
+def pause_all_downloads() -> int:
+    """Met en pause tous les téléchargements actifs (HTTP direct + torrent qBittorrent)."""
+    task_ids = set()
+    for tid in list(download_threads.keys()):
+        task_ids.add(tid)
+    for entry in list(getattr(config, "history", []) or []):
+        if entry.get("status") in ("Downloading", "Téléchargement", "Connecting", "Extracting"):
+            tid = entry.get("task_id")
+            if tid:
+                task_ids.add(tid)
+    paused = 0
+    for tid in task_ids:
+        try:
+            pause_events.setdefault(tid, threading.Event()).set()
+            paused += 1
+        except Exception:
+            pass
+    if paused:
+        try:
+            _set_bulk_history_status(
+                ("Downloading", "Téléchargement", "Connecting", "Extracting"),
+                "Paused",
+                (_("download_paused") if _ else "Download paused"),
+            )
+        except Exception:
+            pass
+        logger.info(f"[PAUSE] {paused} téléchargement(s) mis en pause")
+    return paused
+
+
+def resume_all_downloads() -> int:
+    """Reprend tous les téléchargements mis en pause."""
+    task_ids = set()
+    for tid in list(download_threads.keys()):
+        task_ids.add(tid)
+    for entry in list(getattr(config, "history", []) or []):
+        if entry.get("status") == "Paused":
+            tid = entry.get("task_id")
+            if tid:
+                task_ids.add(tid)
+    resumed = 0
+    for tid in task_ids:
+        ev = pause_events.get(tid)
+        if ev is not None:
+            try:
+                ev.clear()
+                resumed += 1
+            except Exception:
+                pass
+    if resumed:
+        try:
+            _set_bulk_history_status(("Paused",), "Downloading", None)
+        except Exception:
+            pass
+        logger.info(f"[PAUSE] {resumed} téléchargement(s) repris")
+    return resumed
+
+
+def is_any_download_paused() -> bool:
+    """True si au moins un téléchargement actif est en pause."""
+    for tid in list(download_threads.keys()):
+        ev = pause_events.get(tid)
+        if ev is not None and ev.is_set():
+            return True
+    return False
+
 def cancel_all_downloads():
     """Cancel all active downloads and queued downloads, and attempt to stop threads quickly."""
     # Annuler tous les téléchargements actifs via cancel_events
