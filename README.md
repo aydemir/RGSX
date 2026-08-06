@@ -204,7 +204,7 @@ Since v2.6.5.2, downloads on Windows run through an independent background daemo
 - Runs downloads in the background with a **system tray** icon
 - Hosts the **web interface on port 5000** (Windows included)
 - Pushes real-time progress to the TV UI and web UI over **SSE** (`/api/events`)
-- **Auto-start on boot** (Windows Registry `Run` key)
+- **Auto-start on boot** (Windows Registry `Run` key) — **on by default** (toggleable from the tray menu; the preference is stored persistently)
 - **Unified queue**: downloads started from the TV UI, web UI, or CLI share the same manager queue
 
 ### Tray menu
@@ -214,7 +214,7 @@ Since v2.6.5.2, downloads on Windows run through an independent background daemo
 | Open Web UI | Opens `http://localhost:5000` in your browser |
 | Downloads folder | Opens the ROMs folder |
 | Logs folder | Opens the logs folder |
-| Auto-start on boot | Toggles Windows startup (checkbox reflects current state) |
+| Auto-start on boot | Toggles Windows startup (**on by default**; checkbox reflects current state) |
 | Exit | Stops the manager (and cancels pending downloads) |
 
 ### Manual control

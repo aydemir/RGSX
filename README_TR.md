@@ -183,7 +183,7 @@ v2.6.5.2'den itibaren Windows'taki indirmeler bağımsız bir arka plan daemon'�
 - İndirmeleri **sistem tepsisi** ikonuyla arka planda çalıştırır
 - **5000 numaralı portta web arayüzünü** sunar (Windows dahil)
 - Gerçek zamanlı ilerlemeyi TV UI ve web UI'a **SSE** (`/api/events`) ile iletir
-- Windows'ta **otomatik başlatma** (Registry `Run` anahtarı)
+- Windows'ta **otomatik başlatma** (Registry `Run` anahtarı) — **varsayılan AÇIK** (tray menüsünden kapatılabilir, tercih kalıcı olarak saklanır)
 - **Birleşik kuyruk**: TV UI, web UI ve CLI'dan başlatılan indirmeler aynı kuyruğu paylaşır
 
 ### Tepsi menüsü
@@ -193,7 +193,7 @@ v2.6.5.2'den itibaren Windows'taki indirmeler bağımsız bir arka plan daemon'�
 | Open Web UI | Tarayıcıda `http://localhost:5000` açar |
 | Downloads folder | ROMs klasörünü açar |
 | Logs folder | Günlük klasörünü açar |
-| Auto-start on boot | Windows başlangıcını açar/kapatır (onay işareti mevcut durumu gösterir) |
+| Auto-start on boot | Windows başlangıcını açar/kapatır (**varsayılan açık**; onay işareti mevcut durumu gösterir) |
 | Exit | Yöneticiyi durdurur (bekleyen indirmeleri iptal eder) |
 
 ### Manuel kontrol
