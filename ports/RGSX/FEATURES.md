@@ -1,5 +1,20 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Tray Menü + İndirme Duraklatma + Yeniden Başlatmada Sürdürme (2026.08.06)
+
+**Olay:** RGSX Download Manager tray menüsüne yeni eylemler eklendi; indirmelerin bilgisayar/manager yeniden başlatıldığında kaldığı yerden devam etmesi sağlandı.
+
+**Yapılan değişiklikler:**
+- **Tray menüsü** (`rgsx_manager.py`): "Ayarlar" (WebUI `/settings` sayfasını açar) ve "İndirmeleri Durdur/Sürdür" menü öğeleri eklendi. Duraklatma durumunda menüde tik işareti (`checked`) gösterilir.
+- **Toplu duraklatma/sürdürme** (`network.py`): `pause_all_downloads()`, `resume_all_downloads()`, `is_any_download_paused()` eklendi. Hem HTTP direkt hem torrent indirmelerini kapsar; aktif görevler için `pause_events` threading.Event set/clear eder ve history statülerini `Paused`/`Downloading` olarak günceller.
+- **HTTP API** (`rgsx_manager.py`): `POST /api/pause` ve `POST /api/resume` endpoint'leri eklendi (WebUI/CLI üzerinden de tetiklenebilir).
+- **Yeniden başlatmada sürdürme** (`rgsx_manager.py`): `_resume_interrupted_downloads()` — manager başlarken history'de "Téléchargement"/"Downloading"/"Paused" statüsündeki girdileri `config.download_queue`'ya geri ekler; torrentler qBittorrent'teki kısmi veriden kaldığı yerden devam eder.
+- **Çift resume önleme** (`__main__.py`): TVUI yerel resume döngüsü `_resume_tvui_downloads()`'a taşındı; manager aktifken TVUI tarafı atlanır, resume sadece manager tarafından yapılır.
+
+**Doğrulama:** `py_compile` + import + birim testleri (pause/resume/queue re-enqueue) geçti; deploy hedefinde manager v2.6.5.6 tray ile sağlıklı, `/api/health` OK, `/api/pause` + `/api/resume` 200 döndü.
+
+---
+
 ## v2.6.5.6 Upstream Birleştirmesi (2026.08.06)
 
 **Olay:** Upstream `RetroGameSets/RGSX` → `v2.6.5.6` (`0a317db`), custom `v2.6.5.2` tabanına merge edildi. Tüm custom özellikler (RGSX Download Manager, tray auto-start, SSE, WebUI oyun-durumu göstergeleri, ROM tarama, Türkçe) korunarak upstream'in yeni qBittorrent torrent altyapısı aktif edildi.

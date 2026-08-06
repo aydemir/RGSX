@@ -557,6 +557,42 @@ def _start_manager_sse_listener():
     threading.Thread(target=_manager_sse_worker, daemon=True, name="manager-sse").start()
 
 
+def _resume_tvui_downloads():
+    """Reprend les téléchargements interrompus (statut "Téléchargement"/"Downloading").
+
+    Utilisé uniquement en mode TVUI sans manager actif.
+    """
+    try:
+        interrupted = [
+            e for e in config.history
+            if e.get("status") in ("Téléchargement", "Downloading") and e.get("url")
+        ]
+
+        # Pré-lance qB seulement si une reprise torrent est réellement détectée.
+        interrupted_torrents = [e for e in interrupted if _is_torrent_resume_entry(e)]
+        if interrupted_torrents:
+            logger.info(
+                f"[RESUME] {len(interrupted_torrents)} reprise(s) torrent détectée(s): pré-lancement qBittorrent"
+            )
+            _prewarm_qbittorrent_startup()
+
+        if interrupted:
+            logger.info(f"[RESUME] {len(interrupted)} téléchargement(s) interrompu(s) détecté(s), reprise...")
+        for entry in interrupted:
+            _url = entry["url"]
+            _platform = entry.get("platform", "")
+            _game_name = entry.get("game_name", "")
+            _is_zip = entry.get("is_zip_non_supported", False)
+            _state, _task_id = start_or_queue_download(_url, _platform, _game_name, _is_zip)
+            logger.info(f"[RESUME] Reprise: {_game_name} ({_platform}) task_id={_task_id} state={_state}")
+            if _state == "queued":
+                entry["status"] = "Queued"
+                entry["message"] = _("download_queued") if _ else "Queued"
+                save_history(config.history)
+    except Exception as _e:
+        logger.error(f"[RESUME] Erreur lors de la reprise des téléchargements: {_e}")
+
+
 def _manager_sse_worker():
     import urllib.request
     last_seen = {}
@@ -719,35 +755,12 @@ async def main():
 
     # Reprendre les téléchargements interrompus (statut "Téléchargement"/"Downloading")
     # Ces entrées proviennent d'une session précédente fermée proprement sans annulation.
-    try:
-        interrupted = [
-            e for e in config.history
-            if e.get("status") in ("Téléchargement", "Downloading") and e.get("url")
-        ]
-
-        # Pré-lance qB seulement si une reprise torrent est réellement détectée.
-        interrupted_torrents = [e for e in interrupted if _is_torrent_resume_entry(e)]
-        if interrupted_torrents:
-            logger.info(
-                f"[RESUME] {len(interrupted_torrents)} reprise(s) torrent détectée(s): pré-lancement qBittorrent"
-            )
-            _prewarm_qbittorrent_startup()
-
-        if interrupted:
-            logger.info(f"[RESUME] {len(interrupted)} téléchargement(s) interrompu(s) détecté(s), reprise...")
-        for entry in interrupted:
-            _url = entry["url"]
-            _platform = entry.get("platform", "")
-            _game_name = entry.get("game_name", "")
-            _is_zip = entry.get("is_zip_non_supported", False)
-            _state, _task_id = start_or_queue_download(_url, _platform, _game_name, _is_zip)
-            logger.info(f"[RESUME] Reprise: {_game_name} ({_platform}) task_id={_task_id} state={_state}")
-            if _state == "queued":
-                entry["status"] = "Queued"
-                entry["message"] = _("download_queued") if _ else "Queued"
-                save_history(config.history)
-    except Exception as _e:
-        logger.error(f"[RESUME] Erreur lors de la reprise des téléchargements: {_e}")
+    # Si un manager est actif, il gère déjà la reprise (rgsx_manager._resume_interrupted_downloads)
+    # → ce döngü locali atlanır (çift kuyruğu önlemek için).
+    if getattr(config, 'manager_available', False):
+        logger.info("[RESUME] Manager actif → reprise déléguée au manager, reprise TVUI ignorée")
+    else:
+        _resume_tvui_downloads()
 
     running = True
     loading_step = "none"
