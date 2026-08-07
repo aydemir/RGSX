@@ -30,7 +30,7 @@ seviyesindeki ayarlar için küçük bir açılır pencere (Tkinter dialog) sunm
 
 ---
 
-## Faz 2 — HTTP İndirme Resumé (Range Desteği) — En Yüksek Fayda
+## Faz 2 — HTTP İndirme Resumé (Range Desteği) ✅ TAMAMLANDI
 
 **Amaç:** `download_rom` için `Range: bytes=` destekli kısmi indirme ve `Content-Range` takibi.
 
@@ -40,6 +40,14 @@ seviyesindeki ayarlar için küçük bir açılır pencere (Tkinter dialog) sunm
 
 **Kapsam:** `network.py` HTTP indirme akışına parça takibi (`.part` dosyası + resume offset),
 sunucu Range desteklemiyorsa (206 yok) eski davranışa düşüş. İlerleme çubuğu aynı kalır.
+
+**Uygulama:** `_stream_response_to_path` + `download_from_1fichier` akışı `.part` dosyasına yazar,
+tamamlanınca hedefe rename eder; başlangıçta mevcut `.part` boyutu `Range: bytes=N-` header'ı ile
+gönderilir, sunucu 206 dönerse kaldığı yerden devam eder (200 dönerse dosya baştan iner).
+`Content-Range` toplam boyutu (toplam size) için parse edilir; ilerleme çubuğu resume'dan itibaren
+doğru başlar. Yerel HTTP simülasyonu ile doğrulandı (tam indirme, 206 resume, 200 fallback).
+
+**Dosyalar:** `network.py` (`_http_part_path`, `_http_resume_offset`, `_http_parse_content_range`).
 
 ---
 
