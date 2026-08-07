@@ -27,8 +27,20 @@ class BackendUnavailableError(RuntimeError):
 # Port WebUI cible pour l'instance qBittorrent pilotée par RGSX : distinct du port par défaut (8080) pour ne jamais entrer en conflit avec une éventuelle instance personnelle de l'utilisateur.
 _TARGET_PORT = 18572
 _DEFAULT_USERNAME = "admin"
-_CONFIGURED_PASSWORD = str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "")
 _STARTUP_TIMEOUT_SECONDS = 25
+
+
+def _get_configured_password() -> str:
+    """Şifre önceliği: kullanıcı değiştirdiyse rgsx_settings.json'dan, değilse config sabitinden.
+
+    Her login'de çağrılır: WebUI/TVUI üzerinden şifre değiştirildiğinde bir sonraki
+    auth anında yeni şifreyle yapılır (modül yükleme zamanında okunan sabite bağımlı değil).
+    """
+    try:
+        from rgsx_settings import get_qbittorrent_webui_password
+        return get_qbittorrent_webui_password() or ""
+    except Exception:
+        return str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "")
 _TEMP_PASSWORD_PATTERNS = [
     re.compile(r"temporary password.*?:\s*([^\s]+)", re.IGNORECASE),
     re.compile(r"mot de passe temporaire.*?:\s*([^\s]+)", re.IGNORECASE),
@@ -433,8 +445,9 @@ def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", 
     if temp_password:
         password_candidates.append((temp_password, "temporary"))
 
-    if _CONFIGURED_PASSWORD:
-        password_candidates.append((_CONFIGURED_PASSWORD, "configured"))
+    configured_password = _get_configured_password()
+    if configured_password:
+        password_candidates.append((configured_password, "configured"))
 
     attempted_passwords: set[str] = set()
     for password, label in password_candidates:
@@ -576,7 +589,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
                     "bypass_local_auth": True,
                     "web_ui_port": webui_port,
                     "web_ui_username": _DEFAULT_USERNAME,
-                    "web_ui_password": _CONFIGURED_PASSWORD,
+                    "web_ui_password": _get_configured_password(),
                     "dht": True,
                     "pex": True,
                     "lsd": True,
@@ -920,6 +933,61 @@ def ensure_running(timeout: float = _STARTUP_TIMEOUT_SECONDS) -> bool:
             session.close()
         except Exception:
             pass
+
+
+def get_password_status() -> dict:
+    """Varsayılan şifre hâlâ kullanılıyor mu? (WebUI/TVUI uyarı banner'ı için).
+
+    qBittorrent API mevcut şifreyi geri okumaz; RGSX kendi settings'inde şifreyi
+    tutar. Anahtar settings'te yoksa 'kullanıcı değiştirmedi' → varsayılan kullanımda.
+    """
+    default_password = str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "RGSXqbt")
+    try:
+        current = _get_configured_password()
+    except Exception:
+        current = default_password
+    return {
+        "available": is_available(),
+        "using_default": bool(current) and current == default_password,
+        "webui_url": f"http://localhost:{_TARGET_PORT}/",
+    }
+
+
+def change_webui_password(new_password: str) -> tuple[bool, str]:
+    """qBittorrent WebUI şifresini değiştirir ve kalıcı olarak rgsx_settings.json'a yazar.
+
+    - qBittorrent çalışıyorsa yeni şifre WebUI'a setPreferences ile anında uygulanır
+      (mevcut oturumlar geçersiz olur; bir sonraki RGSX login'i yeni şifreyle yapılır).
+    - Çalışmıyorsa şifre sadece settings'e yazılır; bir sonraki başlatmada bootstrap
+      setPreferences zaten settings'ten okunan şifreyi uygular.
+    """
+    if not new_password or len(new_password) < 6:
+        return False, "password_too_short"
+
+    try:
+        session = _ensure_qbittorrent_running()
+        if session is not None:
+            try:
+                session.post(
+                    f"{_base_url}/api/v2/app/setPreferences",
+                    data={"json": json.dumps({"web_ui_password": new_password})},
+                    headers={"Referer": _base_url},
+                    timeout=5,
+                )
+                logger.info("qbittorrent_backend: şifre WebUI'a uygulandı (setPreferences)")
+            except requests.exceptions.RequestException as exc:
+                logger.warning("qbittorrent_backend: şifre WebUI'a uygulanamadı, sadece settings'e yazılıyor: %s", exc)
+            finally:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+    except Exception as exc:
+        logger.debug("qbittorrent_backend: change_webui_password qBittorrent erişimi başarısız: %s", exc)
+
+    from rgsx_settings import set_qbittorrent_webui_password
+    set_qbittorrent_webui_password(new_password)
+    return True, "ok"
 
 
 def prewarm_startup_async() -> None:

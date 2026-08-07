@@ -51,14 +51,21 @@ doğru başlar. Yerel HTTP simülasyonu ile doğrulandı (tam indirme, 206 resum
 
 ---
 
-## Faz 3 — qBittorrent WebUI Şifre Yönetimi
+## Faz 3 — qBittorrent WebUI Şifre Yönetimi ✅
 
 **Amaç:** Varsayılan `admin`/`RGSXqbt` şifresinin ilk çalıştırmada değiştirilmesi/uyarılması.
 
 **Neden?** Sabit varsayılan şifre port 18572'yi herkese açık bir torrent yönetim kapısı yapar.
 
-**Kapsam:** İlk kullanımda otomatik şifre üret + `rgsx_settings.json`'a kaydet; WebUI'da şifre
-değiştirme aracı; kullanıcıya açıklama. Firewall script'i zaten 18572'yi kısıtlıyor.
+**Kapsam:** Varsayılan şifre otomatik değiştirilmez; kullanıcı varsayılan şifreyle kullanırken
+WebUI'da uyarı banner'ı + şifre değiştirme modal'ı, TVUI Ayarlar menüsünde şifre yönetimi gösterilir.
+Değiştirilen şifre `rgsx_settings.json`'a kaydedilir, backend her login'de settings'ten okur.
+
+**Uygulama:** `rgsx_settings.py` (`get/set_qbittorrent_webui_password`), `qbittorrent_backend.py`
+(`get_password_status`, `change_webui_password`, `_get_configured_password`), `rgsx_manager.py`
+(GET `/api/qbittorrent/password-status` + POST `/api/qbittorrent/change-password`), `rgsx_web.py`
+(banner + modal, `data-translate`), `app.js` (kontrol + kaydet, `t()`), TVUI `controls.py`/`display.py`/
+`__main__.py` (`pause_qbt_password` state + sanal klavye), çeviri anahtarları 7 dilde.
 
 ---
 

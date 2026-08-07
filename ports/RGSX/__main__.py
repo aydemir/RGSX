@@ -1062,6 +1062,7 @@ async def main():
                 "pause_games_menu",
                 "pause_settings_menu",
                 "pause_api_keys_status",
+                "pause_qbt_password",
                 "pause_connection_status",
                 "filter_platforms",
                 "display_menu",
@@ -1478,6 +1479,9 @@ async def main():
             elif config.menu_state == "pause_api_keys_status":
                 from display import draw_pause_api_keys_status
                 draw_pause_api_keys_status(screen)
+            elif config.menu_state == "pause_qbt_password":
+                from display import draw_pause_qbt_password
+                draw_pause_qbt_password(screen)
             elif config.menu_state == "pause_connection_status":
                 from display import draw_pause_connection_status
                 draw_pause_connection_status(screen)

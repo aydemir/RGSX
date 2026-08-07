@@ -413,6 +413,7 @@ VALID_STATES = [
     "pause_games_menu",         # sous-menu Games (source mode, update/redownload cache)
     "pause_settings_menu",      # sous-menu Settings (music on/off, symlink toggle, api keys status)
     "pause_api_keys_status",    # sous-menu API Keys (affichage statut des clés)
+    "pause_qbt_password",       # sous-menu qBittorrent WebUI şifresi (keyboard girişi)
     "pause_connection_status",  # sous-menu Connection status (statut accès sites)
     # Nouveaux menus historique
     "history_game_options",     # menu options pour un jeu de l'historique
@@ -3153,24 +3154,26 @@ def handle_controls(event, sources, joystick, screen):
         # Sous-menu Settings
         elif config.menu_state == "pause_settings_menu":
             sel = getattr(config, 'pause_settings_selection', 0)
-            # Liste des options : music, symlink, auto_extract, roms_folder, max_dl_slots, [web_service], [custom_dns], api keys, connection_status, back
-            total = 8  # music, symlink, auto_extract, roms_folder, max_dl_slots, api keys, connection_status, back (Windows)
+            # Liste des options : music, symlink, auto_extract, roms_folder, max_dl_slots, [web_service], [custom_dns], api keys, qbt password, connection_status, back
+            total = 9  # music, symlink, auto_extract, roms_folder, max_dl_slots, api keys, qbt password, connection_status, back (Windows)
             auto_extract_index = 2
             roms_folder_index = 3
             max_dl_index = 4
             web_service_index = -1
             custom_dns_index = -1
             api_keys_index = 5
-            connection_status_index = 6
-            back_index = 7
+            qbt_password_index = 6
+            connection_status_index = 7
+            back_index = 8
 
             if config.OPERATING_SYSTEM == "Linux":
-                total = 10  # music, symlink, auto_extract, roms_folder, max_dl_slots, web_service, custom_dns, api keys, connection_status, back
+                total = 11  # music, symlink, auto_extract, roms_folder, max_dl_slots, web_service, custom_dns, api keys, qbt password, connection_status, back
                 web_service_index = 5
                 custom_dns_index = 6
                 api_keys_index = 7
-                connection_status_index = 8
-                back_index = 9
+                qbt_password_index = 8
+                connection_status_index = 9
+                back_index = 10
             
             if is_input_matched(event, "up"):
                 config.pause_settings_selection = (sel - 1) % total
@@ -3294,6 +3297,12 @@ def handle_controls(event, sources, joystick, screen):
                 elif sel == api_keys_index and is_input_matched(event, "confirm"):
                     config.menu_state = "pause_api_keys_status"
                     config.needs_redraw = True
+                # Option qBittorrent WebUI şifresi
+                elif sel == qbt_password_index and is_input_matched(event, "confirm"):
+                    config.qbt_password_text = ""
+                    config.qbt_password_selected_key = (0, 0)
+                    config.menu_state = "pause_qbt_password"
+                    config.needs_redraw = True
                 # Option Connection Status
                 elif sel == connection_status_index and is_input_matched(event, "confirm"):
                     start_connection_status_check(force=True)
@@ -3311,6 +3320,89 @@ def handle_controls(event, sources, joystick, screen):
 
         elif config.menu_state == "pause_api_keys_status":
             if is_input_matched(event, "cancel") or is_input_matched(event, "confirm") or is_input_matched(event, "start"):
+                config.menu_state = "pause_settings_menu"
+                config.last_state_change_time = pygame.time.get_ticks()
+                config.needs_redraw = True
+
+        elif config.menu_state == "pause_qbt_password":
+            keyboard_layout = [
+                ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+                ['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+                ['Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M'],
+                ['W', 'X', 'C', 'V', 'B', 'N', '-', '_', '.']
+            ]
+            row, col = getattr(config, 'qbt_password_selected_key', (0, 0))
+            max_row = len(keyboard_layout) - 1
+            max_col = len(keyboard_layout[row]) - 1
+
+            if is_input_matched(event, "up"):
+                if row == 0:
+                    row = max_row + (1 if col <= len(keyboard_layout[max_row]) - 1 else 0)
+                if row > 0:
+                    config.qbt_password_selected_key = (row - 1, min(col, len(keyboard_layout[row - 1]) - 1))
+                config.needs_redraw = True
+            elif is_input_matched(event, "down"):
+                if row == max_row:
+                    row = -1
+                if row < max_row:
+                    config.qbt_password_selected_key = (row + 1, min(col, len(keyboard_layout[row + 1]) - 1))
+                config.needs_redraw = True
+            elif is_input_matched(event, "left"):
+                if col == 0:
+                    col = max_col + 1
+                if col > 0:
+                    config.qbt_password_selected_key = (row, col - 1)
+                config.needs_redraw = True
+            elif is_input_matched(event, "right"):
+                if col == max_col:
+                    col = -1
+                if col < max_col:
+                    config.qbt_password_selected_key = (row, col + 1)
+                config.needs_redraw = True
+            elif is_input_matched(event, "confirm"):
+                config.qbt_password_text = getattr(config, 'qbt_password_text', '') + keyboard_layout[row][col]
+                config.needs_redraw = True
+            elif is_input_matched(event, "delete"):
+                if getattr(config, 'qbt_password_text', ''):
+                    config.qbt_password_text = config.qbt_password_text[:-1]
+                config.needs_redraw = True
+            elif is_input_matched(event, "history"):
+                new_password = getattr(config, 'qbt_password_text', '').strip()
+                if len(new_password) < 6:
+                    config.popup_message = _("qbt_password_too_short") if _ else "Password must be at least 6 characters."
+                    config.popup_timer = 3500
+                    config.needs_redraw = True
+                else:
+                    config.popup_message = _("qbt_password_saving") if _ else "Updating password..."
+                    config.popup_timer = 2000
+                    config.needs_redraw = True
+                    def _change_qbt_password(pw):
+                        try:
+                            import urllib.request
+                            port = getattr(config, 'manager_port', 5000)
+                            payload = json.dumps({"password": pw}).encode("utf-8")
+                            req = urllib.request.Request(
+                                f'http://127.0.0.1:{port}/api/qbittorrent/change-password',
+                                data=payload,
+                                headers={'Content-Type': 'application/json'},
+                                method='POST',
+                            )
+                            with urllib.request.urlopen(req, timeout=15) as resp:
+                                result = json.loads(resp.read().decode("utf-8"))
+                            if result.get("success"):
+                                config.popup_message = _("qbt_password_saved") if _ else "qBittorrent WebUI password updated."
+                                config.popup_timer = 3500
+                                config.menu_state = "pause_settings_menu"
+                            else:
+                                config.popup_message = result.get("message") or _("qbt_password_save_error") if _ else "Failed to update password."
+                                config.popup_timer = 5000
+                        except Exception as e:
+                            logger.warning(f"Erreur changement mot de passe qBittorrent: {e}")
+                            config.popup_message = _("qbt_password_manager_unreachable") if _ else "Manager unreachable: password not saved."
+                            config.popup_timer = 5000
+                        config.needs_redraw = True
+                    threading.Thread(target=_change_qbt_password, args=(new_password,), daemon=True).start()
+            elif is_input_matched(event, "cancel") or is_input_matched(event, "start"):
                 config.menu_state = "pause_settings_menu"
                 config.last_state_change_time = pygame.time.get_ticks()
                 config.needs_redraw = True

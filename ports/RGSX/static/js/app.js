@@ -339,7 +339,7 @@
                 .then(r => r.json())
                 .then(data => {
                     if (!data || !data.success) {
-                        showToast('qBittorrent WebUI başlatılamadı', 'error', 3500);
+                        showToast(t('web_qbt_password_unable_start'), 'error', 3500);
                         return;
                     }
                     const qbUrl = new URL(window.location.href);
@@ -352,6 +352,72 @@
                 .catch((error) => {
                     console.error('Erreur démarrage qBittorrent WebUI:', error);
                     showToast('Unable to start qBittorrent WebUI', 'error', 3500);
+                });
+        }
+
+        // Varsayılan şifre hâlâ kullanılıyorsa uyarı banner'ını göster
+        function checkQbittorrentPasswordStatus() {
+            fetch('/api/qbittorrent/password-status')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data || !data.success) return;
+                    const banner = document.getElementById('qb-password-banner');
+                    if (banner && data.using_default) {
+                        banner.style.display = 'block';
+                    }
+                })
+                .catch(() => { /* sessiz: qBittorrent yoksa banner gösterilmez */ });
+        }
+
+        function openQbittorrentPasswordModal() {
+            document.getElementById('qb-new-password').value = '';
+            document.getElementById('qb-new-password-2').value = '';
+            document.getElementById('qb-password-error').style.display = 'none';
+            document.getElementById('qb-password-modal').style.display = 'flex';
+            document.getElementById('qb-new-password').focus();
+        }
+
+        function closeQbittorrentPasswordModal() {
+            document.getElementById('qb-password-modal').style.display = 'none';
+        }
+
+        function saveQbittorrentPassword() {
+            const pw = document.getElementById('qb-new-password').value;
+            const pw2 = document.getElementById('qb-new-password-2').value;
+            const errorEl = document.getElementById('qb-password-error');
+
+            if (!pw || pw.length < 6) {
+                errorEl.textContent = t('web_qbt_password_too_short');
+                errorEl.style.display = 'block';
+                return;
+            }
+            if (pw !== pw2) {
+                errorEl.textContent = t('web_qbt_password_mismatch');
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            fetch('/api/qbittorrent/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pw })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data || !data.success) {
+                        const msgMap = { 'password_too_short': 'web_qbt_password_too_short' };
+                        errorEl.textContent = msgMap[data.message] ? t(msgMap[data.message]) : (data.message || t('web_qbt_password_error'));
+                        errorEl.style.display = 'block';
+                        return;
+                    }
+                    closeQbittorrentPasswordModal();
+                    const banner = document.getElementById('qb-password-banner');
+                    if (banner) banner.style.display = 'none';
+                    showToast(t('web_qbt_password_saved'), 'success', 3500);
+                })
+                .catch(() => {
+                    errorEl.textContent = t('web_qbt_password_conn_error');
+                    errorEl.style.display = 'block';
                 });
         }
                
@@ -479,6 +545,9 @@
         window.addEventListener('DOMContentLoaded', function() {
             // Load saved filters first
             loadSavedFilters();
+
+            // Varsayılan qBittorrent şifresi uyarısını kontrol et
+            checkQbittorrentPasswordStatus();
             
             const path = window.location.pathname;
             

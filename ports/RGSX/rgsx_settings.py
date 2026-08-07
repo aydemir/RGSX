@@ -741,6 +741,33 @@ def set_autostart_on_boot(enabled: bool) -> bool:
     return bool(enabled)
 
 
+# ----------------------- qBittorrent WebUI password ----------------------- #
+
+def get_qbittorrent_webui_password(settings=None) -> str:
+    """qBittorrent WebUI şifresi: kullanıcı değiştirdiyse settings'ten, değilse config sabitinden.
+
+    Anahtarın settings'te OLMAMASI 'varsayılan şifre hâlâ kullanılıyor' anlamına gelir;
+    bu yüzden default_settings'e eklenmez (varlığı = kullanıcı değiştirmiş).
+    """
+    if settings is None:
+        settings = load_rgsx_settings()
+    stored = settings.get("qbittorrent_webui_password")
+    if isinstance(stored, str) and stored:
+        return stored
+    return str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "RGSXqbt")
+
+
+def set_qbittorrent_webui_password(password: str) -> str:
+    """qBittorrent WebUI şifresini rgsx_settings.json'a kalıcı olarak yazar."""
+    try:
+        settings = load_rgsx_settings()
+        settings["qbittorrent_webui_password"] = str(password)
+        save_rgsx_settings(settings)
+    except Exception as e:
+        logger.error(f"Error setting qbittorrent_webui_password: {e}")
+    return str(password)
+
+
 # ----------------------- Manager server (port/host) ----------------------- #
 
 def get_manager_port(settings=None) -> int:

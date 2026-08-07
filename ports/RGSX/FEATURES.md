@@ -1,5 +1,35 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## qBittorrent WebUI Şifre Yönetimi (2026.08.07)
+
+**Olay:** Varsayılan `admin`/`RGSXqbt` şifresi otomatik değiştirilmiyor; kullanıcı varsayılan şifreyle
+kullanırken uyarılıyor ve WebUI + TVUI üzerinden şifresini güncelleyebiliyor (Faz 3).
+
+**Neden:** Sabit varsayılan şifre, qBittorrent WebUI (18572) için herkese açık bir yönetim kapısıdır.
+Şifreyi kullanıcı seçmeli, sistem otomatik üretip gizlememeli.
+
+**Yapılan değişiklikler:**
+- **`rgsx_settings.py`:** `get_qbittorrent_webui_password()` (settings anahtarı yoksa config sabitine
+  düşer → "varsayılan kullanımda" tespiti) + `set_qbittorrent_webui_password()`.
+- **`qbittorrent_backend.py`:** `_CONFIGURED_PASSWORD` sabiti kaldırıldı; her login'de settings'ten
+  dinamik okuma (`_get_configured_password`). `get_password_status()` (banner için using_default) +
+  `change_webui_password()` (min 6, qB çalışıyorsa setPreferences, kalıcı settings kaydı).
+- **`rgsx_manager.py`:** GET `/api/qbittorrent/password-status` + POST `/api/qbittorrent/change-password`.
+- **`rgsx_web.py`:** `#qb-password-banner` (sarı uyarı + "Şifreyi Güncelle") + `#qb-password-modal`
+  (yeni şifre + tekrar + hata alanı); metinler `data-translate` ile çevrilebilir.
+- **`static/js/app.js`:** `checkQbittorrentPasswordStatus()` (DOMContentLoaded'de), modal aç/kapat,
+  `saveQbittorrentPassword()` (min 6, eşleşme, POST, başarıda banner gizle + toast); mesajlar `t()`.
+- **TVUI (`controls.py` / `display.py` / `__main__.py`):** Ayarlar menüsüne "qBittorrent WebUI Şifresi"
+  satırı (`< Varsayılan >` / `< Özel >` durumu); `pause_qbt_password` ekranı — durum + maskeli giriş +
+  4 satır AZERTY sanal klavye; kayıt manager'a POST (thread), sonuç popup.
+- **`languages/*.json` (7 dil):** `qbt_password_*` (TVUI) + `web_qbt_password_*` (WebUI) anahtarları.
+
+**Doğrulama:** `py_compile` + import + canlı manager üzerinde uçtan uca test: `using_default` True
+varsayılan; `TestPass123` ile değiştirince False + settings'e yazıldı; kısa şifre 400; temizlik
+`RGSXqbt`'ye geri döndürüldü + anahtar silindi → `using_default` tekrar True.
+
+---
+
 ## Systray "Sunucu Ayarları" Penceresi (2026.08.06)
 
 **Olay:** RGSX Download Manager systray menüsüne "Sunucu Ayarları..." Tkinter penceresi eklendi. WebUI `/settings` (oyun/uygulama ayarları) korundu; sunucu seviyesindeki ayarlar (port, host, auto-start) ayrı bir açılır pencereden yönetiliyor.
