@@ -477,6 +477,7 @@
     "controls_help_title": "Guida ai controlli",
     "web_filter_region": "Regione",
     "web_filter_hide_non_release": "Nascondi Demo/Beta/Proto",
+    "web_filter_hide_downloaded": "Nascondi ROMs scaricate",
     "web_filter_regex_mode": "Attiva ricerca Regex",
     "web_filter_one_rom_per_game": "Una ROM per gioco",
     "web_filter_configure_priority": "Configura ordine di priorità delle regioni",

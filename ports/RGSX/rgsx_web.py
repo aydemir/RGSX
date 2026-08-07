@@ -1738,6 +1738,7 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     current_settings['game_filters']['region_filters'] = data.get('region_filters', {})
                     current_settings['game_filters']['hide_non_release'] = data.get('hide_non_release', False)
                     current_settings['game_filters']['one_rom_per_game'] = data.get('one_rom_per_game', False)
+                    current_settings['game_filters']['hide_downloaded'] = data.get('hide_downloaded', False)
                     current_settings['game_filters']['regex_mode'] = data.get('regex_mode', False)
                     current_settings['game_filters']['region_priority'] = data.get('region_priority', ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other'])
                     
@@ -1749,6 +1750,7 @@ class RGSXHandler(BaseHTTPRequestHandler):
                         config.game_filter_obj.region_filters = data.get('region_filters', {})
                         config.game_filter_obj.hide_non_release = data.get('hide_non_release', False)
                         config.game_filter_obj.one_rom_per_game = data.get('one_rom_per_game', False)
+                        config.game_filter_obj.hide_downloaded = data.get('hide_downloaded', False)
                         config.game_filter_obj.regex_mode = data.get('regex_mode', False)
                         config.game_filter_obj.region_priority = data.get('region_priority', ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other'])
                     
