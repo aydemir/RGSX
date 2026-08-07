@@ -333,17 +333,26 @@
         // ===== FONCTIONS UTILITAIRES =====
 
         function openQbittorrentWebUi() {
-            try {
-                const qbUrl = new URL(window.location.href);
-                qbUrl.port = '18572';
-                qbUrl.pathname = '/';
-                qbUrl.search = '';
-                qbUrl.hash = '';
-                window.open(qbUrl.toString(), '_blank', 'noopener,noreferrer');
-            } catch (error) {
-                console.error('Erreur ouverture qBittorrent WebUI:', error);
-                showToast('Unable to open qBittorrent WebUI', 'error', 3500);
-            }
+            // qBittorrent RGSX tarafından yalnızca torrent indirme başlarken spawn edilir.
+            // Buradan WebUI'ye bağlanmadan önce manager'dan başlatmasını iste (18572 hazır olana kadar bekler).
+            fetch('/api/qbittorrent/start', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data || !data.success) {
+                        showToast('qBittorrent WebUI başlatılamadı', 'error', 3500);
+                        return;
+                    }
+                    const qbUrl = new URL(window.location.href);
+                    qbUrl.port = '18572';
+                    qbUrl.pathname = '/';
+                    qbUrl.search = '';
+                    qbUrl.hash = '';
+                    window.open(qbUrl.toString(), '_blank', 'noopener,noreferrer');
+                })
+                .catch((error) => {
+                    console.error('Erreur démarrage qBittorrent WebUI:', error);
+                    showToast('Unable to start qBittorrent WebUI', 'error', 3500);
+                });
         }
                
         // Fonction pour mettre à jour la liste des jeux (clear cache)
