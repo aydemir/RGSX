@@ -2156,12 +2156,39 @@ DO NOT share this file publicly as it may contain sensitive information.
         </nav>
         
         <main class="content" id="main-content" role="main">
+            <div id="qb-password-banner" style="display:none; margin-bottom: 15px; padding: 12px 16px; border-radius: 8px; background: #fff3cd; border: 2px solid #e0a800; color: #664d03; font-size: 0.95em;" role="alert">
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <span data-translate="web_qbt_password_banner" style="flex: 1; min-width: 200px;">⚠️ qBittorrent WebUI default password is in use. Update it for security.</span>
+                    <button data-translate="web_qbt_password_update" onclick="openQbittorrentPasswordModal()" style="background: #e0a800; color: #fff; border: none; padding: 8px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">Update Password</button>
+                </div>
+            </div>
             <div id="platforms-content" role="region" aria-label="Platforms section"></div>
             <div id="downloads-content" style="display:none;" role="region" aria-label="Downloads section"></div>
             <div id="queue-content" style="display:none;" role="region" aria-label="Queue section"></div>
             <div id="history-content" style="display:none;" role="region" aria-label="History section"></div>
             <div id="settings-content" style="display:none;" role="region" aria-label="Settings section"></div>
         </main>
+    </div>
+    
+    <!-- qBittorrent Password Modal -->
+    <div id="qb-password-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; justify-content: center; align-items: center;">
+        <div style="background: white; padding: 20px; border-radius: 8px; max-width: 440px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            <h3 data-translate="web_qbt_password_title" style="margin-top: 0;">🔑 qBittorrent WebUI Password</h3>
+            <p data-translate="web_qbt_password_desc" style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+                Set a new password (at least 6 characters). It applies to both qBittorrent WebUI and RGSX settings.
+            </p>
+            <label data-translate="web_qbt_password_new" style="display: block; margin-bottom: 5px; font-weight: bold;">New Password</label>
+            <input type="password" id="qb-new-password" autocomplete="new-password"
+                   style="width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 5px; font-size: 1em;">
+            <label data-translate="web_qbt_password_confirm" style="display: block; margin-bottom: 5px; font-weight: bold;">Password (Repeat)</label>
+            <input type="password" id="qb-new-password-2" autocomplete="new-password"
+                   style="width: 100%; box-sizing: border-box; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 5px; font-size: 1em;">
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button data-translate="web_qbt_password_cancel" onclick="closeQbittorrentPasswordModal()" style="background: #6c757d; color: #fff; border: none; padding: 10px 18px; border-radius: 5px; cursor: pointer;">Cancel</button>
+                <button data-translate="web_qbt_password_save" onclick="saveQbittorrentPassword()" style="background: #e0a800; color: #fff; border: none; padding: 10px 18px; border-radius: 5px; font-weight: bold; cursor: pointer;">Save</button>
+            </div>
+            <div id="qb-password-error" style="color: #dc3545; margin-top: 12px; font-size: 0.9em; display: none;"></div>
+        </div>
     </div>
     
     <script src="/static/js/accessibility.js?v=__JS_VERSION__" defer></script>

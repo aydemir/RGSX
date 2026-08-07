@@ -4229,14 +4229,24 @@ def draw_pause_settings_menu(screen, selected_index):
     api_keys_txt = _("menu_api_keys_status") if _ else "API Keys"
     connection_status_txt = _("menu_connection_status") if _ else "Connection status"
     back_txt = _("menu_back") if _ else "Back"
-    
+
+    # qBittorrent WebUI şifre durumu
+    from rgsx_settings import get_qbittorrent_webui_password
+    current_qbt_password = get_qbittorrent_webui_password()
+    default_qbt_password = str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "RGSXqbt")
+    qbt_using_default = bool(current_qbt_password) and current_qbt_password == default_qbt_password
+    qbt_status_txt = _("qbt_password_default") if _ else "Default"
+    if not qbt_using_default:
+        qbt_status_txt = _("qbt_password_custom") if _ else "Custom"
+    qbt_password_txt = f"{_('qbt_password_menu') if _ else 'qBittorrent WebUI Password'} : < {qbt_status_txt} >"
+
     # Construction de la liste des options
     options = [music_option, symlink_option, auto_extract_txt, roms_folder_txt, max_dl_txt]
     if web_service_txt:  # Ajouter seulement si Linux/Batocera
         options.append(web_service_txt)
     if custom_dns_txt:  # Ajouter seulement si Linux/Batocera
         options.append(custom_dns_txt)
-    options.extend([api_keys_txt, connection_status_txt, back_txt])
+    options.extend([api_keys_txt, qbt_password_txt, connection_status_txt, back_txt])
 
     # Index de l'option Dossier ROMs
     roms_folder_index = 3
@@ -4255,6 +4265,7 @@ def draw_pause_settings_menu(screen, selected_index):
         instruction_keys.append("instruction_settings_custom_dns")
     instruction_keys.extend([
         "instruction_settings_api_keys",
+        "instruction_settings_qbt_password",
         "instruction_settings_connection_status",
         "instruction_generic_back",
     ])
@@ -4368,6 +4379,96 @@ def draw_pause_api_keys_status(screen):
     # Positionné un peu plus haut pour aérer
     hint_rect = hint_surf.get_rect(center=(config.screen_width//2, menu_y + menu_height - 30))
     screen.blit(hint_surf, hint_rect)
+
+
+def draw_pause_qbt_password(screen):
+    """qBittorrent WebUI şifresi değiştirme ekranı: durum + sanal klavye girişi."""
+    screen.blit(OVERLAY, (0, 0))
+
+    panel_width = int(config.screen_width * 0.75)
+    panel_height = int(config.screen_height * 0.68)
+    panel_x = (config.screen_width - panel_width) // 2
+    panel_y = (config.screen_height - panel_height) // 2
+
+    pygame.draw.rect(screen, THEME_COLORS["button_idle"], (panel_x, panel_y, panel_width, panel_height), border_radius=12)
+    pygame.draw.rect(screen, THEME_COLORS["border"], (panel_x, panel_y, panel_width, panel_height), 2, border_radius=12)
+
+    # Başlık
+    title = _("qbt_password_title") if _ else "qBittorrent WebUI Password"
+    title_surface = config.font.render(title, True, THEME_COLORS["text"])
+    title_rect = title_surface.get_rect(center=(config.screen_width // 2, panel_y + 34))
+    screen.blit(title_surface, title_rect)
+
+    # Durum satırı
+    from rgsx_settings import get_qbittorrent_webui_password
+    current_qbt_password = get_qbittorrent_webui_password()
+    default_qbt_password = str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "RGSXqbt")
+    qbt_using_default = bool(current_qbt_password) and current_qbt_password == default_qbt_password
+    status_txt = _("qbt_password_default") if _ else "Default"
+    if not qbt_using_default:
+        status_txt = _("qbt_password_custom") if _ else "Custom"
+    status_label = f"{_('qbt_password_current') if _ else 'Current'}: {status_txt}"
+    status_surface = config.small_font.render(status_label, True, THEME_COLORS.get("text_dim", THEME_COLORS["text"]))
+    status_rect = status_surface.get_rect(center=(config.screen_width // 2, panel_y + 70))
+    screen.blit(status_surface, status_rect)
+
+    # Girdi alanı
+    input_y = panel_y + 100
+    input_width = panel_width - 60
+    input_height = 40
+    input_x = panel_x + 30
+
+    pygame.draw.rect(screen, THEME_COLORS["button_selected"], (input_x, input_y, input_width, input_height), border_radius=6)
+    pygame.draw.rect(screen, THEME_COLORS["border_selected"], (input_x, input_y, input_width, input_height), 2, border_radius=6)
+
+    password_text = getattr(config, 'qbt_password_text', '')
+    # Mask: şifreyi nokta ile göster
+    masked_display = "•" * len(password_text) + "_"
+    input_surface = config.font.render(masked_display, True, THEME_COLORS["text"])
+    input_rect = input_surface.get_rect(midleft=(input_x + 10, input_y + input_height // 2))
+    screen.blit(input_surface, input_rect)
+
+    # Sanal klavye
+    keyboard_layout = [
+        ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+        ['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+        ['Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M'],
+        ['W', 'X', 'C', 'V', 'B', 'N', '-', '_', '.']
+    ]
+    selected_row, selected_col = getattr(config, 'qbt_password_selected_key', (0, 0))
+
+    keyboard_y = input_y + input_height + 30
+    key_size = min(40, (panel_width - 60) // 10)
+    key_gap = 5
+
+    for row_idx, row in enumerate(keyboard_layout):
+        row_width = len(row) * (key_size + key_gap) - key_gap
+        row_x = (config.screen_width - row_width) // 2
+        for col_idx, key in enumerate(row):
+            key_x = row_x + col_idx * (key_size + key_gap)
+            key_y = keyboard_y + row_idx * (key_size + key_gap)
+            is_selected = (row_idx == selected_row and col_idx == selected_col)
+            if is_selected:
+                pygame.draw.rect(screen, THEME_COLORS["button_hover"], (key_x, key_y, key_size, key_size), border_radius=4)
+                pygame.draw.rect(screen, THEME_COLORS["border_selected"], (key_x, key_y, key_size, key_size), 2, border_radius=4)
+            else:
+                pygame.draw.rect(screen, THEME_COLORS["button_idle"], (key_x, key_y, key_size, key_size), border_radius=4)
+                pygame.draw.rect(screen, THEME_COLORS["border"], (key_x, key_y, key_size, key_size), 1, border_radius=4)
+            key_surface = config.small_font.render(key, True, THEME_COLORS["text_selected"] if is_selected else THEME_COLORS["text"])
+            key_rect = key_surface.get_rect(center=(key_x + key_size // 2, key_y + key_size // 2))
+            screen.blit(key_surface, key_rect)
+
+    # Alt ipuçları
+    hint_y = keyboard_y + len(keyboard_layout) * (key_size + key_gap) + 18
+    hint_parts = [
+        f"{_('instruction_generic_select') if _ else 'Select'}: {_('qbt_password_input_hint') if _ else 'Enter character'}",
+        f"{_('instruction_generic_confirm') if _ else 'OK'}: {_('qbt_password_save_hint') if _ else 'Save'}",
+        f"{_('instruction_generic_cancel') if _ else 'Back'}: {_('instruction_generic_back') if _ else 'Back'}",
+    ]
+    hint_txt = "    ".join(part for part in hint_parts)
+    hint_surface = config.tiny_font.render(hint_txt, True, THEME_COLORS.get("text_dim", THEME_COLORS["text"]))
+    hint_rect = hint_surface.get_rect(center=(config.screen_width // 2, hint_y))
+    screen.blit(hint_surface, hint_rect)
 
 
 def draw_pause_connection_status(screen):

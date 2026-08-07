@@ -182,6 +182,16 @@ class ManagerHandler(RGSXHandler):
             })
             return
 
+        if path == "/api/qbittorrent/password-status":
+            try:
+                from qbittorrent_backend import get_password_status
+                status = get_password_status()
+                self._send_json({"success": True, **status})
+            except Exception as e:
+                logger.warning(f"[MANAGER] /api/qbittorrent/password-status: {e}")
+                self._send_json({"success": False, "message": str(e)}, status=500)
+            return
+
         if path == "/api/events":
             self._handle_sse()
             return
@@ -223,6 +233,23 @@ class ManagerHandler(RGSXHandler):
                                  "url": "http://localhost:18572/"})
             except Exception as e:
                 logger.warning(f"[MANAGER] /api/qbittorrent/start: {e}")
+                self._send_json({"success": False, "message": str(e)}, status=500)
+            return
+
+        if path == "/api/qbittorrent/change-password":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                post_data = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                body = json.loads(post_data.decode("utf-8")) if post_data else {}
+                new_password = str(body.get("password") or "")
+                from qbittorrent_backend import change_webui_password
+                ok, message = change_webui_password(new_password)
+                if not ok:
+                    self._send_json({"success": False, "message": message}, status=400)
+                    return
+                self._send_json({"success": True, "message": "ok"})
+            except Exception as e:
+                logger.warning(f"[MANAGER] /api/qbittorrent/change-password: {e}")
                 self._send_json({"success": False, "message": str(e)}, status=500)
             return
 
