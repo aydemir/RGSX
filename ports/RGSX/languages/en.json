@@ -515,6 +515,7 @@
     "filter_other_options": "Other options",
     "filter_hide_non_release": "Hide Demos/Betas/Protos",
     "filter_one_rom_per_game": "One ROM per game",
+    "filter_hide_downloaded": "Hide Downloaded ROMs",
     "filter_priority_order": "Priority order",
     "filter_priority_title": "Region Priority Configuration",
     "filter_priority_desc": "Set preference order for \"One ROM per game\"",

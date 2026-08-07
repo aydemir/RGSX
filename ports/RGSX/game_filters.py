@@ -14,6 +14,16 @@ from config import Game
 logger = logging.getLogger(__name__)
 
 
+def _resolve_platform_name():
+    """Résout le nom de la plateforme courante pour les vérifications 'downloaded'."""
+    try:
+        import config as _cfg
+        platform = _cfg.platforms[_cfg.current_platform]
+        return _cfg.platform_names.get(platform, platform)
+    except Exception:
+        return None
+
+
 class GameFilters:
     """Classe pour gérer les filtres de jeux"""
     
@@ -25,6 +35,7 @@ class GameFilters:
         self.region_filters = {region: 'include' for region in self.REGIONS}
         self.hide_non_release = False
         self.one_rom_per_game = False
+        self.hide_downloaded = False
         self.regex_mode = False
         self.region_priority = ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other']
     
@@ -37,6 +48,7 @@ class GameFilters:
         
         self.hide_non_release = filter_dict.get('hide_non_release', False)
         self.one_rom_per_game = filter_dict.get('one_rom_per_game', False)
+        self.hide_downloaded = filter_dict.get('hide_downloaded', False)
         self.regex_mode = filter_dict.get('regex_mode', False)
         self.region_priority = filter_dict.get('region_priority', 
             ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other'])
@@ -47,6 +59,7 @@ class GameFilters:
             'region_filters': self.region_filters,
             'hide_non_release': self.hide_non_release,
             'one_rom_per_game': self.one_rom_per_game,
+            'hide_downloaded': self.hide_downloaded,
             'regex_mode': self.regex_mode,
             'region_priority': self.region_priority
         }
@@ -56,13 +69,15 @@ class GameFilters:
         has_exclude = any(state == 'exclude' for state in self.region_filters.values())
         return (has_exclude or 
                 self.hide_non_release or 
-                self.one_rom_per_game)
+                self.one_rom_per_game or
+                self.hide_downloaded)
     
     def reset(self):
         """Réinitialise tous les filtres (toutes les régions en include)"""
         self.region_filters = {region: 'include' for region in self.REGIONS}
         self.hide_non_release = False
         self.one_rom_per_game = False
+        self.hide_downloaded = False
         self.regex_mode = False
     
     @staticmethod
@@ -231,10 +246,11 @@ class GameFilters:
         
         return best_priority
     
-    def apply_filters(self, games: list[Game]) -> list[Game]:
+    def apply_filters(self, games: list[Game], platform_name: str | None = None) -> list[Game]:
         """
         Applique les filtres à une liste de jeux
         games: Liste de tuples (game_name, game_url, size)
+        platform_name: Nom de la plateforme (pour le filtre 'hide_downloaded')
         Retourne: Liste filtrée de tuples
         """
         if not self.is_active():
@@ -242,6 +258,13 @@ class GameFilters:
         
         filtered_games = []
         has_region_excludes = any(state == 'exclude' for state in self.region_filters.values())
+        
+        # Résoudre le nom de plateforme pour le filtre 'hide_downloaded'
+        if self.hide_downloaded:
+            if platform_name is None:
+                platform_name = _resolve_platform_name()
+            if not platform_name:
+                logger.warning("hide_downloaded activé mais platform_name introuvable")
         
         # Filtrage par région
         for game in games:
@@ -265,6 +288,12 @@ class GameFilters:
             # Filtrer les non-release
             if self.hide_non_release and self.get_cached_non_release(game):
                 continue
+            
+            # Filtrer les jeux déjà téléchargés
+            if self.hide_downloaded and platform_name:
+                from history import is_game_downloaded
+                if is_game_downloaded(platform_name, game.name):
+                    continue
             
             filtered_games.append(game)
         

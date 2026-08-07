@@ -513,6 +513,7 @@
     "filter_other_options": "Otras opciones",
     "filter_hide_non_release": "Ocultar Demos/Betas/Protos",
     "filter_one_rom_per_game": "Una ROM por juego",
+    "filter_hide_downloaded": "Ocultar ROMs descargadas",
     "filter_priority_order": "Orden de prioridad",
     "filter_priority_title": "Configuración de prioridad de regiones",
     "filter_priority_desc": "Definir orden de preferencia para \"Una ROM por juego\"",

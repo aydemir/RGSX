@@ -114,7 +114,9 @@ def _sort_local_games(items: list[Game]) -> list[Game]:
 
 def _apply_sorted_active_filters() -> list[Game]:
     if hasattr(config, 'game_filter_obj') and config.game_filter_obj and config.game_filter_obj.is_active():
-        return _sort_local_games(config.game_filter_obj.apply_filters(config.games))
+        platform = config.platforms[config.current_platform]
+        platform_name = config.platform_names.get(platform, platform)
+        return _sort_local_games(config.game_filter_obj.apply_filters(config.games, platform_name))
     return config.games
 
 
@@ -877,8 +879,10 @@ def start_or_queue_download(url: str, platform: str, game_name: str, is_zip_non_
 def filter_games_by_search_query() -> list[Game]:
     base_games = config.games
     if config.game_filter_obj and config.game_filter_obj.is_active():
-        base_games = config.game_filter_obj.apply_filters(config.games)
- 
+        platform = config.platforms[config.current_platform]
+        platform_name = config.platform_names.get(platform, platform)
+        base_games = config.game_filter_obj.apply_filters(config.games, platform_name)
+  
     filtered_games = []
     for game in base_games:
         game_name = game.display_name 
@@ -1058,8 +1062,13 @@ def refresh_global_search_results(reset_selection: bool = True) -> None:
 
     filter_obj = getattr(config, 'game_filter_obj', None)
     if filter_obj and filter_obj.is_active():
+        # Gérer hide_downloaded par item (car chaque item a son platform_label)
+        if getattr(filter_obj, 'hide_downloaded', False):
+            from history import is_game_downloaded
+            items = [item for item in items if not is_game_downloaded(item.get('platform_label', ''), item.get('game_name', ''))]
+        
         item_by_game = {id(item.get('game_obj')): item for item in items}
-        filtered_games = filter_obj.apply_filters([item.get('game_obj') for item in items if item.get('game_obj') is not None])
+        filtered_games = filter_obj.apply_filters([item.get('game_obj') for item in items if item.get('game_obj') is not None], platform_name=None)
         items = [item_by_game[id(game)] for game in filtered_games if id(game) in item_by_game]
 
     if query:
@@ -4139,7 +4148,7 @@ def handle_controls(event, sources, joystick, screen):
             # Régions individuelles
             num_regions = len(GameFilters.REGIONS)
             # Options toggle/button
-            num_other_options = 3  # hide_non_release, one_rom_per_game, priority_config
+            num_other_options = 4  # hide_non_release, one_rom_per_game, hide_downloaded, priority_config
             # Boutons en bas
             num_buttons = 3  # apply, reset, back
             
@@ -4240,6 +4249,11 @@ def handle_controls(event, sources, joystick, screen):
                         config.needs_redraw = True
                         logger.debug("Toggle one_rom_per_game modifié")
                     elif option_idx == 2:
+                        # hide_downloaded
+                        config.game_filter_obj.hide_downloaded = not config.game_filter_obj.hide_downloaded
+                        config.needs_redraw = True
+                        logger.debug("Toggle hide_downloaded modifié")
+                    elif option_idx == 3:
                         # priority_config
                         config.menu_state = "filter_priority_config"
                         config.selected_priority_index = 0
