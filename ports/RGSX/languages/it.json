@@ -511,6 +511,7 @@
     "filter_other_options": "Altre opzioni",
     "filter_hide_non_release": "Nascondi Demo/Beta/Proto",
     "filter_one_rom_per_game": "Una ROM per gioco",
+    "filter_hide_downloaded": "Nascondi ROMs scaricate",
     "filter_priority_order": "Ordine di priorità",
     "filter_priority_title": "Configurazione priorità regioni",
     "filter_priority_desc": "Imposta ordine di preferenza per \"Una ROM per gioco\"",

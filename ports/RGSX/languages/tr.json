@@ -511,6 +511,7 @@
     "filter_other_options": "Diğer seçenekler",
     "filter_hide_non_release": "Demoları/Betaları/Prototipleri Gizle",
     "filter_one_rom_per_game": "Oyun başına bir ROM",
+    "filter_hide_downloaded": "Yüklü ROM'ları Gizle",
     "filter_priority_order": "Öncelik sırası",
     "filter_priority_title": "Bölge Öncelik Yapılandırması",
     "filter_priority_desc": "\"Oyun başına bir ROM\" için tercih sırasını ayarlayın",

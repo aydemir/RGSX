@@ -1964,7 +1964,7 @@ def draw_game_list(screen):
 
     if config.game_filter_obj and config.game_filter_obj.is_active() and not config.search_query:
         config.filtered_games = sort_games_list(
-            config.game_filter_obj.apply_filters(config.games),
+            config.game_filter_obj.apply_filters(config.games, platform_name),
             getattr(config, 'global_sort_option', 'name_asc'),
         )
 
@@ -6496,6 +6496,11 @@ def draw_filter_advanced(screen):
     # Afficher les 3 premières régions de priorité
     priority_preview = " → ".join(config.game_filter_obj.region_priority[:3]) + "..."
     options.append(('toggle', 'one_rom_per_game', f"{one_rom_text}: {one_rom_status}"))
+
+    hide_downloaded_text = _("filter_hide_downloaded")
+    hide_downloaded_status = "[X]" if config.game_filter_obj.hide_downloaded else "[ ]"
+    options.append(('toggle', 'hide_downloaded', f"{hide_downloaded_text}: {hide_downloaded_status}"))
+
     options.append(('button_inline', 'priority_config', f"{_('filter_priority_order')}: {priority_preview}"))
     
     # Boutons d'action (seront affichés séparément en bas)
