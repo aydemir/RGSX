@@ -743,6 +743,7 @@
         let savedHideNonRelease = false;
         let savedOneRomPerGame = false;
         let savedRegexMode = false;
+        let savedHideDownloaded = false;
         
         // Region priority order for "One ROM Per Game" (customizable)
         let regionPriorityOrder = JSON.parse(localStorage.getItem('regionPriorityOrder')) || 
@@ -766,6 +767,9 @@
                 if (document.getElementById('regex-mode')) {
                     savedRegexMode = document.getElementById('regex-mode').checked;
                 }
+                if (document.getElementById('hide-downloaded')) {
+                    savedHideDownloaded = document.getElementById('hide-downloaded').checked;
+                }
                 
                 const response = await fetch('/api/save_filters', {
                     method: 'POST',
@@ -774,6 +778,7 @@
                         region_filters: regionFiltersObj,
                         hide_non_release: savedHideNonRelease,
                         one_rom_per_game: savedOneRomPerGame,
+                        hide_downloaded: savedHideDownloaded,
                         regex_mode: savedRegexMode,
                         region_priority: regionPriorityOrder
                     })
@@ -815,6 +820,7 @@
                     savedHideNonRelease = filters.hide_non_release || false;
                     savedOneRomPerGame = filters.one_rom_per_game || false;
                     savedRegexMode = filters.regex_mode || false;
+                    savedHideDownloaded = filters.hide_downloaded || false;
                     
                     // Load checkboxes when they exist (in games view)
                     if (document.getElementById('hide-non-release')) {
@@ -825,6 +831,9 @@
                     }
                     if (document.getElementById('regex-mode')) {
                         document.getElementById('regex-mode').checked = savedRegexMode;
+                    }
+                    if (document.getElementById('hide-downloaded')) {
+                        document.getElementById('hide-downloaded').checked = savedHideDownloaded;
                     }
                 }
             } catch (error) {
@@ -857,6 +866,9 @@
             }
             if (document.getElementById('regex-mode')) {
                 document.getElementById('regex-mode').checked = savedRegexMode;
+            }
+            if (document.getElementById('hide-downloaded')) {
+                document.getElementById('hide-downloaded').checked = savedHideDownloaded;
             }
             
             // Apply filters to display the games correctly
@@ -1106,6 +1118,7 @@
             const searchInput = document.getElementById('game-search');
             const searchTerm = searchInput ? searchInput.value : '';
             const hideNonRelease = document.getElementById('hide-non-release')?.checked || savedHideNonRelease;
+            const hideDownloaded = document.getElementById('hide-downloaded')?.checked || savedHideDownloaded;
             const regexMode = document.getElementById('regex-mode')?.checked || savedRegexMode;
 
             const items = document.querySelectorAll('.game-item');
@@ -1189,6 +1202,14 @@
                     if (isNonReleaseGame(name)) {
                         visible = false;
                         hiddenByNonRelease++;
+                    }
+                }
+
+                // Apply hide downloaded filter
+                if (visible && hideDownloaded) {
+                    const status = gameStatuses[gameStem] || gameStatuses[gameNameLower];
+                    if (status && status.status === 'downloaded') {
+                        visible = false;
                     }
                 }
 
@@ -1484,6 +1505,10 @@
                             <label class="filter-checkbox">
                                 <input type="checkbox" id="hide-non-release" onchange="applyAllFilters(); saveFiltersToBackend();">
                                 <span>${t('web_filter_hide_non_release')}</span>
+                            </label>
+                            <label class="filter-checkbox">
+                                <input type="checkbox" id="hide-downloaded" onchange="applyAllFilters(); saveFiltersToBackend();">
+                                <span>${t('web_filter_hide_downloaded')}</span>
                             </label>
                             <label class="filter-checkbox">
                                 <input type="checkbox" id="regex-mode" onchange="applyAllFilters(); saveFiltersToBackend();">
@@ -2475,6 +2500,7 @@
                         region_filters: regionFiltersObj,
                         hide_non_release: document.getElementById('hide-non-release')?.checked || savedHideNonRelease,
                         one_rom_per_game: document.getElementById('one-rom-per-game')?.checked || savedOneRomPerGame,
+                        hide_downloaded: document.getElementById('hide-downloaded')?.checked || savedHideDownloaded,
                         regex_mode: document.getElementById('regex-mode')?.checked || savedRegexMode,
                         region_priority: regionPriorityOrder
                     }

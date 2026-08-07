@@ -477,6 +477,7 @@
     "web_sort_size_desc": "Boyut +- (Büyük önce)",
     "web_filter_region": "Bölge",
     "web_filter_hide_non_release": "Demoları/Betaları/Prototipleri Gizle",
+    "web_filter_hide_downloaded": "İndirilmiş ROM'ları Gizle",
     "web_filter_regex_mode": "Regex Aramasını Etkinleştir",
     "web_filter_one_rom_per_game": "Oyun Başına Bir ROM",
     "web_filter_configure_priority": "Bölge öncelik sırasını yapılandırın",
