@@ -131,6 +131,52 @@ varsayılan; `TestPass123` ile değiştirince False + settings'e yazıldı; kıs
 - 30 sn'lik auto-refresh artık `location.reload()` yerine sadece verileri HTTP ile yeniliyor (tam sayfa yeniden yüklemesi yok).
 - Doğrulama: snapshot sonrası re-render yok, 148 platform görseli tek seferde yükleniyor.
 
+---
+
+### 🆕 Yüklü ROM'ları Gizle Filtresi (2026.08.07)
+
+**Olay:** TVUI ve WebUI oyun listesinde "Yüklü ROM'ları Gizle" checkbox filtresi eklendi. Aktifken HDD'de zaten indirilmiş/kurulu oyunlar listeden gizlenir.
+
+**Neden:** Kullanıcı "Hangi oyunları henüz indirmemişim?" diye hızlıca filtreleyebilmeli. Yeşil işaretleme (indirilmiş oyun göstergesi) filtre kapalıyken korunur.
+
+**Yapılan değişiklikler:**
+
+**TVUI (`game_filters.py`, `display.py`, `controls.py`):**
+- `GameFilters` sınıfına `hide_downloaded` bayrağı eklendi (`__init__`, `load_from_dict`, `to_dict`, `is_active`, `reset`)
+- `apply_filters(games, platform_name=None)`: `hide_downloaded` aktifken `is_game_downloaded(platform_name, game.name)` ile filtreleme
+- `draw_filter_advanced()`: "Yüklü ROM'ları Gizle" toggle eklendi (one_rom_per_game ve priority_config arasına)
+- `controls.py`: `num_other_options = 4`, option_idx 2 → `hide_downloaded` toggle, priority_config → 3
+- `draw_game_list`, `_apply_sorted_active_filters`, `filter_games_by_search_query`: `platform_name` geçiriliyor
+- Global search: item bazlı platform filtering (`platform_label`)
+
+**WebUI (`rgsx_web.py`, `static/js/app.js`, `languages/*.json`):**
+- `web_filter_hide_downloaded` çeviri anahtarı 7 dile eklendi (TVUI `filter_hide_downloaded` ile aynı metin: "Yüklü ROM'ları Gizle")
+- HTML rendering: game-item'a `data-downloaded="${g.downloaded}"` attribute eklendi
+- `applyAllFilters()`: `item.dataset.downloaded === 'true'` ile filtreleme (SSE status yerine API `downloaded` boolean)
+- `saveFiltersToBackend` + settings save: `hide_downloaded` okuma/yazma (`??` operatörü ile checkbox false handling)
+- `rgsx_web.py` `/api/save_filters`: `hide_downloaded` okuma/yazma + `config.game_filter_obj` güncelleme
+
+**Çeviriler (7 dil):**
+| Dil | `filter_hide_downloaded` (TVUI) | `web_filter_hide_downloaded` (WebUI) |
+|-----|----------------------------------|--------------------------------------|
+| TR  | Yüklü ROM'ları Gizle            | Yüklü ROM'ları Gizle                |
+| EN  | Hide Downloaded ROMs            | Hide Downloaded ROMs                |
+| FR  | Masquer les ROMs téléchargées   | Masquer les ROMs téléchargées       |
+| DE  | Heruntergeladene ROMs ausblenden| Heruntergeladene ROMs ausblenden    |
+| ES  | Ocultar ROMs descargadas        | Ocultar ROMs descargadas            |
+| IT  | Nascondi ROMs scaricate         | Nascondi ROMs scaricate             |
+| PT  | Ocultar ROMs baixadas           | Ocultar ROMs baixadas               |
+
+**Davranış:**
+- Tik açık: `is_game_downloaded()` True olan oyunlar listeden gizlenir
+- Tik kapalı: Mevcut davranış korunur, indirilen oyunlar yeşil işaretlenerek gösterilir (`[>]` TVUI / `[✓]` WebUI)
+- Yeşil işaretleme kodu (`draw_game_list` / WebUI status badge) dokunulmaz, sadece filtre kapalıyken görünür
+- Kapsam: Mevcut platform (`config.current_platform` / platform-specific API)
+
+**Doğrulama:** Deploy kopya (`C:\RetroBat - Kopya\roms\ports\RGSX`) + manager restart → TVUI filtre menüsünde checkbox görünüyor, WebUI "Yüklü ROM'ları Gizle" yazıyor, tik açıldığında indirilmiş oyunlar gizleniyor, kapatıldığında yeşil `[>]`/`[✓]` ile geri geliyor.
+
+---
+
 ### v2.6.4.9-TR2 - Web UI Masaüstü Kısayolu
 
 **Dosyalar:** `windows/RGSX Retrobat.bat`, `windows/create_shortcut.vbs`
