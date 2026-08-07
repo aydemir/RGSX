@@ -27,6 +27,7 @@ import datetime
 import json
 import logging
 import queue as queue_module
+import socket
 import subprocess
 import threading
 import time
@@ -799,6 +800,39 @@ def manager_healthy(host: str = "127.0.0.1", port: int = 5000, timeout: float = 
         return False
 
 
+def _is_port_free(port: int, host: str = "0.0.0.0") -> bool:
+    """Port bağlanabilir mi? (başka bir process tarafından işgal edilmemiş mi)
+
+    Not: SO_REUSEADDR Windows'ta ikinci bind'in başarılı olmasına izin verir,
+    bu yüzden kullanılmaz — aktif dinleyen varsa bind OSError ile başarısız olur.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((host, port))
+            return True
+        finally:
+            s.close()
+    except OSError:
+        return False
+
+
+def _find_available_port(preferred: int, host: str = "0.0.0.0", max_attempts: int = 100) -> int:
+    """İstenen port doluysa preferred+N aralığında serbest bir port bulur (Faz 4).
+
+    - preferred boşsa preferred döner.
+    - preferred+1 .. preferred+max_attempts aralığında ilk serbest port döner.
+    - Hiçbiri boş değilse 0 döner (çağıran net hata basmalı).
+    """
+    if _is_port_free(preferred, host):
+        return preferred
+    for offset in range(1, max_attempts + 1):
+        candidate = preferred + offset
+        if _is_port_free(candidate, host):
+            return candidate
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -833,6 +867,21 @@ def main():
         print(f"RGSX Manager already running on http://localhost:{args.port}")
         return 0
 
+    # Faz 4: port doluysa (sağlıklı RGSX manager değil, başka bir process) 5000+N dene.
+    final_port = _find_available_port(args.port, args.host or "0.0.0.0")
+    if final_port == 0:
+        logger.error(f"[MANAGER] Aucun port disponible à partir de {args.port} (100 essais)")
+        print(f"RGSX Manager: aucun port disponible à partir de {args.port}")
+        return 1
+    if final_port != args.port:
+        logger.info(f"[MANAGER] Port {args.port} occupé → utilisation de {final_port}")
+        from rgsx_settings import set_manager_port
+        try:
+            set_manager_port(final_port)
+        except Exception as e:
+            logger.warning(f"[MANAGER] set_manager_port({final_port}) échec: {e}")
+        args.port = final_port
+
     # Auto-start par défaut: si l'utilisateur ne l'a pas désactivé, l'installer au boot
     if os.name == "nt" and _get_autostart_pref() and not is_autostart_enabled():
         if autostart_install():
@@ -856,7 +905,8 @@ def main():
         _setup_tray(icon_path, args.port, no_tray=False)
 
     try:
-        rgsx_web.run_server(host=args.host, port=args.port, handler_class=ManagerHandler)
+        rgsx_web.run_server(host=args.host, port=args.port, handler_class=ManagerHandler,
+                            kill_conflicts=False)
     finally:
         STOP.set()
         httpd = getattr(rgsx_web, "CURRENT_HTTPD", None)
