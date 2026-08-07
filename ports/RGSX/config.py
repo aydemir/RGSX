@@ -179,6 +179,7 @@ else:
 
 log_file = os.path.join(log_dir, "RGSX.log")
 log_file_web = os.path.join(log_dir, 'rgsx_web.log')
+log_file_crash = os.path.join(log_dir, "crash.log")
 
 # Dans le Dossier de l'APP : /roms/ports/rgsx
 UPDATE_FOLDER = os.path.join(APP_FOLDER, "update")
