@@ -215,6 +215,17 @@ class ManagerHandler(RGSXHandler):
                 self._send_json({"success": False, "message": str(e)}, status=500)
             return
 
+        if path == "/api/qbittorrent/start":
+            try:
+                from qbittorrent_backend import ensure_running
+                ready = ensure_running(timeout=30)
+                self._send_json({"success": ready, "ready": ready,
+                                 "url": "http://localhost:18572/"})
+            except Exception as e:
+                logger.warning(f"[MANAGER] /api/qbittorrent/start: {e}")
+                self._send_json({"success": False, "message": str(e)}, status=500)
+            return
+
         if path == "/api/resume":
             try:
                 n = resume_all_downloads()

@@ -894,6 +894,34 @@ def prewarm_startup() -> bool:
                 pass
 
 
+def ensure_running(timeout: float = _STARTUP_TIMEOUT_SECONDS) -> bool:
+    """Démarre qBittorrent (si besoin) et attend que son WebUI soit accessible.
+
+    Utilisé par le manager pour ouvrir la WebUI depuis le bouton du navigateur :
+    au retour, http://127.0.0.1:18572 doit répondre. Retourne True si prêt.
+    """
+    import time as _time
+    deadline = _time.time() + timeout
+    session = _ensure_qbittorrent_running()
+    if session is None:
+        return False
+    try:
+        try:
+            session.close()
+        except Exception:
+            pass
+        while _time.time() < deadline:
+            if _wait_for_webui(requests.Session(), _base_url, timeout=5) and _login(requests.Session(), _base_url, []):
+                return True
+            _time.sleep(0.5)
+        return False
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
 def prewarm_startup_async() -> None:
     """Déclenche un pré-lancement non bloquant de qBittorrent (au plus un thread)."""
     global _prewarm_thread
