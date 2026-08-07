@@ -2223,7 +2223,9 @@
                                 ${systemInfo.network_ip ? `
                                     <div class="info-item">
                                         <strong>🌐 Network IP</strong>
-                                        ${systemInfo.network_ip}
+                                        ${systemInfo.network_ip && systemInfo.network_ip.indexOf(':') === -1 && window.location.port
+                                            ? systemInfo.network_ip + ':' + window.location.port
+                                            : systemInfo.network_ip}
                                     </div>
                                 ` : ''}
                                 <div class="info-item">
