@@ -1117,9 +1117,9 @@
         function applyAllFilters() {
             const searchInput = document.getElementById('game-search');
             const searchTerm = searchInput ? searchInput.value : '';
-            const hideNonRelease = document.getElementById('hide-non-release')?.checked || savedHideNonRelease;
-            const hideDownloaded = document.getElementById('hide-downloaded')?.checked || savedHideDownloaded;
-            const regexMode = document.getElementById('regex-mode')?.checked || savedRegexMode;
+            const hideNonRelease = document.getElementById('hide-non-release')?.checked ?? savedHideNonRelease;
+            const hideDownloaded = document.getElementById('hide-downloaded')?.checked ?? savedHideDownloaded;
+            const regexMode = document.getElementById('regex-mode')?.checked ?? savedRegexMode;
 
             const items = document.querySelectorAll('.game-item');
             let visibleCount = 0;
@@ -2498,10 +2498,10 @@
                     },
                     game_filters: {
                         region_filters: regionFiltersObj,
-                        hide_non_release: document.getElementById('hide-non-release')?.checked || savedHideNonRelease,
-                        one_rom_per_game: document.getElementById('one-rom-per-game')?.checked || savedOneRomPerGame,
-                        hide_downloaded: document.getElementById('hide-downloaded')?.checked || savedHideDownloaded,
-                        regex_mode: document.getElementById('regex-mode')?.checked || savedRegexMode,
+                        hide_non_release: document.getElementById('hide-non-release')?.checked ?? savedHideNonRelease,
+                        one_rom_per_game: document.getElementById('one-rom-per-game')?.checked ?? savedOneRomPerGame,
+                        hide_downloaded: document.getElementById('hide-downloaded')?.checked ?? savedHideDownloaded,
+                        regex_mode: document.getElementById('regex-mode')?.checked ?? savedRegexMode,
                         region_priority: regionPriorityOrder
                     }
                 };
