@@ -886,9 +886,52 @@ def _lookup_known_game_size(platform: str, game_name: str, url: str | None = Non
     return 0
 
 
-def _stream_response_to_path(response, dest_path: str, task_id: str | None, cancel_ev, progress_queue_obj, fallback_total_size: int = 0) -> dict[str, int | float | bool]:
-    total_size = int(response.headers.get('content-length', 0) or 0) or max(0, int(fallback_total_size or 0))
-    downloaded = 0
+def _http_part_path(dest_path: str) -> str:
+    """Chemin du fichier partiel (.part) utilisé pour la reprise HTTP."""
+    return f"{dest_path}.part"
+
+
+def _http_resume_offset(dest_path: str) -> int:
+    """Taille (octets) du fichier .part existant, sinon 0 (aucune reprise)."""
+    try:
+        part_path = _http_part_path(dest_path)
+        if os.path.isfile(part_path):
+            size = os.path.getsize(part_path)
+            return size if size > 0 else 0
+    except Exception:
+        pass
+    return 0
+
+
+def _http_parse_content_range(header: str | None) -> int | None:
+    """Extrait la taille totale depuis Content-Range ('bytes 0-99/1000' -> 1000)."""
+    if not header:
+        return None
+    try:
+        match = re.match(r'bytes\s+(\d+)-(\d+)/(\d+)', str(header))
+        if match:
+            return int(match.group(3))
+    except Exception:
+        pass
+    return None
+
+
+def _stream_response_to_path(response, dest_path: str, task_id: str | None, cancel_ev, progress_queue_obj, fallback_total_size: int = 0, resume_offset: int = 0) -> dict[str, int | float | bool]:
+    part_path = _http_part_path(dest_path)
+    resume_offset = max(0, int(resume_offset or 0))
+    is_range = bool(resume_offset > 0 and getattr(response, 'status_code', 0) == 206)
+
+    content_range_total = _http_parse_content_range(response.headers.get('content-range'))
+    if content_range_total and content_range_total > 0:
+        total_size = content_range_total
+    else:
+        content_length = int(response.headers.get('content-length', 0) or 0)
+        if content_length > 0:
+            total_size = content_length + (resume_offset if is_range else 0)
+        else:
+            total_size = max(0, int(fallback_total_size or 0))
+
+    downloaded = resume_offset if is_range else 0
     chunk_size = 4096
     last_update_time = time.time()
     last_downloaded = 0
@@ -896,55 +939,73 @@ def _stream_response_to_path(response, dest_path: str, task_id: str | None, canc
     download_canceled = False
 
     if progress_queue_obj is not None and task_id is not None:
-        progress_queue_obj.put((task_id, 0, total_size))
+        progress_queue_obj.put((task_id, downloaded, total_size))
 
-    with open(dest_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=chunk_size):
-            while True:
-                pause_ev = pause_events.get(task_id)
-                if pause_ev is None or not pause_ev.is_set():
-                    break
+    try:
+        with open(part_path, 'ab' if is_range else 'wb') as f:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                while True:
+                    pause_ev = pause_events.get(task_id)
+                    if pause_ev is None or not pause_ev.is_set():
+                        break
+                    if cancel_ev is not None and cancel_ev.is_set():
+                        break
+                    time.sleep(0.1)
+
                 if cancel_ev is not None and cancel_ev.is_set():
+                    logger.debug(f"Annulation détectée, arrêt du téléchargement pour task_id={task_id}")
+                    download_canceled = True
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
                     break
-                time.sleep(0.1)
 
-            if cancel_ev is not None and cancel_ev.is_set():
-                logger.debug(f"Annulation détectée, arrêt du téléchargement pour task_id={task_id}")
-                download_canceled = True
-                try:
-                    f.close()
-                except Exception:
-                    pass
-                try:
-                    if os.path.exists(dest_path):
-                        os.remove(dest_path)
-                except Exception:
-                    pass
-                break
+                if chunk:
+                    size_received = len(chunk)
+                    f.write(chunk)
+                    downloaded += size_received
+                    current_time = time.time()
 
-            if chunk:
-                size_received = len(chunk)
-                f.write(chunk)
-                downloaded += size_received
-                current_time = time.time()
-                
-                # Calculer le pourcentage actuel
-                current_percent = int(downloaded / total_size * 100) if total_size > 0 else 0
-                last_percent = int(last_downloaded / total_size * 100) if total_size > 0 else 0
-                
-                # Mettre à jour la progression si l'intervalle est atteint OU si le pourcentage a changé (ou si total_size est inconnu)
-                should_update = (progress_queue_obj is not None and task_id is not None and 
-                               (current_time - last_update_time >= update_interval or 
-                                current_percent != last_percent or 
-                                total_size == 0))
-                
-                if should_update:
-                    delta = downloaded - last_downloaded
-                    speed = delta / (current_time - last_update_time) / (1024 * 1024) if current_time > last_update_time else 0
-                    # logger.debug(f"[STREAM] Mise à jour progression: {downloaded}/{total_size} octets ({current_percent}%), speed={speed:.2f} MB/s, task_id={task_id}")
-                    last_downloaded = downloaded
-                    last_update_time = current_time
-                    progress_queue_obj.put((task_id, downloaded, total_size, speed))
+                    current_percent = int(downloaded / total_size * 100) if total_size > 0 else 0
+                    last_percent = int(last_downloaded / total_size * 100) if total_size > 0 else 0
+
+                    should_update = (progress_queue_obj is not None and task_id is not None and
+                                   (current_time - last_update_time >= update_interval or
+                                    current_percent != last_percent or
+                                    total_size == 0))
+
+                    if should_update:
+                        delta = downloaded - last_downloaded
+                        speed = delta / (current_time - last_update_time) / (1024 * 1024) if current_time > last_update_time else 0
+                        last_downloaded = downloaded
+                        last_update_time = current_time
+                        progress_queue_obj.put((task_id, downloaded, total_size, speed))
+    finally:
+        try:
+            if response is not None:
+                response.close()
+        except Exception:
+            pass
+
+    if download_canceled:
+        try:
+            if os.path.exists(part_path):
+                os.remove(part_path)
+        except Exception:
+            pass
+    elif downloaded > 0:
+        try:
+            os.replace(part_path, dest_path)
+            logger.debug(f"Fichier partiel finalisé: {part_path} -> {dest_path}")
+        except Exception as e:
+            logger.warning(f"Impossible de finaliser le fichier partiel {part_path}: {e}")
+    else:
+        try:
+            if os.path.exists(part_path):
+                os.remove(part_path)
+        except Exception:
+            pass
 
     return {
         'total_size': total_size,
@@ -955,7 +1016,7 @@ def _stream_response_to_path(response, dest_path: str, task_id: str | None, canc
     }
 
 
-def _try_archive_org_alternate_urls(session, archive_alt_urls: list[str], active_url: str, download_headers: dict, dest_path: str, task_id: str | None, cancel_ev, progress_queue_obj, fallback_total_size: int = 0):
+def _try_archive_org_alternate_urls(session, archive_alt_urls: list[str], active_url: str, download_headers: dict, dest_path: str, task_id: str | None, cancel_ev, progress_queue_obj, fallback_total_size: int = 0, resume_offset: int = 0):
     seen_urls = {active_url}
     for alt_url in archive_alt_urls:
         if not alt_url or alt_url in seen_urls:
@@ -972,7 +1033,7 @@ def _try_archive_org_alternate_urls(session, archive_alt_urls: list[str], active
 
             alt_response = session.get(alt_url, stream=True, timeout=(45, 90), allow_redirects=True, headers=alt_headers)
             alt_response.raise_for_status()
-            transfer = _stream_response_to_path(alt_response, dest_path, task_id, cancel_ev, progress_queue_obj, fallback_total_size=fallback_total_size)
+            transfer = _stream_response_to_path(alt_response, dest_path, task_id, cancel_ev, progress_queue_obj, fallback_total_size=fallback_total_size, resume_offset=resume_offset)
             if transfer['downloaded'] > 0:
                 return alt_response, alt_url, transfer
 
@@ -3691,10 +3752,16 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     extra_429_retries = 4 if 'vimm.net' in url else 0
                     total_max_attempts = len(header_variants) + extra_429_retries
                     rate_limit_hits = 0
+                    resume_offset = _http_resume_offset(dest_path)
+                    if resume_offset > 0:
+                        logger.info(f"Reprise HTTP détectée: {resume_offset} octets déjà téléchargés dans {_http_part_path(dest_path)}")
                     attempt = 0
                     while attempt < total_max_attempts:
                         attempt += 1
                         hv = header_variants[min(attempt - 1, len(header_variants) - 1)]
+                        if resume_offset > 0:
+                            hv = dict(hv)
+                            hv['Range'] = f'bytes={resume_offset}-'
                         try:
                             if url in config.download_progress:
                                 config.download_progress[url]["status"] = f"Try {attempt}/{total_max_attempts}"
@@ -3850,12 +3917,13 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                         config.download_progress[url]["status"] = "Downloading"
                         config.needs_redraw = True
 
-                    announced_total_size = int(response.headers.get('content-length', 0) or 0) or int(vimm_file_size or known_total_size or 0)
+                    content_range_total = _http_parse_content_range(response.headers.get('content-range'))
+                    announced_total_size = content_range_total or int(response.headers.get('content-length', 0) or 0) or int(vimm_file_size or known_total_size or 0)
                     has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, announced_total_size)
                     if not has_space:
                         raise InsufficientDiskSpaceError(low_space_message)
 
-                    transfer = _stream_response_to_path(response, dest_path, task_id, cancel_ev, progress_queues.get(task_id), fallback_total_size=vimm_file_size or known_total_size)
+                    transfer = _stream_response_to_path(response, dest_path, task_id, cancel_ev, progress_queues.get(task_id), fallback_total_size=vimm_file_size or known_total_size, resume_offset=resume_offset)
                     total_size = int(transfer['total_size'])
                     downloaded = int(transfer['downloaded'])
                     last_downloaded = int(transfer['last_downloaded'])
@@ -3890,6 +3958,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                             cancel_ev,
                             progress_queues.get(task_id),
                             fallback_total_size=known_total_size,
+                            resume_offset=resume_offset,
                         )
                         if fallback_transfer is not None:
                             url = fallback_url
@@ -5265,6 +5334,10 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                 logger.debug(f"Début tentative {attempt + 1} pour télécharger {final_url}")
                 try:
                     attempt_headers = download_header_variants[min(attempt, len(download_header_variants) - 1)]
+                    resume_offset = _http_resume_offset(dest_path)
+                    if resume_offset > 0:
+                        attempt_headers = dict(attempt_headers)
+                        attempt_headers['Range'] = f'bytes={resume_offset}-'
                     logger.debug(f"Headers tentative {attempt + 1}: {_redact_headers(attempt_headers)}")
                     with provider_download_session.get(final_url, stream=True, headers=attempt_headers, timeout=(30, 120), allow_redirects=True) as response:
                         logger.debug(f"Réponse GET reçue, code: {response.status_code}")
@@ -5283,7 +5356,13 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                             except Exception as refresh_error:
                                 logger.warning(f"Impossible de régénérer le lien AllDebrid après 503: {refresh_error}")
                         response.raise_for_status()
-                        total_size = int(response.headers.get('content-length', 0))
+                        content_range_total = _http_parse_content_range(response.headers.get('content-range'))
+                        is_range = bool(resume_offset > 0 and response.status_code == 206)
+                        if content_range_total and content_range_total > 0:
+                            total_size = content_range_total
+                        else:
+                            content_length = int(response.headers.get('content-length', 0))
+                            total_size = content_length + (resume_offset if is_range else 0)
                         logger.debug(f"Taille totale: {total_size} octets")
 
                         has_space, low_space_message = _ensure_sufficient_disk_space(dest_dir, total_size)
@@ -5303,16 +5382,17 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                                         entry["total_size"] = total_size
                                         config.needs_redraw = True
                                         break
-                            progress_queues[task_id].put((task_id, 0, total_size))  # Mettre à jour la taille totale
+                            progress_queues[task_id].put((task_id, resume_offset if is_range else 0, total_size))  # Mettre à jour la taille totale
 
-                        downloaded = 0
+                        downloaded = resume_offset if is_range else 0
                         chunk_size = 8192
                         last_update_time = time.time()
                         last_downloaded = 0
                         update_interval = 0.1  # Mettre à jour toutes les 0,1 secondes
                         download_canceled = False
-                        logger.debug(f"Ouverture fichier: {dest_path}")
-                        with open(dest_path, 'wb') as f:
+                        part_path = _http_part_path(dest_path)
+                        logger.debug(f"Ouverture fichier: {part_path}")
+                        with open(part_path, 'ab' if is_range else 'wb') as f:
                             for chunk in response.iter_content(chunk_size=chunk_size):
                                 # Vérifier la pause (dynamiquement car l'événement peut être créé après le début)
                                 while True:
@@ -5333,8 +5413,8 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                                     except Exception:
                                         pass
                                     try:
-                                        if os.path.exists(dest_path):
-                                            os.remove(dest_path)
+                                        if os.path.exists(part_path):
+                                            os.remove(part_path)
                                     except Exception:
                                         pass
                                     break
@@ -5361,6 +5441,25 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                                         last_downloaded = downloaded
                                         last_update_time = current_time
                                         progress_queues[task_id].put((task_id, downloaded, total_size, speed))
+
+                    if download_canceled:
+                        try:
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
+                        except Exception:
+                            pass
+                    elif downloaded > 0:
+                        try:
+                            os.replace(part_path, dest_path)
+                            logger.debug(f"Fichier partiel finalisé: {part_path} -> {dest_path}")
+                        except Exception as e:
+                            logger.warning(f"Impossible de finaliser le fichier partiel {part_path}: {e}")
+                    else:
+                        try:
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
+                        except Exception:
+                            pass
 
                     if downloaded <= 0:
                         try:
