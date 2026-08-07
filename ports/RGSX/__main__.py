@@ -548,6 +548,14 @@ def ensure_manager():
 
         deadline = time.time() + 30
         while time.time() < deadline:
+            # Faz 4: manager istenen port doluysa 5000+N'ye geçip settings'e yazabilir;
+            # her tur gerçek portu yeniden oku ki alternatif porta geçiş yakalansın.
+            try:
+                from rgsx_settings import get_manager_port
+                port = get_manager_port()
+                config.manager_port = port
+            except Exception:
+                pass
             if _manager_healthy(port):
                 config.manager_available = True
                 logger.info('✅ Manager RGSX démarré')

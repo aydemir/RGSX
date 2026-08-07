@@ -69,12 +69,20 @@ Değiştirilen şifre `rgsx_settings.json`'a kaydedilir, backend her login'de se
 
 ---
 
-## Faz 4 — Port Çakışma Yönetimi
+## Faz 4 — Port Çakışma Yönetimi ✅
 
 **Amaç:** Sabit port 5000 doluysa otomatik alternatif port deneme / net hata.
 
 **Kapsam:** `rgsx_manager.py` başlangıcında port serbest değilse 5000+N dene; gerçek portu
 `rgsx_settings.json` ve manager loguna yaz; `__main__.py` `manager_port`'u buradan okusun.
+
+**Uygulama:** `_find_available_port` (port doluysa preferred+N aralığında serbest port bulur,
+hiçbiri yoksa net hata 0 döner); `main()`'de `manager_healthy` kontrolü sonrası alternatif porta
+geçer ve `set_manager_port` ile kalıcılaştırır; `__main__.py` `ensure_manager` poll döngüsü her
+turda settings'ten gerçek portu yeniden okur; `run_server`'a `kill_conflicts=False` eklendi —
+manager başka bir uygulamanın process'ini asla öldürmez (eski kill davranışı shim/standalone
+`rgsx_web.py`'de korundu). Canlı test: 5000 işgal edilince manager 5001'e geçti, işgalci
+hayatta kaldı, settings 5001'e yazıldı; temizlik sonrası 5000'e döndü.
 
 ---
 

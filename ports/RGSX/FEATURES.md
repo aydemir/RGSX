@@ -1,5 +1,31 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Port Çakışma Yönetimi (2026.08.07)
+
+**Olay:** RGSX Download Manager artık istenen port (varsayılan 5000) başka bir uygulama
+tarafından kullanılıyorsa onu öldürmek yerine otomatik olarak `5000+N` aralığında serbest bir
+porta geçiyor (Faz 4).
+
+**Neden:** Eski davranış port doluysa o process'i `taskkill`/`kill -9` ile öldürüyordu — başka bir
+uygulamanın (tarayıcı, sunucu vb.) çökmesine yol açabiliyordu. Faz 4 bunu zararsız bir alternatif
+port seçimine çevirir.
+
+**Yapılan değişiklikler:**
+- **`rgsx_manager.py`:** `_is_port_free()` (bind testi, SO_REUSEADDR'sız — Windows'ta güvenilir) +
+  `_find_available_port(preferred)` (preferred doluysa preferred+1..+100 arar, hiçbiri yoksa 0 döner).
+  `main()`'de `manager_healthy` kontrolü sonrası alternatif porta geçer, `set_manager_port()` ile
+  kalıcılaştırır, log'a yazar; `run_server(...)` artık `kill_conflicts=False` ile çağrılır.
+- **`rgsx_web.py`:** `run_server(..., kill_conflicts=True)` parametresi — manager `False` geçer
+  (başka process öldürmez); standalone/shim web sunucusu eski kill davranışını korur.
+- **`__main__.py`:** `ensure_manager()` poll döngüsü her turda `get_manager_port()`'u yeniden okur —
+  manager alternatif porta geçince TVUI/SSE doğru porta bağlanır.
+
+**Doğrulama:** 5000'i işgal eden ayrı bir process ile canlı test — manager otomatik 5001'e geçti,
+`manager_port=5001` settings'e yazıldı, health 5001'de OK, işgalci süreç öldürülmedi. Temizlik
+sonrası manager 5000'e döndü.
+
+---
+
 ## qBittorrent WebUI Şifre Yönetimi (2026.08.07)
 
 **Olay:** Varsayılan `admin`/`RGSXqbt` şifresi otomatik değiştirilmiyor; kullanıcı varsayılan şifreyle
