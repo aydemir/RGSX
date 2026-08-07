@@ -1207,8 +1207,8 @@
 
                 // Apply hide downloaded filter
                 if (visible && hideDownloaded) {
-                    const status = gameStatuses[gameStem] || gameStatuses[gameNameLower];
-                    if (status && status.status === 'downloaded') {
+                    const isDownloaded = item.dataset.downloaded === 'true';
+                    if (isDownloaded) {
                         visible = false;
                     }
                 }
@@ -1551,7 +1551,7 @@
                     }
                     
                     html += `
-                        <div class="game-item" data-game="${encodeURIComponent(gameStem)}">
+                        <div class="game-item" data-game="${encodeURIComponent(gameStem)}" data-downloaded="${g.downloaded ? 'true' : 'false'}">
                             <span class="game-status-indicator">${statusIndicator}</span>
                             <span class="game-name">${g.name}</span>
                             ${g.size ? `<span class="game-size">${g.size}</span>` : ''}
