@@ -316,21 +316,54 @@ os.makedirs(config.log_dir, exist_ok=True)
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
-# Créer le handler de fichier avec mode 'a' (append) et force flush
-file_handler = logging.FileHandler(config.log_file_web, mode='a', encoding='utf-8')
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
 # IMPORTANT: Forcer le flush après chaque log
 class FlushFileHandler(logging.FileHandler):
     def emit(self, record):
         super().emit(record)
         self.flush()
 
-# Recréer le handler avec la classe qui flush automatiquement
-file_handler = FlushFileHandler(config.log_file_web, mode='a', encoding='utf-8')
+# Handler principal : rgsx_web.log avec rotation (20 MB max, 2 backups)
+# pour éviter une croissance illimitée (mode 'a' ne suffit pas en daemon longue durée).
+try:
+    from logging.handlers import RotatingFileHandler as _RotatingFileHandler
+
+    class _FlushRotatingFileHandler(_RotatingFileHandler):
+        def emit(self, record):
+            super().emit(record)
+            self.flush()
+
+    file_handler = _FlushRotatingFileHandler(
+        config.log_file_web,
+        maxBytes=20 * 1024 * 1024,  # 20 MB
+        backupCount=2,
+        encoding='utf-8',
+    )
+except Exception as e:
+    logging.warning(f"RotatingFileHandler indisponible, repli sur FileHandler: {e}")
+    file_handler = FlushFileHandler(config.log_file_web, mode='a', encoding='utf-8')
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+# Handler crash : ne retient que les erreurs/critiques (diagnostic ciblé, petit volume)
+try:
+    from logging.handlers import RotatingFileHandler as _CrashRotatingFileHandler
+
+    class _FlushCrashRotatingFileHandler(_CrashRotatingFileHandler):
+        def emit(self, record):
+            super().emit(record)
+            self.flush()
+
+    crash_handler = _FlushCrashRotatingFileHandler(
+        config.log_file_crash,
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=1,
+        encoding='utf-8',
+    )
+except Exception as e:
+    logging.warning(f"Crash log RotatingFileHandler indisponible, repli sur FileHandler: {e}")
+    crash_handler = FlushFileHandler(config.log_file_crash, mode='a', encoding='utf-8')
+crash_handler.setLevel(logging.ERROR)
+crash_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
 # Créer le handler console
 console_handler = logging.StreamHandler(sys.stdout)
@@ -340,6 +373,7 @@ console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(
 # Configurer le logger racine
 logging.root.setLevel(logging.DEBUG)
 logging.root.addHandler(file_handler)
+logging.root.addHandler(crash_handler)
 logging.root.addHandler(console_handler)
 
 logger = logging.getLogger(__name__)

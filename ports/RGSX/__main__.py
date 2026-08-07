@@ -117,6 +117,21 @@ except Exception as e:
     )
     logging.error(f"Échec de la configuration du logging dans {config.log_file}: {str(e)}")
 
+# Handler crash : ne retient que les erreurs/critiques (diagnostic ciblé)
+try:
+    from logging.handlers import RotatingFileHandler as _CrashRotatingFileHandler
+    _crash_handler = _CrashRotatingFileHandler(
+        config.log_file_crash,
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=1,
+        encoding='utf-8',
+    )
+    _crash_handler.setLevel(logging.ERROR)
+    _crash_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logging.root.addHandler(_crash_handler)
+except Exception as e:
+    logging.warning(f"Impossible de configurer le crash log dans {config.log_file_crash}: {e}")
+
 logger = logging.getLogger(__name__)
 
 try:
