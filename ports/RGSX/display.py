@@ -1326,6 +1326,17 @@ def get_platform_header_info_lines(max_badge_width=None, include_details=True):
     if isinstance(system_info, dict):
         network_ip = (system_info.get('network_ip', '') or '').strip()
     if network_ip:
+        # Faz: son kullanıcıya bağlantı ipucu için ip:port formatında göster.
+        # Port kaynağı: manager_port (config ya da rgsx_settings fallback).
+        manager_port = getattr(config, 'manager_port', 0) or 0
+        if not manager_port:
+            try:
+                from rgsx_settings import get_manager_port
+                manager_port = get_manager_port()
+            except Exception:
+                manager_port = 0
+        if manager_port and ':' not in network_ip:
+            network_ip = f"{network_ip}:{manager_port}"
         lines.append(network_ip)
 
     return _fit_badge_lines(lines, config.tiny_font, max_badge_width, padding_x=12)
