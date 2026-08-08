@@ -1,5 +1,29 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Developer Dokümantasyonu Düzeni + thread_safety Temizliği (2026.08.08)
+
+**Olay:** `docs/` klasörü developer odaklı yeniden düzenlendi ve `thread_safety.py`
+yinelenen kilit tanımları temizlendi.
+
+**Yapılan değişiklikler:**
+- **Docs yeniden yapılandırma:** Kullanıcı kılavuzları (`TVUI_FILTERS`, `WEBUI_FILTERS`)
+  `docs/user/` altına taşındı; eski `ES_INTEGRATION_ANALYSIS.md` (manager öncesi, tarihsel)
+  `docs/deprecated/`'a alındı ve durum notu eklendi. Yeni `docs/flows/` klasöründe üç kritik
+  akış dokümanı yazıldı: `STARTUP.md` (ensure_manager + SSE yansıması + çift manager
+  koruması), `DOWNLOAD_PIPELINE.md` (HTTP resume + torrent + kuyruk worker),
+  `FILTER_PIPELINE.md` (GameFilters + TVUI/WebUI uygulaması). `docs/guides/DEVELOPMENT.md`
+  (ortam, değişiklik döngüsü, commit/push, modül haritası) eklendi. README indeks yeniden
+  düzenlendi; DOWNLOAD_MANAGER.md'deki eski `display.py`/Flask referansları güncellendi.
+- **`thread_safety.py`:** Yinelenen kilit tanımları tekilleştirildi
+  (`_cancel_events_lock` x3, `_torrent_temp_roots_lock` x2, `_url_done_events_lock` x2,
+  `_url_results_lock` x2, `_download_queue_lock` x5), çift `torrent_temp_roots_lock()`
+  context manager ve `__all__` dublikatı kaldırıldı. Davranış değişmedi; kapsam %97→%100.
+
+**Doğrulama:** 151 pytest geçti (%97 toplam, `thread_safety.py` %100); kopya kurulumda
+manager başlatıldı, port 5000 + HTTP 200 doğrulandı, durduruldu.
+
+---
+
 ## display.py Pakete Bölündü + Test Altyapısı + Filtre Bug Fix (2026.08.08)
 
 **Olay:** 6818 satırlık tekil `display.py` dosyası kaldırıldı; yerine `display/` paketi

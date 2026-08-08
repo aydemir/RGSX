@@ -10,7 +10,7 @@ RGSX Download Manager, TV UI (Pygame) ve indirme motorunu ayıran bağımsız bi
 ┌─────────────────────────────────────────────────────────────┐
 │                    TV UI (Pygame)                            │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │ display.py  │  │ controls.py │  │ __main__.py         │  │
+│  │ display/    │  │ controls.py │  │ __main__.py         │  │
 │  │ - Oyun listesi    │ - Kontrol      │ - ensure_manager()│  │
 │  │ - Durum göstergeleri│ - Filtreler   │ - SSE listener    │  │
 │  └──────┬──────┘  └──────┬──────┘  └────────┬────────────┘  │
@@ -160,4 +160,7 @@ python rgsx_manager.py [options]
 
 ---
 
-*Kaynak kod: `rgsx_manager.py`, `rgsx_web.py`, `network.py`, `__main__.py`, `controls.py`, `display.py`*
+*Kaynak kod: `rgsx_manager.py`, `rgsx_web.py`, `network.py`, `__main__.py`, `controls.py`, `display/` paketi.*
+
+Ayrıntılı akışlar: [`docs/flows/STARTUP.md`](../flows/STARTUP.md) ve
+[`docs/flows/DOWNLOAD_PIPELINE.md`](../flows/DOWNLOAD_PIPELINE.md).

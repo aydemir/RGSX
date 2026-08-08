@@ -62,7 +62,7 @@ Taşıma sırasında public API'ye (`display/__init__.py` `__all__`'ında) eklen
 ## Doğrulama
 - `import display` + bağımlı modüller OK; SDL dummy ile ~19 ekran smoke testi geçti.
 - **pytest altyapısı** (tests/): `display/` çekirdeği + `game_filters.py` +
-  `thread_safety.py` için %95 toplam kapsam (bkz. `docs/guides/TESTING.md`).
+  `thread_safety.py` için %97 toplam kapsam (bkz. `docs/guides/TESTING.md`).
 
 ## Gelecek
 - `menus.py`/`history.py` gibi büyük çizim modülleri için per-modül stub test takımları

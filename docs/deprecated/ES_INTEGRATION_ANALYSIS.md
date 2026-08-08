@@ -1,5 +1,12 @@
 # RGSX EmulationStation Entegrasyonu - Analiz
 
+> ⚠️ **Durum: DEPRECATED (tarihsel referans).** Bu analiz manager daemon'dan **önceki**
+> dönemde (aria2c, port 6999, `rgsx_service.py`) yazılmıştır. O zamandan beri uygulanan
+> gerçek mimari farklıdır: `rgsx_manager.py` daemon'ı (port 5000, pystray tray, SSE, gömülü
+> qBittorrent) ile tüm indirme delegasyonu çözüldü. Güncel mimari için
+> `docs/architecture/DOWNLOAD_MANAGER.md` ve `docs/flows/STARTUP.md`'ye bakın.
+> Bu dosya yalnızca karar geçmişini belgelemek için korunur.
+
 ## Mevcut Durum
 
 ```
