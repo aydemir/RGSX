@@ -354,6 +354,194 @@ TV UI (Pygame) ve indirme motoru aynı process'te çalışıyordu; TV UI kapatı
 
 ---
 
+## 🆕 pygame vkeyboard Modülü — TVUI Klavye Girişi Tekilleştirme (Planlanan)
+
+**Olay:** TVUI'da klavye girişi gereken tüm yerlerde (platform/oyun arama filtresi, qBittorrent şifre değiştirme, klasör oluşturma) tek bir **pygame vkeyboard modülü** kullanılacak. Mevcut kodda 4 farklı yerde klavyeler ve navigasyon mantığı kopyalanmış durumda.
+
+**Neden:**
+- **DRY ihlali:** `GLOBAL_SEARCH_KEYBOARD_LAYOUT` (controls.py:895), oyun arama klavyesi (controls.py:1538), qB şifre klavyesi (controls.py:3337 + display.py:4443), yeni klasör klavyesi (controls.py:3808 + display.py:5444) — toplam 6 kopyalama.
+- **Tutarsızlık:** Bazı klavyelerde `-`, `_`, `.` var, bazılarında yok; navigation mantığı (wrap-around up/down/left/right) her yerde biraz farklı.
+- **Bakım zorluğu:** Klavye düzeni değişirse (ör. QWERTY/AZERTY toggle, sembol sayfası) 6 yerde düzenleme gerekir.
+- **Test edilebilirlik:** İzole bir modül unit test edilebilir; pygame event loop'tan bağımsız input handling testleri yazılabilir.
+
+**Tasarım:**
+
+### 1. Yeni dosya: `ports/RGSX/vkeyboard.py`
+
+```python
+# vkeyboard.py — TVUI sanal klavye bileşeni
+from dataclasses import dataclass
+from typing import List, Tuple, Callable, Optional
+import pygame
+import config
+
+@dataclass
+class KeyboardLayout:
+    name: str
+    rows: List[List[str]]           # tuş matrisi
+    wrap_rows: bool = True          # up/down wrap
+    wrap_cols: bool = True          # left/right wrap
+
+# Önceden tanımlı düzenler
+LAYOUT_AZERTY_BASIC = KeyboardLayout("azerty_basic", [
+    ['0','1','2','3','4','5','6','7','8','9'],
+    ['A','Z','E','R','T','Y','U','I','O','P'],
+    ['Q','S','D','F','G','H','J','K','L','M'],
+    ['W','X','C','V','B','N'],
+])
+
+LAYOUT_AZERTY_EXTENDED = KeyboardLayout("azerty_extended", [
+    ['0','1','2','3','4','5','6','7','8','9'],
+    ['A','Z','E','R','T','Y','U','I','O','P'],
+    ['Q','S','D','F','G','H','J','K','L','M'],
+    ['W','X','C','V','B','N','-','_','.'],
+])
+
+# Gelecekte: LAYOUT_QWERTY_BASIC, LAYOUT_SYMBOLS, LAYOUT_NUMERIC
+
+class VirtualKeyboard:
+    """
+    Joystick/klavye ile gezinebilen sanal klavye.
+    - State: selected_row, selected_col, text_buffer
+    - Input: up/down/left/right/confirm/delete/space/cancel
+    - Callback: on_text_change(text), on_submit(text), on_cancel()
+    - Render: draw(screen, font, theme_colors, rect_area) -> pygame.Rect
+    """
+    def __init__(
+        self,
+        layout: KeyboardLayout,
+        initial_text: str = "",
+        on_text_change: Optional[Callable[[str], None]] = None,
+        on_submit: Optional[Callable[[str], None]] = None,
+        on_cancel: Optional[Callable[[], None]] = None,
+    ):
+        self.layout = layout
+        self.text = initial_text
+        self.row = 0
+        self.col = 0
+        self.on_text_change = on_text_change
+        self.on_submit = on_submit
+        self.on_cancel = on_cancel
+        self.active = True
+
+    # --- Input handling (pygame event'lerden bağımsız) ---
+    def handle_action(self, action: str) -> bool:
+        """Action: 'up'|'down'|'left'|'right'|'confirm'|'delete'|'space'|'cancel'"""
+        if not self.active:
+            return False
+        rows = self.layout.rows
+        if action == "up":
+            self.row = (self.row - 1) % len(rows) if self.layout.wrap_rows else max(0, self.row - 1)
+            self.col = min(self.col, len(rows[self.row]) - 1)
+            return True
+        if action == "down":
+            self.row = (self.row + 1) % len(rows) if self.layout.wrap_rows else min(len(rows) - 1, self.row + 1)
+            self.col = min(self.col, len(rows[self.row]) - 1)
+            return True
+        if action == "left":
+            if self.col == 0:
+                self.col = len(rows[self.row]) - 1 if self.layout.wrap_cols else 0
+            else:
+                self.col -= 1
+            return True
+        if action == "right":
+            if self.col == len(rows[self.row]) - 1:
+                self.col = 0 if self.layout.wrap_cols else len(rows[self.row]) - 1
+            else:
+                self.col += 1
+            return True
+        if action == "confirm":
+            self.text += rows[self.row][self.col]
+            if self.on_text_change:
+                self.on_text_change(self.text)
+            return True
+        if action == "space":
+            self.text += " "
+            if self.on_text_change:
+                self.on_text_change(self.text)
+            return True
+        if action == "delete":
+            if self.text:
+                self.text = self.text[:-1]
+                if self.on_text_change:
+                    self.on_text_change(self.text)
+            return True
+        if action == "cancel":
+            self.active = False
+            if self.on_cancel:
+                self.on_cancel()
+            return True
+        return False
+
+    # --- Rendering ---
+    def draw(self, screen, font, small_font, colors, area_rect: pygame.Rect) -> pygame.Rect:
+        """
+        Clavye alanı çizer, kullanılan rect'i döner (ipucu çizimi için).
+        colors: dict with keys 'key_idle', 'key_selected', 'key_border', 'text', 'text_selected'
+        """
+        rows = self.layout.rows
+        key_w = area_rect.width // max(len(r) for r in rows)
+        key_h = min(48, area_rect.height // len(rows))
+        gap = 4
+
+        total_w = max(len(r) for r in rows) * (key_w + gap) - gap
+        total_h = len(rows) * (key_h + gap) - gap
+        start_x = area_rect.centerx - total_w // 2
+        start_y = area_rect.centery - total_h // 2
+
+        for r_idx, row in enumerate(rows):
+            row_w = len(row) * (key_w + gap) - gap
+            row_x = area_rect.centerx - row_w // 2
+            for c_idx, key in enumerate(row):
+                kx = row_x + c_idx * (key_w + gap)
+                ky = start_y + r_idx * (key_h + gap)
+                rect = pygame.Rect(kx, ky, key_w, key_h)
+                selected = (r_idx == self.row and c_idx == self.col)
+                bg = colors['key_selected'] if selected else colors['key_idle']
+                pygame.draw.rect(screen, bg, rect, border_radius=4)
+                pygame.draw.rect(screen, colors['key_border'], rect, 2 if selected else 1, border_radius=4)
+                txt_color = colors['text_selected'] if selected else colors['text']
+                surf = small_font.render(key, True, txt_color)
+                screen.blit(surf, surf.get_rect(center=rect.center))
+
+        return pygame.Rect(start_x, start_y, total_w, total_h)
+```
+
+### 2. Entegrasyon Noktaları (Mevcut Kodu Değiştirmeden Wrapper)
+
+Her kullanım noktası `VirtualKeyboard` instance'ı oluşturur ve `handle_action` + `draw` çağırır.
+
+| Kullanım Alanı | Mevcut Dosya/State | Yeni Layout | Callback'ler |
+|---|---|---|---|
+| Global arama (platformlar arası) | `config.global_search_query`, `config.selected_key`, `config.global_search_editing` | `LAYOUT_AZERTY_BASIC` | `on_text_change` → `refresh_global_search_results()` |
+| Oyun listesi arama (tek platform) | `config.search_query`, `config.selected_key`, `config.search_mode` | `LAYOUT_AZERTY_BASIC` | `on_text_change` → `filter_games_by_search_query()` |
+| qBittorrent WebUI şifre | `config.qbt_password_text`, `config.qbt_password_selected_key` | `LAYOUT_AZERTY_EXTENDED` | `on_submit` → manager POST `/api/qbittorrent/change-password` |
+| Yeni klasır oluşturma | `config.new_folder_name`, `config.new_folder_selected_key` | `LAYOUT_AZERTY_EXTENDED` | `on_submit` → `os.makedirs()` + folder browser yenile |
+
+### 3. Migration Stratejisi (Geri Dönüşlü)
+
+1. `vkeyboard.py` oluştur (yukarıdaki tasarım).
+2. Her kullanım noktasında **yan yana** eski + yeni kod: `config.vk_global_search = VirtualKeyboard(...)` instance'ı tut.
+3. Event loop'ta `if config.vk_global_search and config.vk_global_search.active: config.vk_global_search.handle_action(...)` ile yönlendir.
+4. Draw fonksiyonlarında `config.vk_global_search.draw(...)` çağır.
+5. Eski `selected_key` / layout kopyalarını **sil** (tek commit'te).
+6. Test: joystick ile gezinme, karakter ekleme, silme, boşluk, iptal, kaydet — 4 senaryo hepsinde çalışmalı.
+
+### 4. Gelecek Genişletilebilirlik
+
+- **Layout registry:** `register_layout(name, KeyboardLayout)` → settings'ten `keyboard_layout: "azerty_basic" | "qwerty_basic" | "symbols"` seçimi.
+- **Shift/CapsLock:** `shift_active` state + `get_display_rows()` dynamic.
+- **Sembol sayfası:** `LAYOUT_SYMBOLS` + toggle key (örn. `?123` tuşu).
+- **Klavye kısayolları:** fiziki klavye varken de `pygame.KEYDOWN` → `vk.handle_action("confirm")` bridge.
+- **Gamepad ile Klavye Gizleme (Kısayol):** Gamepad'de **Filter/Select tuşuna uzun basma** (örn. 1.5 sn) → sanal klavye gizle/göster toggle. Bu, `VirtualKeyboard` instance'ının `visible` state'ini kontrol eder; gizliyken input handling atlanır, ekran alanı oyun listesine/arama sonuçlarına genişler. Mevcut `config.global_search_editing` / `config.search_mode` flag'leri bu visible state ile senkronize edilir. Kısayol tuşu `controls.json`'da `filter` action'una map edilmiştir; uzun basma tespiti `controls.py`'de `filter_long_press_threshold` ile yapılır.
+
+**Doğrulama Planı:**
+- Unit test: `VirtualKeyboard.handle_action` sequence → expected text/output.
+- Integration test: `pytest` + headless pygame (`SDL_VIDEODRIVER=dummy`) ile 4 senaryo run et.
+- Manuel: RetroBat kopya kurulumunda joystick ile 4 ekran testi.
+
+---
+
 ## Gelecek Planlar (Roadmap)
 
 ### v2.6.5.0 - Arka Plan İndirme Servisi

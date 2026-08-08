@@ -42,6 +42,7 @@ RetroBat TVUI tabanlı oyun indirme/kurma sistemi. Tek Python paketi (`ports\RGS
 - RetroBat kurulumu test hedefi: `C:\RetroBat - Kopya\roms\ports\RGSX` (manager PID/port doğrulama için `Get-NetTCPConnection -LocalPort 5000`).
 - Değişiklik öncesi ilgili dosyayı ve çağıranını okumadan düzenleme yapma; büyük dosyalarda (display/network/controls/utils) CodeGraph/grep ile sembol bazlı git.
 - Doğrulama: Kopya kurulumunda çalıştır, servis sağlığı + JSON ayarları teyit et, sonra commit+push.
+- **Belgeler:** Proje kökünde `/docs` klasöründe tutulur (`ports/RGSX/docs` değil). Yeni özellik/ifix dokümantasyonu `/docs` altına eklenir; `ports/RGSX/docs` kullanılmaz.
 
 ## Hafıza izolasyonu (opencode-mem)
 
