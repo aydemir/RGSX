@@ -2,7 +2,7 @@
 
 ## Genel Bakış
 
-WebUI (Flask tabanlı arayüz) oyun listelerinde gelişmiş filtreleme destekler. Filtreler oyun listesi sayfasının üstündeki **Filtre** panelinde bulunur.
+WebUI (rgsx_web.py `BaseHTTPRequestHandler` tabanlı arayüz) oyun listelerinde gelişmiş filtreleme destekler. Filtreler oyun listesi sayfasının üstündeki **Filtre** panelinde bulunur.
 
 ## Filtre Paneline Erişim
 

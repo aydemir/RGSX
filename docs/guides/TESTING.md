@@ -26,10 +26,10 @@ pytest --cov=. --cov-report=term-missing  # tüm proje + tests (AGENTS.md komutu
 ## Kapsam hedefi
 - Hedef: refaktör edilen modüllerde **%80+** (AGENTS.md 3. maddesi).
 - Şu anki rapor: `display/{__init__,colors,core,filter,fonts}`, `game_filters.py`,
-  `thread_safety.py` → **%95 toplam** (151 test).
+  `thread_safety.py` → **%97 toplam** (151 test, `thread_safety.py` %100).
 
 ## Kapsanan / kapsanmayan
-- **Kapsanan (gate):** `game_filters.py`, `thread_safety.py`, `display/__init__.py`,
+- **Kapsanan (gate):** `game_filters.py`, `thread_safety.py` (%100), `display/__init__.py`,
   `display/filter.py`, `display/core.py`, `display/fonts.py`, `display/colors.py`.
 - **Kısmi (yardımcı fonksiyon testleri var, modül düzeyinde kapsam düşük):**
   `display/{components,grid,game_list}` (saf yardımcılar: `fit_badge_lines`,
