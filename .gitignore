@@ -28,3 +28,4 @@ docker-compose.test.yml
 config/
 pyrightconfig.json
 ports/RGSX/languages/__pycache__/
+ports/RGSX/display/__pycache__/

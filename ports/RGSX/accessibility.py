@@ -29,9 +29,9 @@ def save_accessibility_settings(accessibility_settings):
 
 def draw_accessibility_menu(screen):
     """Affiche le menu d'accessibilité avec curseurs pour la taille de police générale et du footer."""
-    from display import OVERLAY, THEME_COLORS, draw_stylized_button
-    
-    screen.blit(OVERLAY, (0, 0))
+    from display import get_overlay, THEME_COLORS, draw_stylized_button
+
+    screen.blit(get_overlay(), (0, 0))
     
     # Titre
     title_text = _("menu_accessibility")

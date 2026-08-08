@@ -836,10 +836,7 @@ def main(argv=None):
     parser = build_parser()
     if not argv:
         # Start interactive mode
-        try:
-            interactive_loop(parser)
-        finally:
-            return
+        interactive_loop(parser)
     args = parser.parse_args(argv)
     setup_logging(args.verbose)
 

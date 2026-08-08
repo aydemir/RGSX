@@ -40,6 +40,7 @@ import rgsx_web
 from rgsx_web import RGSXHandler, get_cached_games, get_translation
 from utils import get_clean_display_name
 from settings_dialog import open_server_settings_dialog
+from language import _
 
 from network import (
     download_queue_worker,
@@ -658,17 +659,17 @@ def _setup_tray(icon_path: str, port: int, no_tray: bool = False):
         _trigger_shutdown()
 
     menu = pystray.Menu(
-        pystray.MenuItem("Open Web UI", _open_ui, default=True),
-        pystray.MenuItem("Ayarlar", _open_settings),
-        pystray.MenuItem("Sunucu Ayarları...", _open_server_settings),
-        pystray.MenuItem("İndirmeleri Durdur/Sürdür", _toggle_pause_all,
+        pystray.MenuItem(_("menu_open_web_ui", "Open Web UI"), _open_ui, default=True),
+        pystray.MenuItem(_("menu_settings", "Ayarlar"), _open_settings),
+        pystray.MenuItem(_("menu_server_settings", "Sunucu Ayarları..."), _open_server_settings),
+        pystray.MenuItem(_("menu_toggle_downloads", "İndirmeleri Durdur/Sürdür"), _toggle_pause_all,
                          checked=lambda item: is_any_download_paused()),
-        pystray.MenuItem("Downloads folder", _open_downloads),
-        pystray.MenuItem("Logs folder", _open_logs),
-        pystray.MenuItem("Auto-start on boot", _toggle_autostart,
+        pystray.MenuItem(_("menu_downloads_folder", "Downloads folder"), _open_downloads),
+        pystray.MenuItem(_("menu_logs_folder", "Logs folder"), _open_logs),
+        pystray.MenuItem(_("menu_autostart", "Auto-start on boot"), _toggle_autostart,
                          checked=lambda item: is_autostart_enabled()),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Exit", _quit),
+        pystray.MenuItem(_("menu_quit_app", "Exit"), _quit),
     )
 
     try:

@@ -40,13 +40,8 @@ import tempfile
 import unicodedata
 import socket
 
-
-
-logger = logging.getLogger(__name__)
-
-
-class InsufficientDiskSpaceError(RuntimeError):
-    """Raised when there is not enough free disk space for the expected download size."""
+# Thread safety module for shared state locking
+from thread_safety import network_lock, with_network_lock
 
 
 def _is_arm_device() -> bool:

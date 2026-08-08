@@ -182,7 +182,7 @@ def get_language_name(lang_code):
 
 def draw_language_selector(screen, selected_language_index):
     """Affiche le sélecteur de langue."""
-    from display import THEME_COLORS, OVERLAY
+    from display import THEME_COLORS, get_overlay
     
     # Obtenir les langues disponibles
     available_languages = get_available_languages()
@@ -192,7 +192,7 @@ def draw_language_selector(screen, selected_language_index):
         return
     
     # Afficher l'overlay
-    screen.blit(OVERLAY, (0, 0))
+    screen.blit(get_overlay(), (0, 0))
     
     # Titre
     title_text = _("language_select_title")
