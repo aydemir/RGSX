@@ -123,7 +123,7 @@ def draw_filter_advanced(screen):
     screen.blit(core.OVERLAY, (0, 0))
     
     # Initialiser le filtre si nécessaire
-    if not hasattr(config, 'game_filter_obj'):
+    if config.game_filter_obj is None:
         config.game_filter_obj = GameFilters()
         # Charger depuis settings
         from rgsx_settings import load_game_filters
@@ -418,7 +418,7 @@ def draw_filter_priority_config(screen):
     screen.blit(desc_surface, desc_rect)
     
     # Initialiser le filtre si nécessaire
-    if not hasattr(config, 'game_filter_obj'):
+    if config.game_filter_obj is None:
         from rgsx_settings import load_game_filters
         config.game_filter_obj = GameFilters()
         filter_dict = load_game_filters()

@@ -4067,7 +4067,7 @@ def handle_controls(event, sources, joystick, screen):
                     from game_filters import GameFilters
                     from rgsx_settings import load_game_filters
 
-                    if not hasattr(config, 'game_filter_obj'):
+                    if config.game_filter_obj is None:
                         config.game_filter_obj = GameFilters()
                         filter_dict = load_game_filters()
                         if filter_dict:
@@ -4137,7 +4137,7 @@ def handle_controls(event, sources, joystick, screen):
             from rgsx_settings import save_game_filters
             
             # Initialiser le filtre si nécessaire
-            if not hasattr(config, 'game_filter_obj'):
+            if config.game_filter_obj is None:
                 config.game_filter_obj = GameFilters()
                 from rgsx_settings import load_game_filters
                 filter_dict = load_game_filters()
@@ -4328,7 +4328,7 @@ def handle_controls(event, sources, joystick, screen):
             from game_filters import GameFilters
             from rgsx_settings import save_game_filters
             
-            if not hasattr(config, 'game_filter_obj'):
+            if config.game_filter_obj is None:
                 config.game_filter_obj = GameFilters()
             
             priority_list = config.game_filter_obj.region_priority
