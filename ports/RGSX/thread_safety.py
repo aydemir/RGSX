@@ -73,9 +73,6 @@ _cancel_events_lock = threading.RLock()
 # Lock for progress_queues dict
 _progress_queues_lock = threading.RLock()
 
-# Lock for cancel_events dict
-_cancel_events_lock = threading.RLock()
-
 # Lock for torrent_temp_roots dict
 _torrent_temp_roots_lock = threading.RLock()
 
@@ -84,18 +81,6 @@ _url_done_events_lock = threading.RLock()
 
 # Lock for url_results dict
 _url_results_lock = threading.RLock()
-
-# Lock for cancel_events dict
-_cancel_events_lock = threading.RLock()
-
-# Lock for url_done_events dict
-_url_done_events_lock = threading.RLock()
-
-# Lock for url_results dict
-_url_results_lock = threading.RLock()
-
-# Lock for torrent_temp_roots dict
-_torrent_temp_roots_lock = threading.RLock()
 
 
 # ============================================================
@@ -113,18 +98,6 @@ _download_queue_lock = threading.RLock()
 
 # Lock for config.history list
 _history_lock = threading.RLock()
-
-# Lock for config.download_queue list
-_download_queue_lock = threading.RLock()
-
-# Lock for config.download_queue list
-_download_queue_lock = threading.RLock()
-
-# Lock for config.download_queue list
-_download_queue_lock = threading.RLock()
-
-# Lock for config.download_queue list
-_download_queue_lock = threading.RLock()
 
 
 # ============================================================
@@ -199,16 +172,6 @@ def url_results_lock() -> Generator[None, None, None]:
         yield
     finally:
         _url_results_lock.release()
-
-
-@contextmanager
-def torrent_temp_roots_lock() -> Generator[None, None, None]:
-    """Lock for torrent_temp_roots dict."""
-    _torrent_temp_roots_lock.acquire()
-    try:
-        yield
-    finally:
-        _torrent_temp_roots_lock.release()
 
 
 # Config locks
@@ -331,7 +294,7 @@ __all__ = [
     # Individual locks
     'pause_events_lock', 'download_threads_lock', 'cancel_events_lock',
     'progress_queues_lock', 'torrent_temp_roots_lock',
-    'url_done_events_lock', 'url_results_lock', 'torrent_temp_roots_lock',
+    'url_done_events_lock', 'url_results_lock',
     # Config locks
     'download_tasks_lock', 'download_progress_lock', 'download_queue_lock', 'history_lock',
     # Convenience functions
