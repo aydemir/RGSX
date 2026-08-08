@@ -11,12 +11,14 @@ docs/
 │   └── FEATURES.md           # Özellikler ve değişiklik günlüğü (changelog)
 ├── architecture/
 │   ├── ES_INTEGRATION_ANALYSIS.md  # EmulationStation entegrasyon analizi
-│   └── DOWNLOAD_MANAGER.md         # RGSX Download Manager mimarisi
+│   ├── DOWNLOAD_MANAGER.md         # RGSX Download Manager mimarisi
+│   └── DISPLAY_PACKAGE.md          # display/ paketi mimarisi (display.py bölünmesi)
 ├── roadmap/
 │   └── ROADMAP.md            # Geliştirme yol haritası
 ├── guides/
 │   ├── TVUI_FILTERS.md       # TVUI filtre kullanım kılavuzu
-│   └── WEBUI_FILTERS.md      # WebUI filtre kullanım kılavuzu
+│   ├── WEBUI_FILTERS.md      # WebUI filtre kullanım kılavuzu
+│   └── TESTING.md            # pytest test altyapısı ve kapsam
 └── deprecated/
     └── FOCUS_FIX.md          # Kaldırılan odak düzeltme dökümanı (referans)
 ```
@@ -29,8 +31,10 @@ docs/
 | [ROADMAP.md](roadmap/ROADMAP.md) | Gelecek planlar ve fazlar |
 | [ES_INTEGRATION_ANALYSIS.md](architecture/ES_INTEGRATION_ANALYSIS.md) | ES entegrasyon analizi |
 | [DOWNLOAD_MANAGER.md](architecture/DOWNLOAD_MANAGER.md) | Download Manager mimarisi |
+| [DISPLAY_PACKAGE.md](architecture/DISPLAY_PACKAGE.md) | display/ paketi mimarisi |
 | [TVUI_FILTERS.md](guides/TVUI_FILTERS.md) | TVUI filtre kullanımı |
 | [WEBUI_FILTERS.md](guides/WEBUI_FILTERS.md) | WebUI filtre kullanımı |
+| [TESTING.md](guides/TESTING.md) | pytest test altyapısı & kapsam |
 
 ## 📋 Son Eklenen Özellikler (v2.6.5.6+)
 
@@ -42,7 +46,7 @@ docs/
 
 ## 🔗 Ana Kaynak Kod
 
-- **TVUI (Pygame)**: `../ports/RGSX/display.py`, `controls.py`, `__main__.py`
+- **TVUI (Pygame)**: `../ports/RGSX/display/` (paket), `controls.py`, `__main__.py`
 - **WebUI (Flask)**: `../ports/RGSX/rgsx_web.py`, `static/js/app.js`
 - **Download Manager**: `../ports/RGSX/rgsx_manager.py`
 - **Ayarlar**: `../ports/RGSX/rgsx_settings.py`

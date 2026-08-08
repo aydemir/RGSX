@@ -29,3 +29,10 @@ config/
 pyrightconfig.json
 ports/RGSX/languages/__pycache__/
 ports/RGSX/display/__pycache__/
+
+# Test artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+tests/__pycache__/

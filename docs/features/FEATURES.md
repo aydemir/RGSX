@@ -1,5 +1,38 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## display.py Pakete Bölündü + Test Altyapısı + Filtre Bug Fix (2026.08.08)
+
+**Olay:** 6818 satırlık tekil `display.py` dosyası kaldırıldı; yerine `display/` paketi
+oluşturuldu. Ayrıca projeye pytest test altyapısı kuruldu ve `game_filter_obj` ile ilgili
+önceden var olan bir çalışma zamanı bug'ı düzeltildi.
+
+**Yapılan değişiklikler:**
+- **`display/` paketi (22 dosya):** `core.py` (OVERLAY/logger/init_display/get_overlay),
+  `colors`, `background`, `fonts`, `icons`, `controls`, `components`, `screens`,
+  `transitions` (mevcut sorumluluklar) + `grid`, `game_list`, `global_search`, `history`,
+  `virtual_keyboard`, `progress`, `menus`, `folder_browser`, `support`, `text_viewer`,
+  `scraper`, `filter` (yeni). Orijinal 94 fonksiyonun tamamı taşındı; 5'i public API'ye
+  çevrildi (`get_badge_font`, `get_adaptive_badge_layout`, `fit_badge_lines`,
+  `format_disk_size_gb`, `render_combined_footer_controls`).
+- **`display/core.py`:** `OVERLAY` buraya taşındı; `get_overlay()` accessor'ı eklendi;
+  `accessibility.py` ve `language.py` artık `get_overlay()` kullanıyor.
+- **`thread_safety.py`:** yeni dosya (merkezi kilit yardımcıları); `.gitignore`'a
+  `display/__pycache__/` eklendi.
+- **Filtre bug fix (`config.py:519` bağlantılı):** `game_filter_obj` başlangıçta `None`
+  olduğu için `if not hasattr(config, 'game_filter_obj')` guard'ı etkisiz kalıyordu
+  (`hasattr` daima True) ve `draw_filter_advanced`/`draw_filter_priority_config`
+  `None.region_filters` ile patlıyordu. Koruyucular `if config.game_filter_obj is None:`
+  şeklinde düzeltildi (`display/filter.py`, `controls.py`, `rgsx_web.py`).
+- **Test altyapısı:** `tests/` + `conftest.py` (SDL dummy izolasyonu, config fixture),
+  `pytest.ini` + `.coveragerc`. `game_filters.py`, `thread_safety.py`, `display/`
+  çekirdeği için **%95 kapsam** (151 test).
+
+**Doğrulama:** 151 pytest geçti (%95 kapsam); `game_filter_obj=None` iken iki filtre
+ekranı regresyon testleriyle çakmıyor; `pytest --cov=. --cov-report=term-missing`
+komutu çalışıyor.
+
+---
+
 ## Port Çakışma Yönetimi (2026.08.07)
 
 **Olay:** RGSX Download Manager artık istenen port (varsayılan 5000) başka bir uygulama
