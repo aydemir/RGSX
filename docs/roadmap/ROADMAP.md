@@ -86,7 +86,7 @@ hayatta kaldı, settings 5001'e yazıldı; temizlik sonrası 5000'e döndü.
 
 ---
 
-## Faz 5 — History I/O İyileştirmesi
+## Faz 5 — History I/O İyileştirmesi ✅ TAMAMLANDI
 
 **Amaç:** `_set_bulk_history_status` senkron tüm-history disk yazımını azaltmak.
 
@@ -94,19 +94,23 @@ hayatta kaldı, settings 5001'e yazıldı; temizlik sonrası 5000'e döndü.
 
 **Kapsam:** Async yazma (thread/queue) veya sadece değişen kayıtları güncelleme + throttle.
 
+**Uygulama:** `history.py` async batched writer (throttle 500ms, batch writes, async thread, shutdown'da flush).
+
 ---
 
-## Faz 6 — Thread Güvenliği (download_threads / pause_events)
+## Faz 6 — Thread Güvenliği (download_threads / pause_events) ✅ TAMAMLANDI
 
 **Amaç:** Paylaşılan sözlükleri tek `threading.Lock` ile korumak.
 
 **Neden?** GIL crash'i önler ama yarış durumları (pause sırasında yeni thread başlaması) tutarsız durum yaratabilir.
 
+**Uygulama:** `thread_safety.py` modülü (RLock tabanlı context manager'lar + `with_network_lock` dekoratörü), `network.py` bunu kullanır. Yinelenen kilit tanımları temizlendi (commit 33c551c) — %100 kapsam.
+
 ---
 
-## Faz 7 — Hijyen
+## Faz 7 — Hijyen ✅ TAMAMLANDI
 
-- `rgsx_cli.py:842` eski `return`-in-`finally` SyntaxWarning'ını temizle.
+- `rgsx_cli.py:842` eski `return`-in-`finally` SyntaxWarning'ı temizle.
 - Systray menü string'lerini ("Ayarlar", "İndirmeleri Durdur/Sürdür") `language.py` çeviri sistemine bağla.
 
 ---
