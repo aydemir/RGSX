@@ -4,9 +4,12 @@ import logging
 import re
 import threading
 import time
+import queue
 import xml.etree.ElementTree as ET
 import config
 from datetime import datetime
+from dataclasses import dataclass
+from typing import Any, Optional, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,12 @@ _history_write_ok = True
 
 _HISTORY_WRITE_FAILURE_COOLDOWN_SEC = 1.5
 _HISTORY_WRITE_PROBE_CACHE_SEC = 8.0
+
+# Async writer queue for batched/throttled writes
+_history_write_queue: queue.Queue = queue.Queue()
+_history_writer_thread: Optional[threading.Thread] = None
+_history_writer_stop_event = threading.Event()
+_HISTORY_WRITE_BATCH_WINDOW_SEC = 0.5  # throttle window: batch writes within 500ms
 
 
 def _set_history_write_status(ok, error_message=""):
@@ -163,6 +172,140 @@ def _atomic_write_json(target_path, payload):
         except Exception:
             pass
 
+
+# ===== Async Batched Writer =====
+
+@dataclass
+class _WriteTask:
+    """Task for the async writer thread."""
+    target_path: str
+    payload: Any
+    callback: Optional[Callable[[bool], None]] = None
+    force: bool = False
+
+
+def _history_writer_loop():
+    """Background thread: batches writes within a throttle window."""
+    batch: list[_WriteTask] = []
+    last_flush_ts = 0.0
+
+    def flush_batch():
+        nonlocal batch, last_flush_ts
+        if not batch:
+            return
+        # Group by target_path to avoid multiple writes to same file
+        by_path: dict[str, list[_WriteTask]] = {}
+        for task in batch:
+            by_path.setdefault(task.target_path, []).append(task)
+
+        for path, tasks in by_path.items():
+            # Use the last task's payload (latest state)
+            latest_payload = tasks[-1].payload
+            force = any(t.force for t in tasks)
+            callbacks = [t.callback for t in tasks if t.callback]
+
+            try:
+                _atomic_write_json(path, latest_payload)
+                for cb in callbacks:
+                    cb(True)
+                _register_history_write_success()
+            except Exception as e:
+                for cb in callbacks:
+                    cb(False)
+                _register_history_write_failure(e)
+
+        batch.clear()
+        last_flush_ts = time.time()
+
+    while not _history_writer_stop_event.is_set():
+        try:
+            # Wait for a task with timeout = remaining throttle window
+            now = time.time()
+            remaining = _HISTORY_WRITE_BATCH_WINDOW_SEC - (now - last_flush_ts)
+            timeout = max(0.05, min(0.5, remaining)) if batch else 0.5
+
+            try:
+                task = _history_write_queue.get(timeout=timeout)
+                batch.append(task)
+            except queue.Empty:
+                pass
+
+            # Flush if batch window elapsed or stop event set
+            now = time.time()
+            if batch and (now - last_flush_ts >= _HISTORY_WRITE_BATCH_WINDOW_SEC):
+                flush_batch()
+            elif _history_writer_stop_event.is_set() and batch:
+                flush_batch()
+        except Exception as e:
+            logger.error(f"History writer loop error: {e}")
+            time.sleep(0.1)
+
+    # Final flush on shutdown
+    if batch:
+        flush_batch()
+
+
+def flush_history_writes(timeout: float = 5.0) -> bool:
+    """
+    Flush all pending history writes. Call on shutdown.
+    Waits up to `timeout` seconds for the writer thread to process the queue.
+    Returns True if all pending writes were flushed, False on timeout.
+    """
+    if _history_writer_thread is None or not _history_writer_thread.is_alive():
+        return True
+
+    # Signal the writer to flush and stop accepting new tasks
+    _history_writer_stop_event.set()
+
+    # Wait for the writer thread to finish
+    _history_writer_thread.join(timeout=timeout)
+    if _history_writer_thread.is_alive():
+        logger.warning(f"History writer thread did not finish within {timeout}s")
+        return False
+
+    logger.info("History writer thread stopped, all pending writes flushed")
+    return True
+
+
+def _ensure_history_writer_started():
+    """Start the background writer thread on first use."""
+    global _history_writer_thread
+    if _history_writer_thread is None or not _history_writer_thread.is_alive():
+        _history_writer_stop_event.clear()
+        _history_writer_thread = threading.Thread(
+            target=_history_writer_loop,
+            name="HistoryWriter",
+            daemon=True,
+        )
+        _history_writer_thread.start()
+
+
+def _async_write_json(target_path: str, payload: Any, force: bool = False) -> bool:
+    """
+    Enqueue a write task for async batched processing.
+    Returns True if enqueued (success), False if queue full (should not happen).
+    """
+    _ensure_history_writer_started()
+    try:
+        _history_write_queue.put_nowait(_WriteTask(target_path, payload, force=force))
+        return True
+    except queue.Full:
+        return False
+
+
+def _async_write_json_with_callback(target_path: str, payload: Any, force: bool = False,
+                                     callback: Optional[Callable[[bool], None]] = None) -> bool:
+    """Enqueue a write task with a completion callback."""
+    _ensure_history_writer_started()
+    try:
+        _history_write_queue.put_nowait(_WriteTask(target_path, payload, callback=callback, force=force))
+        return True
+    except queue.Full:
+        if callback:
+            callback(False)
+        return False
+
+
 # Chemin par défaut pour history.json
 
 def init_history():
@@ -230,7 +373,7 @@ def load_history():
         return []
 
 def save_history(history, force=False):
-    """Sauvegarde l'historique dans history.json de manière atomique (mode non-bloquant en cas d'erreur)."""
+    """Sauvegarde l'historique dans history.json de manière asynchrone (batched/throttled)."""
     history_path = getattr(config, 'HISTORY_PATH')
 
     now = time.time()
@@ -244,7 +387,8 @@ def save_history(history, force=False):
 
     try:
         os.makedirs(os.path.dirname(history_path), exist_ok=True)
-        _atomic_write_json(history_path, history)
+        # Enqueue for async batched write
+        _async_write_json(history_path, history, force=force)
         _register_history_write_success()
         return True
     except Exception as e:
@@ -467,12 +611,12 @@ def load_downloaded_games():
 
 
 def save_downloaded_games(downloaded_games_dict):
-    """Sauvegarde la liste des jeux téléchargés dans downloaded_games.json."""
+    """Sauvegarde la liste des jeux téléchargés dans downloaded_games.json (async batched)."""
     downloaded_path = getattr(config, 'DOWNLOADED_GAMES_PATH')
     try:
         normalized_downloaded = _normalize_downloaded_games_dict(downloaded_games_dict)
         os.makedirs(os.path.dirname(downloaded_path), exist_ok=True)
-        _atomic_write_json(downloaded_path, normalized_downloaded)
+        _async_write_json(downloaded_path, normalized_downloaded)
         logger.debug(f"Jeux téléchargés sauvegardés : {_count_downloaded_games(normalized_downloaded)} jeux")
     except Exception as e:
         logger.error(f"Erreur lors de l'écriture de {downloaded_path} : {e}")

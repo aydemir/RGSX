@@ -19,6 +19,9 @@ prune_i18n.py
 Info.txt
 pygame/
 
+# Private agent instructions (contains sensitive info)
+AGENTS.md
+
 # Docker test data
 data/
 docker-compose.test.yml
