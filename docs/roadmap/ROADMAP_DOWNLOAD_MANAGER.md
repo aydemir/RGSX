@@ -302,7 +302,7 @@ God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
 
 ---
 
-## Faz 7 — Test altyapısı: characterization tests (Rust önkoşulu)
+## Faz 7 — Test altyapısı: characterization tests (Rust önkoşulu) ✅ TAMAMLANDI
 
 **Amaç:** Mevcut `/api/*` ve SSE davranışını "altın standart" olarak sabitleyen test seti.
 
@@ -311,17 +311,41 @@ God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
 hangi davranışın kaza olduğu ayırt edilemez.
 
 **Uygulama:**
-- Endpoint envanteri: `rgsx_web.py` + `rgsx_manager.py`'deki tüm `/api/*` handler'ları çıkar.
+- Endpoint envanteri: `rgsx_web` paketi (~24 endpoint) + `rgsx_manager.py` (10 endpoint) çıkarıldı.
 - Response şekli, hata kodları, SSE event sırası (`snapshot/progress/history/queue/downloaded`)
-  için request-level testler (HTTP server'ı mock process ile ayağa kaldırarak veya handler'ı
-  doğrudan çağırarak).
-- `.coveragerc`'ten kritik dosyaların omit'i tek tek kaldırılarak kapsam gerçek sayılara taşınır
+  için request-level testler — handler'lar gerçek soket olmadan (`object.__new__` + mock
+  wfile/rfile/headers) doğrudan çağrılarak.
+- `.coveragerc`'ten kritik dosyaların omit'i tek tek kaldırıldı
   (öncelik: `qbittorrent_backend.py` → `rgsx_settings.py` → `rgsx_manager.py`).
+- Ölü (eski monolit) omit girişleri temizlendi: `network.py`/`rgsx_web.py`/`controls.py`/
+  `utils.py` artık paket olduğundan hiçbir şey eşleşmiyordu; `*/network/*` + `*/utils/*` ile
+  değiştirildi. `rgsx_web/` paketi ve üç öncelikli modül artık ÖLÇÜLÜYOR.
 
-**Dosyalar:** `tests/` (yeni `test_api_contract.py`, `test_qbittorrent_backend.py`), `.coveragerc`.
+**Dosyalar:** `tests/test_api_contract.py` (52 test), `tests/test_qbittorrent_backend.py`
+(11 test), `.coveragerc`.
 
-**Doğrulama:** 151 test mevcut haliyle geçer + yeni contract testleri kapsama girer; omit
-kaldırınca kapsam düşüşü belgelenir.
+**Kapsam düşüşü (belgelendi — omit kaldırmanın kasıtlı sonucu):** bu dosyalar önceden
+omit'liydi (ölçülen kapsam yok). Faz 7 sonrası ilk kez gerçek sayılarda:
+
+| Dosya | Kapsam |
+|---|---|
+| `rgsx_web/handlers.py` | 76% |
+| `rgsx_web/handlers_settings.py` | 62% |
+| `rgsx_web/handlers_games.py` | 58% |
+| `rgsx_web/__init__.py` + `cache.py` | 55% |
+| `rgsx_web/handlers_ui.py` | 48% |
+| `rgsx_web/handlers_download.py` | 36% |
+| `rgsx_web/i18n.py` | 30% |
+| `rgsx_web/server.py` | 10% |
+| `rgsx_manager.py` | 31% |
+| `rgsx_settings.py` | 23% |
+| `qbittorrent_backend.py` | 20% |
+| **TOTAL** | 18% (9538 stmt ölçülüyor) |
+
+**Doğrulama:** Baseline korundu — tam suite **246 passed / 23 failed** (183 öncesi + 63 yeni
+contract testi; 23 hata pre-existing display/pygame-stub kaynaklı, değişmedi). `rgsx_web/*`
+dosya bazlı ölçümlerin kapsamına `rgsx_settings.py`/`rgsx_manager.py`/`qbittorrent_backend.py`
+için hedef bir sonraki Faz 7 iterasyonunda daha fazla testle artırılacak.
 
 ---
 
@@ -428,6 +452,8 @@ Faz 8 (Download state modeli)   ← Faz 9'un önkoşulu
 Faz 9 (Toplu indirme)
    ↓
 Faz 10 (Rust refaktör)          ← ancak Faz 1-9 sonrası
+   ↓
+Faz 11 (İlk açılışta dil algılama)
 ```
 
 Gerekçeler:
@@ -436,3 +462,83 @@ Gerekçeler:
 - **5 (migration)**: P0 ile aynı güvenlik sınıfı; Faz 1'de kurulan şifre sabiti üzerine inşa edilir.
 - **7 (tests) → 8 (state) → 9 (bulk)**: state modeli bulk'un, characterization tests Rust'ın önkoşulu.
 - **10 (Rust)**: en son — ancak davranış sabitlendikten (Faz 7) ve yeni özellikler oturduktan sonra.
+- **11 (dil algılama)**: bağımsız; tasarımı Faz 6 sırasında tamamlandı, uygulaması istendiğinde.
+
+---
+
+## Faz 11 — İlk Açılışta Sistem Dili Otomatik Algılama (Planlandı)
+
+> Tasarım, `ROADMAP.md`'deki Faz 8 maddesinden taşındı (o dosya tamamlandı olarak işaretlendi).
+
+**Amaç:** İlk açılışta sistem dilini otomatik algılayıp o dile başlamak; kullanıcının
+dil değiştirme ayarını ASLA bozmamak; tercümesi olmayan dilin İngilizce'ye düşmesini
+garanti etmek.
+
+**Neden?**
+- Bugün algılama yalnızca Batocera'da çalışıyor (`detect_batocera_language`);
+  Windows/Linux masaüstünde ilk açılış her zaman `en` — sistem dili Türkçe/Fransızca
+  vb. olsa bile.
+- Mevcut akışta tercümesi olmayan bir dil kodu (ör. sistem `ru_RU` → `ru`, dosyası yok)
+  settings'e **kalıcı** yazılıyor; her açılışta warning + `en` fallback ama settings'te
+  `ru` kalmaya devam ediyor (gerçek kullanılan dili yansıtmıyor).
+
+**KÖK SORUN (tasarım):** Otomatik algılanan dil ile kullanıcının bilinçli seçimi
+settings'te AYNI alanda (`language`) temsil ediliyor. Desteklenmeyen dile auto-fallback
+kalıcı yazılıyor, "ilk açılış" dosya varlığına bakıyor, `config.current_language` yalnızca
+menü değişiminde set ediliyor.
+
+**İSTENEN DAVRANIŞ (tasarım kararı):**
+- Settings şeması iki ayrı alan: `language` (kullanıcının explicit seçimi, yoksa key yok)
+  + `language_mode` (`"auto"` | `"manual"`).
+- **Geriye dönük uyumluluk:** eski dosyada `language` var ve `language_mode` yok → "manual"
+  say. Var olan kullanıcı tercihi auto-detect ile asla ezilmez.
+- **Boot sırası (display init'ten ÖNCE, tvui.py:140 → init_display :180):**
+  1. `language` key'i VAR VE `language_mode=="manual"` → o dil kullanılır, algılama YAPILMAZ.
+  2. HAYIR (key yok VEYA `mode=="auto"`) → algıla:
+     - Batocera: `batocera-settings-get system.language` (env'e güvenilmez)
+     - Genel OS: `locale.getlocale()` → env `LANG`/`LC_ALL`/`LC_MESSAGES` → `getdefaultlocale()`
+       (deprecated, en son çare)
+     - Termux/RetroBat: host'tan miras env'i "gerçek sistem dili" SANMA; ayrı logla,
+       en düşük öncelik (ortam sınıflandırıcısı: `TERMUX_VERSION`/`PREFIX` gibi sinyaller).
+  3. Kodu normalize et: `tr_TR.UTF-8` → önce `tr_TR` sonra `tr` zinciri.
+  4. Çeviri VARSA → `language=<kod>, language_mode="auto"` yaz (hâlâ auto — kullanıcı seçmedi).
+     Çeviri YOKSA → `language` key'ini **SİL** (varsa), `language_mode="auto"` kalsın;
+     `config.current_language="en"` yalnızca bellekte (kalıcı değil). **Silme şarttır:**
+     WebUI `rgsx_settings.get_language()`'den direkt okur (rgsx_settings.py:588, i18n.py),
+     eski auto key kalırsa TVUI=tr WebUI=ru/en tutarsızlığı oluşur.
+- **Precedence:** explicit manual > OS/Batocera locale > shell-miras env > `en` (yalnızca in-memory).
+- **Menü değişimi:** `language=<seçim>, language_mode="manual"` yaz → bir daha hiç algılanmaz.
+- **`config.current_language`:** boot'un sonunda (adım 2 bitince) set edilir; menüdeki set
+  yalnızca runtime değişimi içindir.
+- **Tek seferlik uyarı:** auto→en-fallback geçişi kalıcı `language_fallback_notified` marker'ı
+  ile bir kez loglanır + gösterilir (marker yoksa her boot'ta tekrar eder). Bildirim
+  init_display'den önce üretilir → `config.language_fallback_notify` bayrağına yazılıp ana
+  döngüde display hazır olunca toast/banner olarak gösterilir.
+
+**Kör nokta düzeltmeleri (tasarımda tespit edilen):**
+- Fallback'te eski auto `language` key'i silinir (A — WebUI/TVUI tutarlılığı).
+- Tek seferlik log/toast için kalıcı marker (B).
+- Bildirim display-init sonrasına ertelenir (C).
+- **Migration karar noktası (D) — KARAR VERİLDİ:** eski kurulumlarda `language` her zaman
+  yazılmış olduğundan katı "hepsi manual" kuralı auto-detect'i hiçbir mevcut kullanıcıda
+  çalıştırmaz. Kural: eski `language=="en"` → `mode="auto"` olarak migrate et;
+  `language!="en"` → manual (kullanıcı tercihi korunur). Migrate edilen ilk boot'ta
+  auto-detect çalışır ve:
+  - algılanan dil de `"en"` ise → hiçbir şey yazma, bildirim GÖSTERME (sonuç aynı,
+    kullanıcıya gösterilecek "değişiklik" yok),
+  - algılanan dil `"en"`den FARKLIYSa ve çeviri destekleniyorsa → settings güncelle +
+    `language_fallback_notified` marker'ı ile tek seferlik bildirim göster.
+- Ortam sınıflandırıcı sinyalleri tanımlanır (E).
+- `language_mode=="manual"` ama key eksik (bozuk durum) → onarım log'lanır, auto-detect'e düşer.
+
+**Dosyalar:** `language.py` (`detect_system_language`, `initialize_language` yeniden yazım),
+`rgsx_settings.py` (`get_language` + `language_mode`), `rgsx_web/i18n.py` (settings'ten
+okumayı doğrula), `tvui.py` (bildirim bayrağı + ana döngü toast).
+
+**Doğrulama:** `tests/test_language.py` — yeni kurulum + desteklenen OS dili (tr) → auto tr;
+yeni kurulum + desteklenmeyen OS dili (ru) → in-memory en, key YOK, mode auto; manuel seçim →
+manual yazılır sonraki boot'larda korunur; eski settings regression: `language=="tr"` (mode yok)
+→ manual kalır, `language=="en"` (mode yok) → mode auto'ya migrate edilir ve algılanan dil de
+en ise hiçbir şey yazılmaz/bildirim gösterilmez, farklı dil ise settings güncellenir + tek
+seferlik bildirim; Batocera dışı + Termux/RetroBat env mirası için ayrı test; mevcut suite
+baseline ile aynı kalır (246 passed / 23 pre-existing).

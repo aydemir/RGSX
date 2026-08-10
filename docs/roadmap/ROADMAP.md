@@ -115,6 +115,86 @@ hayatta kaldı, settings 5001'e yazıldı; temizlik sonrası 5000'e döndü.
 
 ---
 
+## Faz 8 — İlk Açılışta Sistem Dili Otomatik Algılama (TAŞINDI)
+
+> Bu madde **ROADMAP_DOWNLOAD_MANAGER.md → Faz 11** olarak taşındı (o belge aktif
+> roadmap'tir; tasarım aynen orada korunuyor). Bu dosya tamamlanmış roadmap'tir.
+
+**Amaç:** İlk açılışta sistem dilini otomatik algılayıp o dile başlamak; kullanıcının
+dil değiştirme ayarını ASLA bozmamak; tercümesi olmayan dilin İngilizce'ye düşmesini
+garanti etmek.
+
+**Neden?**
+- Bugün algılama yalnızca Batocera'da çalışıyor (`detect_batocera_language`);
+  Windows/Linux masaüstünde ilk açılış her zaman `en` — sistem dili Türkçe/Fransızca
+  vb. olsa bile.
+- Mevcut akışta tercümesi olmayan bir dil kodu (ör. sistem `ru_RU` → `ru`, dosyası yok)
+  settings'e **kalıcı** yazılıyor; her açılışta warning + `en` fallback ama settings'te
+  `ru` kalmaya devam ediyor (gerçek kullanılan dili yansıtmıyor).
+
+**KÖK SORUN (tasarım):** Otomatik algılanan dil ile kullanıcının bilinçli seçimi
+settings'te AYNI alanda (`language`) temsil ediliyor. Desteklenmeyen dile auto-fallback
+kalıcı yazılıyor, "ilk açılış" dosya varlığına bakıyor, `config.current_language` yalnızca
+menü değişiminde set ediliyor.
+
+**İSTENEN DAVRANIŞ (tasarım kararı):**
+- Settings şeması iki ayrı alan: `language` (kullanıcının explicit seçimi, yoksa key yok)
+  + `language_mode` (`"auto"` | `"manual"`).
+- **Geriye dönük uyumluluk:** eski dosyada `language` var ve `language_mode` yok → "manual"
+  say. Var olan kullanıcı tercihi auto-detect ile asla ezilmez.
+- **Boot sırası (display init'ten ÖNCE, tvui.py:140 → init_display :180):**
+  1. `language` key'i VAR VE `language_mode=="manual"` → o dil kullanılır, algılama YAPILMAZ.
+  2. HAYIR (key yok VEYA `mode=="auto"`) → algıla:
+     - Batocera: `batocera-settings-get system.language` (env'e güvenilmez)
+     - Genel OS: `locale.getlocale()` → env `LANG`/`LC_ALL`/`LC_MESSAGES` → `getdefaultlocale()`
+       (deprecated, en son çare)
+     - Termux/RetroBat: host'tan miras env'i "gerçek sistem dili" SANMA; ayrı logla,
+       en düşük öncelik (ortam sınıflandırıcısı: `TERMUX_VERSION`/`PREFIX` gibi sinyaller).
+  3. Kodu normalize et: `tr_TR.UTF-8` → önce `tr_TR` sonra `tr` zinciri.
+  4. Çeviri VARSA → `language=<kod>, language_mode="auto"` yaz (hâlâ auto — kullanıcı seçmedi).
+     Çeviri YOKSA → `language` key'ini **SİL** (varsa), `language_mode="auto"` kalsın;
+     `config.current_language="en"` yalnızca bellekte (kalıcı değil). **Silme şarttır:**
+     WebUI `rgsx_settings.get_language()`'den direkt okur (rgsx_settings.py:588, i18n.py),
+     eski auto key kalırsa TVUI=tr WebUI=ru/en tutarsızlığı oluşur.
+- **Precedence:** explicit manual > OS/Batocera locale > shell-miras env > `en` (yalnızca in-memory).
+- **Menü değişimi:** `language=<seçim>, language_mode="manual"` yaz → bir daha hiç algılanmaz.
+- **`config.current_language`:** boot'un sonunda (adım 2 bitince) set edilir; menüdeki set
+  yalnızca runtime değişimi içindir.
+- **Tek seferlik uyarı:** auto→en-fallback geçişi kalıcı `language_fallback_notified` marker'ı
+  ile bir kez loglanır + gösterilir (marker yoksa her boot'ta tekrar eder). Bildirim
+  init_display'den önce üretilir → `config.language_fallback_notify` bayrağına yazılıp ana
+  döngüde display hazır olunca toast/banner olarak gösterilir.
+
+**Kör nokta düzeltmeleri (tasarımda tespit edilen):**
+- Fallback'te eski auto `language` key'i silinir (A — WebUI/TVUI tutarlılığı).
+- Tek seferlik log/toast için kalıcı marker (B).
+- Bildirim display-init sonrasına ertelenir (C).
+- **Migration karar noktası (D) — KARAR VERİLDİ:** eski kurulumlarda `language` her zaman
+  yazılmış olduğundan katı "hepsi manual" kuralı auto-detect'i hiçbir mevcut kullanıcıda
+  çalıştırmaz. Kural: eski `language=="en"` → `mode="auto"` olarak migrate et;
+  `language!="en"` → manual (kullanıcı tercihi korunur). Migrate edilen ilk boot'ta
+  auto-detect çalışır ve:
+  - algılanan dil de `"en"` ise → hiçbir şey yazma, bildirim GÖSTERME (sonuç aynı,
+    kullanıcıya gösterilecek "değişiklik" yok),
+  - algılanan dil `"en"`den FARKLIYSa ve çeviri destekleniyorsa → settings güncelle +
+    `language_fallback_notified` marker'ı ile tek seferlik bildirim göster.
+- Ortam sınıflandırıcı sinyalleri tanımlanır (E).
+- `language_mode=="manual"` ama key eksik (bozuk durum) → onarım log'lanır, auto-detect'e düşer.
+
+**Dosyalar:** `language.py` (`detect_system_language`, `initialize_language` yeniden yazım),
+`rgsx_settings.py` (`get_language` + `language_mode`), `rgsx_web/i18n.py` (settings'ten
+okumayı doğrula), `tvui.py` (bildirim bayrağı + ana döngü toast).
+
+**Doğrulama:** `tests/test_language.py` — yeni kurulum + desteklenen OS dili (tr) → auto tr;
+yeni kurulum + desteklenmeyen OS dili (ru) → in-memory en, key YOK, mode auto; manuel seçim →
+manual yazılır sonraki boot'larda korunur; eski settings regression: `language=="tr"` (mode yok)
+→ manual kalır, `language=="en"` (mode yok) → mode auto'ya migrate edilir ve algılanan dil de
+en ise hiçbir şey yazılmaz/bildirim gösterilmez, farklı dil ise settings güncellenir + tek
+seferlik bildirim; Batocera dışı + Termux/RetroBat env mirası için ayrı test; mevcut suite
+baseline ile aynı kalır (183 passed / 23 pre-existing).
+
+---
+
 ## Önerilen Sıra
 
-Faz 1 → Faz 2 → Faz 3 → Faz 4 → Faz 5 → Faz 6 → Faz 7
+Faz 1 → Faz 2 → Faz 3 → Faz 4 → Faz 5 → Faz 6 → Faz 7 → **Faz 8 (taşındı → ROADMAP_DOWNLOAD_MANAGER.md Faz 11)**

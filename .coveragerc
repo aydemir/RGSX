@@ -1,12 +1,7 @@
 [run]
 omit =
-    */network.py
-    */rgsx_web.py
-    */rgsx_manager.py
     */rgsx_cli.py
-    */controls.py
     */controls_mapper.py
-    */qbittorrent_backend.py
     */scraper.py
     */settings_dialog.py
     */update_gamelist.py
@@ -16,9 +11,9 @@ omit =
     */accessibility.py
     */config.py
     */language.py
-    */rgsx_settings.py
-    */utils.py
     */__main__.py
+    */network/*
+    */utils/*
     */display/background.py
     */display/components.py
     */display/controls.py
