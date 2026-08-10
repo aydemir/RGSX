@@ -262,11 +262,26 @@ God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
   `logger` 419 kez kullanılıp hiç tanımlanmamıştı → `logging.getLogger("network")` tanımlandı
   (utils deseni); aynı şekilde `InsufficientDiskSpaceError` raise/except'te kullanılıyor ama
   hiç tanımlanmamıştı → `helpers.py`'de sınıf eklendi + re-export.
-- **Faz 6-3 — `rgsx_web.py` → `rgsx_web/` paketi.** `RGSXHandler` 1759 satırını endpoint
-  grubuna göre ayır: `cache.py` (etag/cached_games/invalidation/watchdog), `i18n.py`
-  (translations + normalize_size), `handlers_download.py`, `handlers_qbittorrent.py`,
-  `handlers_games.py`, `handlers_settings.py`, `server.py` (run_server + FlushFileHandler).
-  `import rgsx_web` + `RGSXHandler/get_cached_games/get_translation` sözleşmesi `__init__.py`'de.
+- **Faz 6-3 — `rgsx_web.py` → `rgsx_web/` paketi.** ✅ TAMAMLANDI (2408 satır; 15/15 metot AST
+  diff birebir, do_GET 13 + do_POST 10 branch tek tek inline elif gövdeleriyle eşit). Yapı:
+  `__init__.py` (logging bootstrap — `FlushFileHandler` + rotation + crash log + console —,
+  ilk veri yükleme, cache/i18n/handler/server re-export, shim), `cache.py` (etag/
+  cached_games/invalidation/watchdog — aynı obje kimliği), `i18n.py` (translations +
+  normalize_size), `handlers.py` (`RGSXHandler(UIMixin, GamesMixin, DownloadMixin,
+  SettingsMixin, BaseHTTPRequestHandler)` + dispatcher + ortak yanıtlar), `handlers_ui.py`,
+  `handlers_games.py`, `handlers_download.py`, `handlers_settings.py`, `server.py`
+  (run_server + CURRENT_HTTPD). Sözleşme `import rgsx_web` +
+  `RGSXHandler/get_cached_games/get_translation/run_server/CURRENT_HTTPD` korundu.
+  **Düzeltmeler:** `handlers_qbittorrent.py` **gereksiz** — orijinal `rgsx_web.py`'de
+  qBittorrent handler'ı hiç yoktu (`grep -c qbt` = 0); endpoint'ler Faz 3/5'te zaten
+  `rgsx_manager.py` `ManagerHandler`'ına gitti. `FlushFileHandler` `server.py`'ye taşınamadı
+  (logging bootstrap'ı `logger`'dan önce çalışır, `server.py` `from . import logger` ister →
+  döngüsel import); `__init__.py`'de kaldı. `_serve_static_file`/`_asset_version`'da
+  `Path(__file__).parent` → `config.APP_FOLDER` (paket içinde __file__ rgsx_web/ dizini olur,
+  eski çözünürlük bozulurdu; APP_FOLDER eşdeğeri).
+  **Doğrulama:** pytest `tests/ -q` → 183 passed / 23 pre-existing display (HEAD baseline
+  birebir); live smoke tüm endpoint'ler doğru JSON; `rgsx_manager` import + ManagerHandler MRO
+  + `super().do_GET()` geçişi OK.
 - **Faz 6-4 — `controls.py` → `controls/` paketi.** `handle_controls`'ı menü-durumu dispatch'ine
   böl: `input.py` (is_input_matched + key state + joystick), `menus.py` (folder browser + filter
   menus + `VALID_STATES`/`validate_menu_state`), `downloads.py` (start_or_queue_download +

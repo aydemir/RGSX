@@ -1,5 +1,45 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Faz 6-3: rgsx_web.py → rgsx_web/ paketi (2026.08.10)
+
+**Olay:** `rgsx_web.py` (2408 satır) display.py deseniyle (8f094aa) pakete bölündü.
+Davranış değişmedi; WebUI handler'ları artık endpoint grubuna göre modüler.
+
+**Yapılan değişiklikler:**
+- **`rgsx_web/` paketi** (git mv ile `rgsx_web.py` → `rgsx_web/__init__.py`): `cache.py`
+  (etag/`get_cached_sources`/`get_cached_games`/invalidation/watchdog — aynı obje kimliği),
+  `i18n.py` (translations + `normalize_size`), `handlers.py` (`RGSXHandler(UIMixin, GamesMixin,
+  DownloadMixin, SettingsMixin, BaseHTTPRequestHandler)` + GET/POST dispatcher + `_send_json`/
+  `_set_headers`/cache-header mantığı), `handlers_ui.py` (index HTML/statik/plataforma görselleri/
+  favicon/dizin tarayıcı), `handlers_games.py` (platformlar/arama/çeviriler/oyun listesi),
+  `handlers_download.py` (indirme/iptal/kuyruk/progress/status/history), `handlers_settings.py`
+  (settings/system info/update-cache/restart/support ZIP), `server.py` (`run_server` +
+  `CURRENT_HTTPD`).
+- **Bağımlılık kuralı:** tüm alt modüller `from . import logger` (package logger) →
+  handler/server import'u logging bootstrap'ından sonra; `cache.py`/`i18n.py` package'a
+  import etmez.
+- **Roadmap düzeltmeleri:** `handlers_qbittorrent.py` **eklenmedi** — orijinal `rgsx_web.py`'de
+  qBittorrent handler'ı hiç yoktu (`grep -c qbt` = 0); endpoint'ler Faz 3/5'te zaten
+  `rgsx_manager.py` `ManagerHandler`'ına gitti. `FlushFileHandler` `server.py`'ye taşınamadı
+  (logging bootstrap'ı `logger`'dan önce çalışır, `from . import logger` döngüsel import
+  yaratırdı) — `__init__.py`'de kaldı.
+- **Davranış-koruyucu fix:** `_serve_static_file`/`_asset_version`'da `Path(__file__).parent`
+  → `config.APP_FOLDER` (paket içinde `__file__` `rgsx_web/` dizinini gösterir, eski
+  çözünürlük `static/`'ı bulamazdı; `config.APP_FOLDER` eşdeğer dizin).
+- Dış import yüzeyi birebir korundu (rgsx_manager: `RGSXHandler/get_cached_games/get_translation/
+  run_server/CURRENT_HTTPD`; qbittorrent_backend lazy `get_translation`).
+- **`docs/roadmap/ROADMAP_DOWNLOAD_MANAGER.md`**: Faz 6-3 → "✅ TAMAMLANDI".
+
+**Doğrulama:** `RGSX_HEADLESS=1 PYTHONPATH=/tmp/pygame_stub python -m pytest tests/ -q`
+→ **183 passed / 23 failed** — HEAD baseline'ıyla birebir (23 hata test_display_* +
+pygame-stub kaynaklı, pre-existing). py_compile temiz. 15/15 monolitik metot AST diff birebir
+(do_GET 13 + do_POST 10 branch tek tek inline elif gövdeleriyle eşit; yorum satırları hariç);
+undefined-name statik kontrolü temiz (except-var + nested def false positive'leri); MRO 98
+metot eksiksiz. Live smoke (127.0.0.1): platforms/translations/index/404/clear-history/queue/
+history/game-status/settings/system_info/games/static/favicon/browse-directories/search doğru.
+
+---
+
 ## Faz 6-2: network.py → network/ paketi (2026.08.10)
 
 **Olay:** `network.py` (5667 satır, 94 fonksiyon) display.py deseniyle (8f094aa) pakete
