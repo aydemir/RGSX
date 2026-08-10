@@ -579,5 +579,17 @@
     "web_qbt_password_error": "Échec de la mise à jour du mot de passe.",
     "web_qbt_password_conn_error": "Échec de la mise à jour du mot de passe (erreur de connexion).",
     "web_qbt_password_saved": "Mot de passe WebUI qBittorrent mis à jour.",
-    "web_qbt_password_unable_start": "Impossible de démarrer la WebUI qBittorrent"
+    "web_qbt_password_unable_start": "Impossible de démarrer la WebUI qBittorrent",
+    "web_qbt_loading": "Chargement...",
+    "web_qbt_unavailable": "qBittorrent est actuellement indisponible.",
+    "web_qbt_mode_default": "Mot de passe par défaut (non sécurisé)",
+    "web_qbt_mode_random": "Mot de passe aléatoire (généré automatiquement)",
+    "web_qbt_mode_custom": "Mot de passe personnalisé (défini par l'utilisateur)",
+    "web_qbt_status": "Statut",
+    "web_qbt_url": "URL de la WebUI",
+    "web_qbt_open": "Ouvrir la WebUI",
+    "web_qbt_regenerate": "Régénérer le mot de passe aléatoire",
+    "web_qbt_set_custom": "Définir un mot de passe personnalisé",
+    "web_qbt_regenerate_confirm": "Générer un nouveau mot de passe aléatoire ? Les sessions WebUI actuelles seront invalidées.",
+    "web_qbt_new_password_hint": "Nouveau mot de passe (à conserver) :"
 }

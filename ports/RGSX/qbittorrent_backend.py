@@ -171,12 +171,12 @@ def _preseed_windows_profile(webui_port: int = _TARGET_PORT) -> None:
     _ensure_ini_settings(ini_path, {
         "LegalNotice": {"Accepted": "true"},
         "Preferences": {
+            "General\\Locale": "en_US",
             "WebUI\\Enabled": "true",
             "WebUI\\Port": str(webui_port),
-            "WebUI\\Address": "127.0.0.1",
+            "WebUI\\Address": "0.0.0.0",
             "WebUI\\LocalHostAuth": "false",
-            "WebUI\\AuthSubnetWhitelistEnabled": "true",
-            "WebUI\\AuthSubnetWhitelist": "127.0.0.1/32",
+            "WebUI\\AuthSubnetWhitelistEnabled": "false",
             "General\\SystemTrayEnabled": "true",
             "General\\StartMinimized": "true",
             "General\\MinimizeToTray": "true",
@@ -187,6 +187,58 @@ def _preseed_windows_profile(webui_port: int = _TARGET_PORT) -> None:
             "Win32\\NeverCheckFileAssociation": "true",
         },
     })
+
+    # Migration de sécurité: une version précédente a pu écrire un profil Windows
+    # "localhost-only". Si ce pattern est détecté, on le relaxe pour rétablir
+    # l'accès WebUI depuis le LAN sans écraser des personnalisations utilisateur.
+    try:
+        with open(ini_path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+        if "WebUI\\Address=127.0.0.1" in content and "WebUI\\AuthSubnetWhitelist=127.0.0.1/32" in content:
+            updated = content.replace("WebUI\\Address=127.0.0.1", "WebUI\\Address=0.0.0.0")
+            updated = updated.replace("WebUI\\AuthSubnetWhitelistEnabled=true", "WebUI\\AuthSubnetWhitelistEnabled=false")
+            if updated != content:
+                with open(ini_path, "w", encoding="utf-8") as handle:
+                    handle.write(updated)
+                logger.info("qbittorrent_backend: migration profil Windows WebUI localhost-only -> LAN activée")
+    except Exception as exc:
+        logger.debug("qbittorrent_backend: migration profil Windows WebUI ignorée: %s", exc)
+
+
+def _preseed_linux_profile(webui_port: int) -> None:
+    """Prépare un profil qBittorrent-nox stable et indépendant de la langue système.
+
+    On force la locale en anglais pour normaliser les logs. On évite de forcer
+    des clés réseau restrictives (bind localhost / whitelist locale) afin de ne
+    pas casser un accès WebUI LAN voulu par l'utilisateur.
+    """
+    config_dir = os.path.join(_profile_dir, "qBittorrent", "config")
+    ini_path = os.path.join(config_dir, "qBittorrent.conf")
+    _ensure_ini_settings(ini_path, {
+        "LegalNotice": {"Accepted": "true"},
+        "Preferences": {
+            "General\\Locale": "en_US",
+            "WebUI\\Enabled": "true",
+            "WebUI\\Port": str(webui_port),
+            "WebUI\\LocalHostAuth": "false",
+        },
+    })
+
+    # Migration de sécurité: une version précédente a pu écrire un profil Linux
+    # "localhost-only". Si ce pattern est détecté, on le relaxe pour rétablir
+    # l'accès WebUI depuis le LAN sans toucher aux configurations personnalisées.
+    try:
+        with open(ini_path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+        if "WebUI\\Address=127.0.0.1" in content and "WebUI\\AuthSubnetWhitelist=127.0.0.1/32" in content:
+            updated = content.replace("WebUI\\Address=127.0.0.1", "WebUI\\Address=0.0.0.0")
+            updated = updated.replace("WebUI\\AuthSubnetWhitelistEnabled=true", "WebUI\\AuthSubnetWhitelistEnabled=false")
+            if updated != content:
+                with open(ini_path, "w", encoding="utf-8") as handle:
+                    handle.write(updated)
+                logger.info("qbittorrent_backend: migration profil Linux WebUI localhost-only -> LAN activée")
+    except Exception as exc:
+        logger.debug("qbittorrent_backend: migration profil Linux WebUI ignorée: %s", exc)
 
 
 def _find_qbittorrent_executable() -> str | None:
@@ -317,8 +369,43 @@ def _suppress_qbittorrent_window_windows(launcher_pid: int | None, duration_seco
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
             SW_HIDE = 0
             WM_CLOSE = 0x0010
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+            def _query_process_image_name(pid: int) -> str:
+                handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+                if not handle:
+                    return ""
+                try:
+                    size = wintypes.DWORD(32768)
+                    buffer = ctypes.create_unicode_buffer(size.value)
+                    if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                        return (buffer.value or "").strip().lower()
+                except Exception:
+                    return ""
+                finally:
+                    try:
+                        kernel32.CloseHandle(handle)
+                    except Exception:
+                        pass
+                return ""
+
+            # Cache PID -> appartient (ou non) a qBittorrent pendant cette courte fenêtre.
+            process_match_cache: dict[int, bool] = {}
+
+            def _is_qbittorrent_pid(pid: int) -> bool:
+                if pid in process_match_cache:
+                    return process_match_cache[pid]
+                image_path = _query_process_image_name(pid)
+                image_name = os.path.basename(image_path)
+                match = (
+                    image_name in ("qbittorrent.exe", "qbittorrent-nox.exe")
+                    or "qbittorrent" in image_name
+                )
+                process_match_cache[pid] = match
+                return match
 
             enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -340,20 +427,21 @@ def _suppress_qbittorrent_window_windows(launcher_pid: int | None, duration_seco
 
                     window_pid = wintypes.DWORD()
                     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+                    pid = int(window_pid.value)
+                    pid_matches = launcher_pid is not None and pid == int(launcher_pid)
+                    process_matches = _is_qbittorrent_pid(pid)
 
                     # Ferme immédiatement la popup d'association torrent/magnet qui
                     # bloque le bootstrap WebUI au premier lancement.
                     title_lower = title.lower()
-                    if "torrent file association" in title_lower:
+                    if (pid_matches or process_matches) and "torrent file association" in title_lower:
                         try:
                             user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
                         except Exception:
                             pass
                         return True
 
-                    title_matches = "qbittorrent" in title.lower()
-                    pid_matches = launcher_pid is not None and int(window_pid.value) == int(launcher_pid)
-                    if title_matches or pid_matches:
+                    if pid_matches or process_matches:
                         handles_to_hide.append(int(hwnd))
                     return True
 
@@ -682,6 +770,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
             _preseed_windows_profile(webui_port)
             cmd = [exe_path]
         else:
+            _preseed_linux_profile(webui_port)
             cmd = [exe_path, f"--profile={_profile_dir}", f"--webui-port={webui_port}", "--confirm-legal-notice"]
         bootstrap_url = f"http://127.0.0.1:{webui_port}"
         logger.info("qbittorrent_backend: démarrage de %s sur le port WebUI %s", exe_path, webui_port)
@@ -1115,21 +1204,83 @@ def get_webui_url() -> str:
 
 
 def get_password_status() -> dict:
-    """Varsayılan şifre hâlâ kullanılıyor mu? (WebUI/TVUI uyarı banner'ı için).
+    """Şifre durumu: default/random/custom + koruma bayrağı (WebUI Settings bölümü için).
 
     qBittorrent API mevcut şifreyi geri okumaz; RGSX kendi settings'inde şifreyi
-    tutar. Anahtar settings'te yoksa 'kullanıcı değiştirmedi' → varsayılan kullanımda.
+    tutar. `mode` settings'teki `qbittorrent_password_mode` kaydına dayanır.
     """
     default_password = str(getattr(config, "TORRENT_QBITTORRENT_WEBUI_PASSWORD", "") or "RGSXqbt")
     try:
         current = _get_configured_password()
     except Exception:
         current = default_password
+    from rgsx_settings import get_qbittorrent_password_mode
+    mode = get_qbittorrent_password_mode()
+    secured = bool(current) and current != default_password
     return {
         "available": is_available(),
         "using_default": bool(current) and current == default_password,
+        "secured": secured,
+        "mode": mode,
         "webui_url": get_webui_url(),
     }
+
+
+def ensure_qbittorrent_password_secured() -> str:
+    """Açılışta çağrılır: settings'te güvenli şifre yoksa rastgele üretip kaydeder.
+
+    qBittorrent lazy spawn olduğundan migration ancak spawn'da çalışırdı; bu
+    fonksiyon manager açılışında 'varsayılan şifre kullanımda' durumunu imkânsız
+    kılar. Üretilen şifre bir sonraki `_ensure_qbittorrent_running` bootstrap'inde
+    setPreferences ile WebUI'a uygulanır. Dönen şifre güncel şifredir.
+    """
+    try:
+        from rgsx_settings import (
+            load_rgsx_settings,
+            set_qbittorrent_password_migration_done,
+            set_qbittorrent_password_mode,
+            set_qbittorrent_webui_password,
+        )
+        settings = load_rgsx_settings()
+    except Exception as exc:
+        logger.debug("qbittorrent_backend: şifre güvence kararı okunamadı: %s", exc)
+        return _get_configured_password()
+
+    stored = settings.get("qbittorrent_webui_password")
+    if isinstance(stored, str) and stored and stored not in KNOWN_DEFAULT_PASSWORDS:
+        return stored
+
+    new_password = _extract_temp_password([]) or generate_random_password()
+    set_qbittorrent_webui_password(new_password)
+    set_qbittorrent_password_mode("random")
+    set_qbittorrent_password_migration_done(True)
+    logger.info("qbittorrent_backend: açılışta rastgele şifre güvence altına alındı")
+    return new_password
+
+
+def regenerate_qbittorrent_password() -> tuple[bool, str]:
+    """Yeni rastgele şifre üretir ve uygular.
+
+    - qBittorrent canlıysa setPreferences ile anında uygulanır (mevcut oturumlar
+      geçersiz olur), değilse settings'e yazılır ve bir sonraki bootstrap uygular.
+    - Dönen şifre kullanıcıya bir kez gösterilir (qBittorrent WebUI login'i için).
+    """
+    new_password = generate_random_password()
+    session = requests.Session()
+    try:
+        if _wait_for_webui(session, _base_url, timeout=3) and _login(session, _base_url, []):
+            _apply_webui_password(session, new_password)
+            logger.info("qbittorrent_backend: rastgele şifre canlı WebUI'a uygulandı")
+            return True, new_password
+    except Exception as exc:
+        logger.debug("qbittorrent_backend: regenerate canlı uygulama başarısız: %s", exc)
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+    _apply_webui_password(None, new_password)
+    return True, new_password
 
 
 def _apply_webui_password(session, new_password: str) -> None:
@@ -1219,6 +1370,8 @@ def maybe_migrate_qbittorrent_password(session, stdout_lines: "list[str]") -> st
     logger.info("qbittorrent_backend: migration v1 — %s", reason)
     _apply_webui_password(session, new_password)
     set_qbittorrent_password_migration_done(True)
+    from rgsx_settings import set_qbittorrent_password_mode
+    set_qbittorrent_password_mode("random")
     _notify_password_migrated()
     return "migrated"
 
@@ -1252,6 +1405,8 @@ def change_webui_password(new_password: str) -> tuple[bool, str]:
         from rgsx_settings import set_qbittorrent_webui_password
         set_qbittorrent_webui_password(new_password)
 
+    from rgsx_settings import set_qbittorrent_password_mode
+    set_qbittorrent_password_mode("custom")
     return True, "ok"
 
 

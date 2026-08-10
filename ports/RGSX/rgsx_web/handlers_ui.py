@@ -301,12 +301,6 @@ class UIMixin:
         </nav>
 
         <main class="content" id="main-content" role="main">
-            <div id="qb-password-banner" style="display:none; margin-bottom: 15px; padding: 12px 16px; border-radius: 8px; background: #fff3cd; border: 2px solid #e0a800; color: #664d03; font-size: 0.95em;" role="alert">
-                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    <span data-translate="web_qbt_password_banner" style="flex: 1; min-width: 200px;">⚠️ qBittorrent WebUI default password is in use. Update it for security.</span>
-                    <button data-translate="web_qbt_password_update" onclick="openQbittorrentPasswordModal()" style="background: #e0a800; color: #fff; border: none; padding: 8px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">Update Password</button>
-                </div>
-            </div>
             <div id="platforms-content" role="region" aria-label="Platforms section"></div>
             <div id="downloads-content" style="display:none;" role="region" aria-label="Downloads section"></div>
             <div id="queue-content" style="display:none;" role="region" aria-label="Queue section"></div>

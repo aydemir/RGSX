@@ -355,18 +355,56 @@
                 });
         }
 
-        // Varsayılan şifre hâlâ kullanılıyorsa uyarı banner'ını göster
-        function checkQbittorrentPasswordStatus() {
-            fetch('/api/qbittorrent/password-status')
+        // qBittorrent WebUI şifre yönetimi — Settings sekmesindeki bölümü yükler
+        async function loadQbittorrentSection() {
+            const statusEl = document.getElementById('qb-settings-status');
+            if (!statusEl) return;
+            statusEl.innerHTML = `<span style="color:#666;">⏳ ${t('web_qbt_loading')}</span>`;
+            try {
+                const resp = await fetch('/api/qbittorrent/password-status');
+                const data = await resp.json();
+                if (!data || !data.success) {
+                    statusEl.innerHTML = `<span style="color:#666;">${t('web_qbt_unavailable')}</span>`;
+                    return;
+                }
+                const modeLabels = {
+                    'default': t('web_qbt_mode_default'),
+                    'random': t('web_qbt_mode_random'),
+                    'custom': t('web_qbt_mode_custom')
+                };
+                const modeLabel = modeLabels[data.mode] || t('web_qbt_mode_custom');
+                const securedIcon = data.secured ? '🟢' : '🟡';
+                statusEl.innerHTML = `
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div><strong>${securedIcon} ${t('web_qbt_status')}:</strong> ${modeLabel}</div>
+                        <div><strong>${t('web_qbt_url')}:</strong> <a href="${data.webui_url}" target="_blank" rel="noopener noreferrer">${data.webui_url}</a></div>
+                        <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+                            <button onclick="openQbittorrentWebUi()" style="background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); color: white; border: none; padding: 9px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">🌐 ${t('web_qbt_open')}</button>
+                            <button onclick="regenerateQbittorrentPassword()" style="background: linear-gradient(135deg, #6f42c1 0%, #5a32a3 100%); color: white; border: none; padding: 9px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">🎲 ${t('web_qbt_regenerate')}</button>
+                            <button onclick="openQbittorrentPasswordModal()" style="background: linear-gradient(135deg, #fd7e14 0%, #e8590c 100%); color: white; border: none; padding: 9px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">🔑 ${t('web_qbt_set_custom')}</button>
+                        </div>
+                    </div>`;
+            } catch (error) {
+                statusEl.innerHTML = `<span style="color:#666;">${t('web_qbt_unavailable')}</span>`;
+            }
+        }
+
+        function regenerateQbittorrentPassword() {
+            if (!confirm(t('web_qbt_regenerate_confirm'))) return;
+            fetch('/api/qbittorrent/regenerate-password', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
-                    if (!data || !data.success) return;
-                    const banner = document.getElementById('qb-password-banner');
-                    if (banner && data.using_default) {
-                        banner.style.display = 'block';
+                    if (!data || !data.success) {
+                        showToast(t('web_qbt_password_error'), 'error', 3500);
+                        return;
                     }
+                    loadQbittorrentSection();
+                    showSupportModal(t('web_qbt_password_title'),
+                        t('web_qbt_new_password_hint') + '\n' + data.password);
                 })
-                .catch(() => { /* sessiz: qBittorrent yoksa banner gösterilmez */ });
+                .catch(() => {
+                    showToast(t('web_qbt_password_conn_error'), 'error', 3500);
+                });
         }
 
         function openQbittorrentPasswordModal() {
@@ -411,8 +449,7 @@
                         return;
                     }
                     closeQbittorrentPasswordModal();
-                    const banner = document.getElementById('qb-password-banner');
-                    if (banner) banner.style.display = 'none';
+                    if (typeof loadQbittorrentSection === 'function') loadQbittorrentSection();
                     showToast(t('web_qbt_password_saved'), 'success', 3500);
                 })
                 .catch(() => {
@@ -546,9 +583,6 @@
             // Load saved filters first
             loadSavedFilters();
 
-            // Varsayılan qBittorrent şifresi uyarısını kontrol et
-            checkQbittorrentPasswordStatus();
-            
             const path = window.location.pathname;
             
             if (path.startsWith('/platform/')) {
@@ -2426,6 +2460,11 @@
                             <input type="password" id="setting-api-torbox" value="${settings.api_keys?.torbox || ''}" 
                                    placeholder="Enter TorBox API key">
                         </div>
+
+                        <h4 style="margin-top: 25px; margin-bottom: 15px; border-top: 1px solid #ddd; padding-top: 15px;">🧲 qBittorrent WebUI</h4>
+                        <div style="margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                            <div id="qb-settings-status" style="font-size: 0.95em;">⏳ ${t('web_qbt_loading')}</div>
+                        </div>
                         
                         <button id="save-settings-btn" style="width: 100%; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; border: none; padding: 15px; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px;">
                             💾 ${t('web_settings_save')}
@@ -2441,6 +2480,9 @@
                 
                 // Attacher l'événement de sauvegarde au bouton
                 document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
+                
+                // qBittorrent WebUI şifre bölümünü yükle
+                loadQbittorrentSection();
                 
             } catch (error) {
                 container.innerHTML = `<p style="color:red;">${t('web_error')}: ${error.message}</p>`;

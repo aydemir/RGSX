@@ -1,5 +1,47 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## qBittorrent WebUI Şifre Güvence v2 — Açılışta Şifre Güvence Altına Alma + WebUI Yönetim Paneli (2026.08.11)
+
+**Olay:** Migration v1 yalnızca qBittorrent ilk RUNNING olduğunda çalışıyordu; lazy
+spawn'dan dolayı "varsayılan şifre kullanımda" durumu manager açılışında imkânsız
+kılınmıyordu. Ayrıca kullanıcının şifre durumunu görmesi ve rastgele şifreyi yenilemesi
+için WebUI'da bir yönetim paneli yoktu.
+
+**Yapılan değişiklikler:**
+- **`qbittorrent_backend.py`:**
+  - `ensure_qbittorrent_password_secured()` — manager açılışında çağrılır: settings'te
+    güvenli şifre yoksa (boş / bilinen varsayılan) rastgele üretir, kaydeder ve mode'u
+    `random` yapar. Üretilen şifre bir sonraki `_ensure_qbittorrent_running` bootstrap'inde
+    setPreferences ile WebUI'a uygulanır.
+  - `regenerate_qbittorrent_password()` — yeni rastgele şifre üretir; qBittorrent canlıysa
+    setPreferences ile anında uygular (mevcut oturumlar geçersiz olur), değilse settings'e
+    yazar ve bir sonraki bootstrap uygular. Dönen şifre kullanıcıya bir kez gösterilir.
+  - `get_password_status()` genişletildi — yeni `secured` (boolean) ve `mode`
+    (`default`/`random`/`custom`) alanları (WebUI Settings bölümü).
+- **`rgsx_settings.py`:** `get/set_qbittorrent_password_mode()` — şifre kaynağını
+  (`random`/`custom`) kalıcı olarak tutar; anahtar yoksa depolanmış şifre varlığından
+  `custom` çıkarımı yapar.
+- **`rgsx_manager.py`:** Açılışta (daemon başlatma akışı içinde)
+  `ensure_qbittorrent_password_secured()` çağrısı + yeni endpoint:
+  `POST /api/qbittorrent/regenerate-password`; mevcut `GET /api/qbittorrent/password-status`
+  artık `secured`/`mode` alanlarını da döndürür. `change_webui_password` modu `custom`'a
+  çeker.
+- **`rgsx_web/handlers_ui.py` + `static/js/app.js`:** WebUI → Settings → qBittorrent
+  bölümüne şifre durumu kartı: mod göstergesi (default/random/custom), "Rastgele Şifre
+  Üret", "Özel Şifre Belirle" ve "WebUI'ı Aç" aksiyonları, yenilenen şifreyi tek
+  seferlik gösteren iletişim (eski uyarı banner'ı kaldırıldı). Kartta gizli şifre asla
+  gösterilmez.
+- **Çeviriler:** `languages/en,fr,tr` gerçek çeviriler; `es,de,it,pt` mevcut qbt
+  anahtar stiliyle uyumlu İngilizce değerler.
+
+**Doğrulama:** `pytest tests/test_qbittorrent_backend.py tests/test_password_migration.py`
+— 55 passed (3 başarısızlık `test_qbittorrent_port.py`'de ortam kaynaklı: makinede gerçek
+qBittorrent 18572'yi dinliyor). Tüm language JSON dosyaları ve Python modülleri parse
+edilebilir; `node --check app.js` temiz. Değişen dosyalar test kurulumuna
+(`C:\RetroBat - Kopya\roms\ports\RGSX`) kopyalandı.
+
+---
+
 ## Faz 6-3: rgsx_web.py → rgsx_web/ paketi (2026.08.10)
 
 **Olay:** `rgsx_web.py` (2408 satır) display.py deseniyle (8f094aa) pakete bölündü.

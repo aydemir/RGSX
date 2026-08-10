@@ -265,6 +265,19 @@ class ManagerHandler(RGSXHandler):
                 self._send_json({"success": False, "message": str(e)}, status=500)
             return
 
+        if path == "/api/qbittorrent/regenerate-password":
+            try:
+                from qbittorrent_backend import regenerate_qbittorrent_password
+                ok, password = regenerate_qbittorrent_password()
+                if not ok:
+                    self._send_json({"success": False, "message": "password_regeneration_failed"}, status=500)
+                    return
+                self._send_json({"success": True, "password": password})
+            except Exception as e:
+                logger.warning(f"[MANAGER] /api/qbittorrent/regenerate-password: {e}")
+                self._send_json({"success": False, "message": str(e)}, status=500)
+            return
+
         if path == "/api/resume":
             try:
                 n = resume_all_downloads()
@@ -969,6 +982,15 @@ def main():
     threading.Thread(target=download_queue_worker, daemon=True, name="queue-worker").start()
     threading.Thread(target=_broadcaster_loop, daemon=True, name="sse-broadcaster").start()
     _start_watchdog(args.port)
+
+    # qBittorrent WebUI şifresini daha ilk açılışta güvence altına al: settings'te
+    # güvenli şifre yoksa rastgele üretilip kaydedilir (spawn'da setPreferences ile
+    # uygulanır). Böylece 'varsayılan şifre kullanımda' durumu pratikte oluşmaz.
+    try:
+        from qbittorrent_backend import ensure_qbittorrent_password_secured
+        ensure_qbittorrent_password_secured()
+    except Exception as e:
+        logger.debug(f"[MANAGER] qBittorrent şifre güvence atlandı: {e}")
 
     try:
         _resume_interrupted_downloads()

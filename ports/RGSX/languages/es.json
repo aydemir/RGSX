@@ -577,5 +577,17 @@
     "web_qbt_password_error": "Failed to update password.",
     "web_qbt_password_conn_error": "Failed to update password (connection error).",
     "web_qbt_password_saved": "qBittorrent WebUI password updated.",
-    "web_qbt_password_unable_start": "Unable to start qBittorrent WebUI"
+    "web_qbt_password_unable_start": "Unable to start qBittorrent WebUI",
+    "web_qbt_loading": "Loading...",
+    "web_qbt_unavailable": "qBittorrent is currently unavailable.",
+    "web_qbt_mode_default": "Default password (not secured)",
+    "web_qbt_mode_random": "Random password (auto-generated)",
+    "web_qbt_mode_custom": "Custom password (user-defined)",
+    "web_qbt_status": "Status",
+    "web_qbt_url": "WebUI URL",
+    "web_qbt_open": "Open WebUI",
+    "web_qbt_regenerate": "Regenerate Random Password",
+    "web_qbt_set_custom": "Set Custom Password",
+    "web_qbt_regenerate_confirm": "Generate a new random password? Current WebUI sessions will be invalidated.",
+    "web_qbt_new_password_hint": "New password (save it now):"
 }

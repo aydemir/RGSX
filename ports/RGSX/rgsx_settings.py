@@ -792,6 +792,35 @@ def set_qbittorrent_password_migration_done(done: bool = True) -> bool:
         return False
 
 
+def get_qbittorrent_password_mode(settings=None) -> str:
+    """qBittorrent şifre kaynağı: "default" | "random" | "custom".
+
+    Anahtar settings'te yoksa ve şifre de yoksa "default" (henüz güvence altına
+    alınmamış); kayıt yoksa ama şifre varsa "custom" (kullanıcı tanımlı).
+    """
+    if settings is None:
+        settings = load_rgsx_settings()
+    mode = settings.get("qbittorrent_password_mode")
+    if mode in ("random", "custom"):
+        return mode
+    stored = settings.get("qbittorrent_webui_password")
+    if isinstance(stored, str) and stored:
+        return "custom"
+    return "default"
+
+
+def set_qbittorrent_password_mode(mode: str) -> str:
+    """qBittorrent şifre kaynağını ("random" | "custom") kalıcı olarak yazar."""
+    mode = mode if mode in ("random", "custom") else "custom"
+    try:
+        settings = load_rgsx_settings()
+        settings["qbittorrent_password_mode"] = mode
+        save_rgsx_settings(settings)
+    except Exception as e:
+        logger.error(f"Error setting qbittorrent_password_mode: {e}")
+    return mode
+
+
 # ----------------------- Manager server (port/host) ----------------------- #
 
 def get_manager_port(settings=None) -> int:

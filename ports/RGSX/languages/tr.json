@@ -575,5 +575,17 @@
     "web_qbt_password_error": "Şifre güncellenemedi.",
     "web_qbt_password_conn_error": "Şifre güncellenemedi (bağlantı hatası).",
     "web_qbt_password_saved": "qBittorrent WebUI şifresi güncellendi.",
-    "web_qbt_password_unable_start": "qBittorrent WebUI başlatılamadı"
+    "web_qbt_password_unable_start": "qBittorrent WebUI başlatılamadı",
+    "web_qbt_loading": "Yükleniyor...",
+    "web_qbt_unavailable": "qBittorrent şu an kullanılamıyor.",
+    "web_qbt_mode_default": "Varsayılan şifre (korunmuyor)",
+    "web_qbt_mode_random": "Rastgele şifre (otomatik üretildi)",
+    "web_qbt_mode_custom": "Özel şifre (kullanıcı tanımlı)",
+    "web_qbt_status": "Durum",
+    "web_qbt_url": "WebUI adresi",
+    "web_qbt_open": "WebUI'yi Aç",
+    "web_qbt_regenerate": "Rastgele Şifre Üret",
+    "web_qbt_set_custom": "Özel Şifre Belirle",
+    "web_qbt_regenerate_confirm": "Yeni bir rastgele şifre üretilsin mi? Mevcut WebUI oturumları geçersiz olur.",
+    "web_qbt_new_password_hint": "Yeni şifre (şimdi kaydedin):"
 }
