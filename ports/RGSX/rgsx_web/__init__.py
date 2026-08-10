@@ -36,6 +36,29 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(config.log_dir, exist_ok=True)
 
 
+# Console/output encoding'i locale'e (ör. Türkçe Windows cp1254) göre kısıtlı
+# olabilir: '→' (U+2192) gibi karakterler yazılamayınca logging.emit UnicodeEncodeError
+# fırlatır, log satırı kaybolur ve stderr'i spam'ler. Batocera/RetroBat üretiminde
+# bat dosyası stdout/stderr'i '2>&1' ile log dosyasına yönlendirdiği için bu gerçek
+# bir üretim hatasıdır. StreamHandler'ın kullandığı stream'leri kodlama hatasına
+# dayanıklı yap: kaydedilemeyen karakter '?' ile değiştirilir, asla çökme olmaz.
+def _make_stream_encoding_safe(stream):
+    """TextIO stream'i UnicodeEncodeError fırlatmayacak şekilde yeniden yapılandırır."""
+    try:
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="replace")
+    except Exception:
+        pass
+    return stream
+
+
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None:
+        _make_stream_encoding_safe(_stream)
+
+
 # Supprimer les handlers existants pour éviter les doublons
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
@@ -211,7 +234,18 @@ except Exception as watcher_error:  # pragma: no cover - watcher errors shouldn'
 # Handler HTTP + serveur (import après la définition du logger : `from . import logger`)
 # =========================================================================
 from .handlers import RGSXHandler
-from .server import run_server, CURRENT_HTTPD
+from . import server as _server_module
+from .server import run_server
+
+
+def __getattr__(name):
+    # rgsx_web.CURRENT_HTTPD'yi CANLI tut: 'from .server import CURRENT_HTTPD'
+    # import anında değeri kopyalardı (hep None), oysa server.run_server() kendi
+    # modül değişkenini günceller. rgsx_manager bu attribute'u okuyup httpd.shutdown()
+    # çağırır; kopyalanmış None yüzünden shutdown hiç çalışmaz ve process asılı kalırdı.
+    if name == "CURRENT_HTTPD":
+        return _server_module.CURRENT_HTTPD
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == '__main__':
