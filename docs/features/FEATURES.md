@@ -1,5 +1,42 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Faz 6-2: network.py → network/ paketi (2026.08.10)
+
+**Olay:** `network.py` (5667 satır, 94 fonksiyon) display.py deseniyle (8f094aa) pakete
+bölündü. Davranış değişmedi; yeni fazların (state modeli, toplu indirme, Rust) hedef dosyası
+artık modüler.
+
+**Yapılan değişiklikler:**
+- **`network/` paketi** (git mv ile `network.py` → `network/__init__.py`): 8 modül —
+  `upnp.py` (UPnP port/IGD + aria2 + torrent seeding status), `http_download.py`
+  (headers/challenge/resume/vimm/browser), `lolroms.py`, `archive_org.py`, `one_fichier.py`
+  (roadmap'teki `1fichier.py` adı Python'da geçersiz — leading digit), `queue.py`
+  (worker + pause/resume/cancel/shutdown + `download_rom`), `updates.py` (changelog +
+  extract_update), `helpers.py`.
+- **Modül-seviyesi state** (`progress_queues`, `cancel_events`, `pause_events`,
+  `download_threads`, `torrent_temp_roots`, `_app_shutting_down`, `urls_in_progress`,
+  `urls_lock`, `url_results`, `url_done_events`) `__init__.py`'de **aynı obje kimliğiyle**
+  tutulur — `thread_safety.py`/`rgsx_cli.py` aynı objeleri görmeye devam eder.
+- **Döngü kırma** (utils/ 6-1 deseni, fonksiyon-içi lazy import): helpers↔http_download
+  (`_build_browser_download_headers`), queue↔one_fichier (`download_queue_worker` içinde
+  `download_from_1fichier`/`is_1fichier_url`).
+- **Pre-existing NameError fix'leri** (eski network.py'de latent bug — 419 `logger.*` çağrısı
+  tanımsız `logger`'a gidiyordu; `InsufficientDiskSpaceError` raise/except'te tanımsızdı):
+  `logger = logging.getLogger("network")` tüm modüllerde + `InsufficientDiskSpaceError`
+  `helpers.py`'de tanımlandı, re-export edildi.
+- Dış import yüzeyi birebir korundu (controls, rgsx_cli, rgsx_manager, rgsx_web, __main__,
+  thread_safety, qbittorrent_backend lazy `network._update_seeding_status` vs.).
+- **`docs/roadmap/ROADMAP_DOWNLOAD_MANAGER.md`**: Faz 6-2 → "✅ TAMAMLANDI".
+
+**Doğrulama:** `RGSX_HEADLESS=1 PYTHONPATH=/tmp/pygame_stub python -m pytest tests/ -q`
+→ **183 passed / 23 failed** — HEAD baseline'ıyla birebir (23 hata test_display_* +
+pygame-stub kaynaklı, pre-existing). py_compile temiz (tüm modüller + bağımlılar). 94/94
+fonksiyon AST diff birebir (3 lazy import dışında); export yüzeyi 109 isim eksiksiz;
+undefined-name statik kontrolü tüm modüllerde temiz; runtime smoke (size parse, 1fichier,
+UPnP olmayan saf fonksiyonlar, boş-state kuyruk fonksiyonları) doğru.
+
+---
+
 ## qBittorrent Şifre Migration v1 (2026.08.10)
 
 **Olay:** Rastgele şifre üretimi kodda YOKTU (DRIFT) — kurulumlar öntanımlı `RGSXqbt`'de

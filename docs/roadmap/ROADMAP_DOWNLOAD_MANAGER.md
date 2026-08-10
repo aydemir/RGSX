@@ -245,13 +245,23 @@ God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
   arasında `_refresh_loading_feedback` lazy import (torrent içinde fonksiyon-seviyesinde);
   urllib3/requests log susturma `__init__.py`'de; `logger` kimliği (`logging.getLogger("utils")`)
   tüm alt modüllerde korunur.
-- **Faz 6-2 — `network.py` → `network/` paketi.** Kritik: modül-seviyesi state
-  (`progress_queues`, `cancel_events`, `pause_events`, `download_threads`, `urls_in_progress`,
-  `url_results`, `url_done_events`) `network/__init__.py`'de **aynı obje kimliğiyle** tutulur —
+- **Faz 6-2 — `network.py` → `network/` paketi.** ✅ TAMAMLANDI (94/94 fonksiyon AST diff'te
+  birebir — 3 lazy import dışında). Kritik: modül-seviyesi state
+  (`progress_queues`, `cancel_events`, `pause_events`, `download_threads`, `torrent_temp_roots`,
+  `_app_shutting_down`, `urls_in_progress`, `urls_lock`, `url_results`, `url_done_events`)
+  `network/__init__.py`'de **aynı obje kimliğiyle** tutulur —
   `thread_safety.py`'deki `from network import pause_events` vs. aynı çalışmaya devam eder.
-  Modüller: `upnp.py`, `http_download.py` (headers/challenge/resume/vimm/browser), `lolroms.py`,
-  `archive_org.py`, `1fichier.py`, `queue.py` (worker + pause/resume/cancel/shutdown + state),
-  `updates.py` (changelog + extract_update), `helpers.py`.
+  Modüller: `upnp.py` (UPnP + aria2/torrent seeding), `http_download.py`
+  (headers/challenge/resume/vimm/browser), `lolroms.py`, `archive_org.py`,
+  `one_fichier.py` (roadmap'teki `1fichier.py` — Python leading-digit modül adıyla
+  `from network.1fichier import` çalışmadığı için yeniden adlandırıldı), `queue.py`
+  (worker + pause/resume/cancel/shutdown + state + `download_rom`), `updates.py`
+  (changelog + extract_update), `helpers.py`. Döngü kırma (lazy import, utils deseni):
+  helpers↔http_download (`_build_browser_download_headers`), queue↔one_fichier
+  (`download_queue_worker` içinde). **Pre-existing NameError fix:** eski `network.py`'de
+  `logger` 419 kez kullanılıp hiç tanımlanmamıştı → `logging.getLogger("network")` tanımlandı
+  (utils deseni); aynı şekilde `InsufficientDiskSpaceError` raise/except'te kullanılıyor ama
+  hiç tanımlanmamıştı → `helpers.py`'de sınıf eklendi + re-export.
 - **Faz 6-3 — `rgsx_web.py` → `rgsx_web/` paketi.** `RGSXHandler` 1759 satırını endpoint
   grubuna göre ayır: `cache.py` (etag/cached_games/invalidation/watchdog), `i18n.py`
   (translations + normalize_size), `handlers_download.py`, `handlers_qbittorrent.py`,
