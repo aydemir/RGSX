@@ -226,18 +226,25 @@ God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
 |---|---|---|
 | `network.py` | 5667 | indirme hattı + modül-seviyesi state (`progress_queues`, `cancel_events`, `pause_events`, `download_threads`) — `thread_safety.py`, `rgsx_cli.py` doğrudan import ediyor |
 | `controls.py` | 4970 | `handle_controls` **3626 satır** (`:1240-4865`), tek if-elifs zinciri; `language.py` `VALID_STATES` import ediyor |
-| `utils.py` | 4776 | en geniş fan-in: network, controls, rgsx_web, rgsx_manager, __main__, history, rgsx_cli, qbittorrent_backend |
+| ~~`utils.py`~~ → `utils/` paketi | 4776 → 12 modül | ✅ Faz 6-1'de bölündü; en geniş fan-in: network, controls, rgsx_web, rgsx_manager, __main__, history, rgsx_cli, qbittorrent_backend |
 | `rgsx_web.py` | 2408 | `RGSXHandler` **1759 satır** (`:464-2223`); `rgsx_manager.py` `import rgsx_web` + `RGSXHandler/get_cached_games/get_translation` |
 | `__main__.py` | 2106 | TVUI entry + manager spawn/supervisor karışık |
 
 **Alt fazlar (her biri bağımsız commit — aynı desen, aynı doğrulama):**
 
-- **Faz 6-1 — `utils.py` → `utils/` paketi.** En geniş fan-in, en düşük risk (saf yardımcılar):
-  `games.py` (load_sources/load_games), `sorting.py`, `media.py` (badges/ikon), `torrent.py`
-  (manifest cache + bencode + URL parse), `services.py` (web/DNS boot + connection status),
-  `extensions.py` (ES systems), `text.py` (truncate/sanitize/wrap), `extract.py` (zip/rar/7z +
-  ps3/dos/scummvm/psvita/xbox handler'ları), `security.py` (redact + support zip), `api_keys.py`,
-  `history_matches.py`, `files.py`. `__init__.py` tüm public isimleri re-export eder.
+- **Faz 6-1 — `utils.py` → `utils/` paketi.** ✅ TAMAMLANDI (114/114 fonksiyon, sıfır kayıp).
+  En geniş fan-in, en düşük risk (saf yardımcılar):
+  `games.py` (load_sources/load_games + platform game count cache + `_refresh_loading_feedback`),
+  `sorting.py`, `media.py` (badges/ikon + müzik), `torrent.py`
+  (manifest cache + bencode + URL parse), `services.py` (web/DNS boot + connection status +
+  restart), `extensions.py` (ES systems), `text.py` (truncate/sanitize/wrap +
+  `_format_size_bytes`/`get_clean_display_name`), `extract.py` (zip/rar/7z +
+  ps3/dos/scummvm/psvita/xbox handler'ları + `_resolve_7z_command`), `security.py` (redact +
+  support zip), `api_keys.py`, `history_matches.py`, `files.py` (disk/klasör/arama + `DiskUsage`).
+  `__init__.py` tüm public isimleri re-export eder. Döngü çözümü: `games.py` ↔ `torrent.py`
+  arasında `_refresh_loading_feedback` lazy import (torrent içinde fonksiyon-seviyesinde);
+  urllib3/requests log susturma `__init__.py`'de; `logger` kimliği (`logging.getLogger("utils")`)
+  tüm alt modüllerde korunur.
 - **Faz 6-2 — `network.py` → `network/` paketi.** Kritik: modül-seviyesi state
   (`progress_queues`, `cancel_events`, `pause_events`, `download_threads`, `urls_in_progress`,
   `url_results`, `url_done_events`) `network/__init__.py`'de **aynı obje kimliğiyle** tutulur —
