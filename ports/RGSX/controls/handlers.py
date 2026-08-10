@@ -1,127 +1,131 @@
-import pygame # type: ignore
-import shutil
 import asyncio
-import json
-import re
-import os
 import datetime
-import threading
+import json
 import logging
-import config
-from config import REPEAT_DELAY, REPEAT_INTERVAL, REPEAT_ACTION_DEBOUNCE, CONTROLS_CONFIG_PATH, Game
-from display import draw_validation_transition, show_toast
-from network import download_rom, download_from_1fichier, is_1fichier_url, request_cancel, cleanup_torrent_temp, stop_active_seeder
-from utils import (
-    load_games, check_extension_before_download, is_extension_supported,
-    load_extensions_json, play_random_music, sanitize_filename,
-    save_music_config, load_api_keys, _get_dest_folder_name,
-    extract_zip, extract_rar, extract_7z, find_file_with_or_without_extension, find_matching_files, toggle_web_service_at_boot, check_web_service_status,
-    restart_application, generate_support_zip, load_sources,
-    ensure_download_provider_keys, missing_all_provider_keys, build_provider_paths_string,
-    start_connection_status_check, get_clean_display_name, get_existing_history_matches, remember_history_local_match,
-    clear_torrent_manifest_cache,
-    request_torrent_manifest_refresh,
-    clear_platform_game_count_cache,
-    move_files_to_directory, parse_torrent_download_url,
-    _refresh_loading_feedback,
-    parse_game_size_to_bytes,
-    sort_games_list,
-)
-from history import load_history, clear_history, add_to_history, save_history, scan_roms_for_downloaded_games, scan_platform_roms_on_enter
-from language import _, get_available_languages, set_language  
-from rgsx_settings import (
-    get_allow_unknown_extensions, set_display_grid, get_font_family, set_font_family,
-    get_show_unsupported_platforms, set_show_unsupported_platforms,
-    set_allow_unknown_extensions, set_symlink_option, get_symlink_option,
-    get_global_sort_option, set_global_sort_option,
-    load_rgsx_settings, save_rgsx_settings
-)
-from accessibility import save_accessibility_settings
-from scraper import get_game_metadata, download_image_to_surface
-
+import os
+import re
+import shutil
+import threading
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+import pygame
 
-# Extensions d'archives pour lesquelles on ignore l'avertissement d'extension non supportée
-ARCHIVE_EXTENSIONS = {'.zip', '.7z', '.rar', '.tar', '.gz', '.xz', '.bz2'}
+import config
+from accessibility import save_accessibility_settings
+from config import Game, REPEAT_DELAY
+from display import draw_validation_transition, show_toast
+from history import (
+    add_to_history,
+    clear_history,
+    load_history,
+    save_history,
+    scan_platform_roms_on_enter,
+    scan_roms_for_downloaded_games,
+)
+from language import _, get_available_languages, set_language
+from network import (
+    cleanup_torrent_temp,
+    download_from_1fichier,
+    download_rom,
+    is_1fichier_url,
+    request_cancel,
+    stop_active_seeder,
+)
+from rgsx_settings import (
+    get_allow_unknown_extensions,
+    get_font_family,
+    get_global_sort_option,
+    get_show_unsupported_platforms,
+    get_symlink_option,
+    load_rgsx_settings,
+    save_rgsx_settings,
+    set_allow_unknown_extensions,
+    set_display_grid,
+    set_font_family,
+    set_global_sort_option,
+    set_show_unsupported_platforms,
+    set_symlink_option,
+)
+from scraper import download_image_to_surface, get_game_metadata
+from utils import (
+    _get_dest_folder_name,
+    _refresh_loading_feedback,
+    build_provider_paths_string,
+    check_extension_before_download,
+    check_web_service_status,
+    clear_platform_game_count_cache,
+    clear_torrent_manifest_cache,
+    ensure_download_provider_keys,
+    extract_7z,
+    extract_rar,
+    extract_zip,
+    find_file_with_or_without_extension,
+    find_matching_files,
+    generate_support_zip,
+    get_clean_display_name,
+    get_existing_history_matches,
+    is_extension_supported,
+    load_api_keys,
+    load_extensions_json,
+    load_games,
+    load_sources,
+    missing_all_provider_keys,
+    move_files_to_directory,
+    parse_game_size_to_bytes,
+    parse_torrent_download_url,
+    play_random_music,
+    remember_history_local_match,
+    request_torrent_manifest_refresh,
+    restart_application,
+    sanitize_filename,
+    save_music_config,
+    sort_games_list,
+    start_connection_status_check,
+    toggle_web_service_at_boot,
+)
 
-GLOBAL_SORT_OPTIONS = [
-    ("name_asc", lambda: _("web_sort_name_asc") or "A-Z (Name)"),
-    ("name_desc", lambda: _("web_sort_name_desc") or "Z-A (Name)"),
-    ("size_asc", lambda: _("web_sort_size_asc") or "Size -+ (Small first)"),
-    ("size_desc", lambda: _("web_sort_size_desc") or "Size +- (Large first)"),
-]
+from controls.downloads import (
+    _has_download_url,
+    _launch_next_queued_download,
+    _queue_download,
+    start_or_queue_download,
+)
+from controls.input import (
+    is_global_search_input_matched,
+    is_input_matched,
+    key_states,
+    update_key_state,
+)
+from controls.menus import (
+    GLOBAL_SORT_OPTIONS,
+    _apply_sorted_active_filters,
+    _build_filter_menu_entries,
+    _get_global_sort_index,
+    _is_windows_drive_root,
+    _is_windows_os,
+    _load_folder_browser_items,
+    _set_folder_browser_location,
+    _sort_local_games,
+    _wrap_index,
+    open_unified_filter_menu,
+    validate_menu_state,
+)
+from controls.search import (
+    GLOBAL_SEARCH_KEYBOARD_LAYOUT,
+    _get_platform_id,
+    _get_platform_label,
+    enter_global_filtered_results,
+    enter_global_search,
+    enter_global_sorted_results,
+    exit_global_search,
+    filter_games_by_search_query,
+    refresh_global_search_results,
+    trigger_global_search_download,
+)
 
-
-def _notify_torrent_in_maintenance(game_name: str | None = None) -> None:
-    # Fonction devenue inutile, ne fait plus rien
-    pass
-
-
-def _has_download_url(url, game_name: str | None = None) -> bool:
-    if isinstance(url, str) and url.strip():
-        return True
-
-    config.needs_redraw = True
-    return False
-
-
-def _wrap_index(current_index: int, delta: int, item_count: int) -> int:
-    if item_count <= 0:
-        return 0
-    return (current_index + delta) % item_count
-
-
-def _sort_global_items(items: list[dict]) -> list[dict]:
-    option = getattr(config, 'global_sort_option', 'name_asc') or 'name_asc'
-    reverse = option in ('name_desc', 'size_desc')
-
-    if option.startswith('size_'):
-        return sorted(
-            items,
-            key=lambda item: (
-                int(item.get('size_bytes') or 0),
-                str(item.get('display_name') or '').lower(),
-                str(item.get('platform_label') or '').lower(),
-            ),
-            reverse=reverse,
-        )
-
-    return sorted(
-        items,
-        key=lambda item: (
-            str(item.get('display_name') or '').lower(),
-            str(item.get('platform_label') or '').lower(),
-            int(item.get('size_bytes') or 0),
-        ),
-        reverse=reverse,
-    )
-
-
-def _get_global_sort_index(option: str | None = None) -> int:
-    target = option or getattr(config, 'global_sort_option', 'name_asc')
-    for index, (key, _) in enumerate(GLOBAL_SORT_OPTIONS):
-        if key == target:
-            return index
-    return 0
-
-
-def _sort_local_games(items: list[Game]) -> list[Game]:
-    option = getattr(config, 'global_sort_option', 'name_asc')
-    return sort_games_list(items, option)
-
-
-def _apply_sorted_active_filters() -> list[Game]:
-    if hasattr(config, 'game_filter_obj') and config.game_filter_obj and config.game_filter_obj.is_active():
-        platform = config.platforms[config.current_platform]
-        platform_name = config.platform_names.get(platform, platform)
-        return _sort_local_games(config.game_filter_obj.apply_filters(config.games, platform_name))
-    return config.games
-
+logger = logging.getLogger("controls")
 
 _platform_torrent_support_cache: dict[str, bool] = {}
-
 
 def _is_arm_device() -> bool:
     architecture = str(getattr(config, 'SYSTEM_INFO', {}).get('architecture') or '').lower().strip()
@@ -132,7 +136,6 @@ def _is_arm_device() -> bool:
         except Exception:
             architecture = ''
     return any(token in architecture for token in ('arm', 'aarch64', 'arm64', 'armv7', 'armv8'))
-
 
 def _platform_has_torrents(platform_id: str) -> bool:
     cached = _platform_torrent_support_cache.get(platform_id)
@@ -153,7 +156,6 @@ def _platform_has_torrents(platform_id: str) -> bool:
     _platform_torrent_support_cache[platform_id] = has_torrents
     return has_torrents
 
-
 def _warn_torrents_unavailable_on_arm(platform_label: str | None = None) -> None:
     message = "Les téléchargements torrent ne sont pas encore disponibles sur les appareils ARM pour le moment."
     if platform_label:
@@ -169,7 +171,6 @@ def _warn_torrents_unavailable_on_arm(platform_label: str | None = None) -> None
         pass
     config.needs_redraw = True
 
-
 def _is_1fichier_platform(platform_id: str, platform_label: str) -> bool:
     markers = [str(marker or "").lower().replace(" ", "") for marker in getattr(config, "PREMIUM_HOST_MARKERS", [])]
     haystacks = [str(platform_id or ""), str(platform_label or "")]
@@ -180,7 +181,6 @@ def _is_1fichier_platform(platform_id: str, platform_label: str) -> bool:
         if any(marker and marker in normalized for marker in markers):
             return True
     return False
-
 
 def _warn_missing_api_key_for_1fichier_platform(platform_label: str | None = None) -> None:
     try:
@@ -225,7 +225,6 @@ def _warn_missing_api_key_for_1fichier_platform(platform_label: str | None = Non
     config.needs_redraw = True
     logger.warning("Plateforme 1fichier ouverte sans clé API: affichage avertissement mode gratuit")
 
-
 def _open_selected_platform(screen) -> bool:
     if not config.platforms:
         return False
@@ -266,976 +265,6 @@ def _open_selected_platform(screen) -> bool:
     config.needs_redraw = True
     logger.debug(f"Navigation vers les jeux de {platform_id}")
     return True
-
-
-def _is_windows_os() -> bool:
-    return str(getattr(config, 'OPERATING_SYSTEM', '') or '').lower() == "windows" or os.name == 'nt'
-
-
-def _is_windows_drive_root(path: str) -> bool:
-    if not _is_windows_os() or not path:
-        return False
-    normalized = os.path.normpath(path)
-    drive, tail = os.path.splitdrive(normalized)
-    return bool(drive) and tail in ('\\', '/')
-
-
-def _get_available_windows_drives() -> list[str]:
-    drives = []
-    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        drive = f"{letter}:\\"
-        if os.path.isdir(drive):
-            drives.append(drive)
-    return drives
-
-
-def _load_folder_browser_items(path: str) -> list[str]:
-    if _is_windows_os() and not path:
-        return _get_available_windows_drives()
-
-    target_path = path
-    if not target_path:
-        target_path = "/"
-
-    items = [".."]
-    try:
-        for item in sorted(os.listdir(target_path)):
-            full_path = os.path.join(target_path, item)
-            if os.path.isdir(full_path):
-                items.append(item)
-    except Exception as e:
-        logger.error(f"Erreur lecture dossier {target_path}: {e}")
-        return [".."] if target_path else []
-    return items
-
-
-def _set_folder_browser_location(path: str | None, reset_selection: bool = True) -> None:
-    if _is_windows_os():
-        normalized_path = os.path.normpath(path) if path else ""
-        if normalized_path in ('\\', '/'):
-            normalized_path = ""
-        if normalized_path and not os.path.isdir(normalized_path):
-            normalized_path = ""
-    else:
-        normalized_path = path or "/"
-        if not os.path.isdir(normalized_path):
-            normalized_path = "/"
-
-    config.folder_browser_path = normalized_path
-    config.folder_browser_items = _load_folder_browser_items(normalized_path)
-
-    if reset_selection:
-        config.folder_browser_selection = 0
-        config.folder_browser_scroll_offset = 0
-    else:
-        max_index = max(0, len(config.folder_browser_items) - 1)
-        config.folder_browser_selection = max(0, min(config.folder_browser_selection, max_index))
-        max_scroll = max(0, len(config.folder_browser_items) - max(1, int(getattr(config, 'folder_browser_visible_items', 10) or 10)))
-        config.folder_browser_scroll_offset = max(0, min(config.folder_browser_scroll_offset, max_scroll))
-
-
-def _build_filter_menu_entries(context: str) -> list[dict[str, str]]:
-    global_search_label = 'Recherche globale' if (_ is None or _("global_search_title") == "global_search_title") else _("global_search_title").format("").replace(" : ", "").rstrip(': ')
-    platform_search_label = 'Recherche sur cette plateforme' if (_ is None or _("platform_search_title") == "platform_search_title") else _("platform_search_title")
-    advanced_filter_label = 'Filtrer' if (_ is None or _("filter_advanced") == "filter_advanced") else _("filter_advanced")
-    sort_label = 'Trier' if (_ is None or _("web_sort") == "web_sort") else _("web_sort")
-    back_label = 'Retour' if (_ is None or _("menu_back") == "menu_back") else _("menu_back")
-
-    entries = []
-    if context == 'game':
-        entries.extend([
-            {
-                'key': 'platform_search',
-                'label': platform_search_label,
-            },
-            {
-                'key': 'global_sort',
-                'label': sort_label,
-            },
-            {
-                'key': 'global_search',
-                'label': global_search_label,
-            },
-            {
-                'key': 'global_filter',
-                'label': advanced_filter_label,
-            },
-        ])
-    else:
-        entries.extend([
-            {
-                'key': 'global_search',
-                'label': global_search_label,
-            },
-            {
-                'key': 'global_filter',
-                'label': advanced_filter_label,
-            },
-            {
-                'key': 'global_sort',
-                'label': sort_label,
-            },
-        ])
-
-    entries.append({
-        'key': 'back',
-        'label': back_label,
-    })
-    return entries
-
-
-def open_unified_filter_menu(source_state: str) -> None:
-    context = 'game' if source_state == 'game' else 'global'
-    config.filter_menu_context = context
-    config.filter_menu_entries = _build_filter_menu_entries(context)
-    config.filter_menu_return_state = validate_menu_state(source_state)
-    config.selected_filter_choice = 0
-    config.previous_menu_state = source_state
-    config.menu_state = 'filter_menu_choice'
-    config.needs_redraw = True
-    logger.debug(f"Ouverture du menu filtre unifie depuis {source_state}")
-
-
-# Variables globales pour la répétition
-key_states = {}  # Dictionnaire pour suivre l'état des touches
-
-# Liste des états valides
-VALID_STATES = [
-    "platform", "game", "confirm_exit",
-    "extension_warning", "pause_menu", "controls_help", "history", "controls_mapping",
-    "reload_games_data", "restart_popup", "error", "loading", "confirm_clear_history",
-    "reset_settings_confirm",
-    "language_select", "filter_platforms", "display_menu", "confirm_cancel_download",
-    "gamelist_update_prompt", "platform_folder_config",
-    # Nouveaux sous-menus hiérarchiques (refonte pause menu)
-    "pause_controls_menu",      # sous-menu Controls (aide, remap)
-    "pause_display_menu",       # sous-menu Display (layout, font size, unsupported, unknown ext, filter)
-    "pause_display_layout_menu",# sous-menu Display > Layout (disposition avec visualisation)
-    "pause_display_font_menu",  # sous-menu Display > Font (taille police + footer)
-    "pause_games_menu",         # sous-menu Games (source mode, update/redownload cache)
-    "pause_settings_menu",      # sous-menu Settings (music on/off, symlink toggle, api keys status)
-    "pause_api_keys_status",    # sous-menu API Keys (affichage statut des clés)
-    "pause_qbt_password",       # sous-menu qBittorrent WebUI şifresi (keyboard girişi)
-    "pause_connection_status",  # sous-menu Connection status (statut accès sites)
-    # Nouveaux menus historique
-    "history_game_options",     # menu options pour un jeu de l'historique
-    "history_show_folder",      # afficher le dossier de téléchargement
-    "history_scraper_info",     # info scraper non implémenté
-    "scraper",                  # écran du scraper avec métadonnées
-    "history_error_details",    # détails de l'erreur
-    "history_confirm_delete",   # confirmation suppression jeu
-    "history_extract_archive",  # extraction d'archive
-    "text_file_viewer",         # visualiseur de fichiers texte
-    # Nouveaux menus filtrage avancé
-    "filter_menu_choice",       # menu de choix entre recherche et filtrage avancé
-    "filter_search",            # recherche par nom (existant, mais renommé)
-    "filter_advanced",          # filtrage avancé par région, etc.
-    "filter_priority_config",   # configuration priorité régions pour one-rom-per-game
-    "global_sort_menu",         # menu de tri global
-    "platform_search",          # recherche globale inter-plateformes
-    "platform_folder_config",   # configuration du dossier personnalisé pour une plateforme
-    "folder_browser",           # navigateur de dossiers intégré
-    "folder_browser_new_folder", # création d'un nouveau dossier
-]
-
-def validate_menu_state(state):
-    if not state:
-        return "platform"
-    if state not in VALID_STATES:
-        logger.debug(f"État invalide {state}, retour à platform")
-        return "platform"
-    return state
-
-
-def load_controls_config(path=CONTROLS_CONFIG_PATH):
-    """Charge la configuration des contrôles.
-    Priorité:
-    1) Fichier utilisateur dans SAVE_FOLDER (controls.json)
-    2) Préréglage correspondant dans PRECONF_CONTROLS_PATH (sans copie)
-    3) Configuration clavier par défaut
-    """
-    default_config = {
-        "confirm": {"type": "key", "key": pygame.K_RETURN},
-        "cancel": {"type": "key", "key": pygame.K_ESCAPE},
-        "left": {"type": "key", "key": pygame.K_LEFT},
-        "right": {"type": "key", "key": pygame.K_RIGHT},
-        "up": {"type": "key", "key": pygame.K_UP},
-        "down": {"type": "key", "key": pygame.K_DOWN},
-        "start": {"type": "key", "key": pygame.K_p},
-        "clear_history": {"type": "key", "key": pygame.K_x},
-        "history": {"type": "key", "key": pygame.K_h},
-        "page_up": {"type": "key", "key": pygame.K_PAGEUP},
-        "page_down": {"type": "key", "key": pygame.K_PAGEDOWN},
-        "filter": {"type": "key", "key": pygame.K_f},
-        "delete": {"type": "key", "key": pygame.K_BACKSPACE},
-        "space": {"type": "key", "key": pygame.K_SPACE}
-    }
-
-    def _is_keyboard_only_config(data):
-        if not isinstance(data, dict) or not data:
-            return False
-        for action_name, mapping in data.items():
-            if action_name == "device":
-                continue
-            if not isinstance(mapping, dict):
-                return False
-            if mapping.get("type") != "key":
-                return False
-        return True
-    
-    try:
-        # 1) Fichier utilisateur
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    data = {}
-            keyboard_mode = (not getattr(config, 'joystick', False)) or getattr(config, 'keyboard', False)
-            if keyboard_mode and not _is_keyboard_only_config(data):
-                logging.getLogger(__name__).info("Configuration utilisateur manette ignorée en mode clavier")
-            else:
-            # Compléter les actions manquantes, et sauve seulement si le fichier utilisateur existe
-                changed = False
-                for k, v in default_config.items():
-                    if k not in data:
-                        data[k] = v
-                        changed = True
-                if changed:
-                    try:
-                        os.makedirs(os.path.dirname(path), exist_ok=True)
-                        with open(path, "w", encoding="utf-8") as f:
-                            json.dump(data, f, indent=2)
-                        logging.getLogger(__name__).debug(f"controls.json complété avec les actions manquantes: {path}")
-                    except Exception as e:
-                        logging.getLogger(__name__).warning(f"Impossible d'écrire les actions manquantes dans {path}: {e}")
-                return data
-
-        # 2) Préréglages sans copie si aucun fichier utilisateur
-        try:
-            # --- Auto-match par nom de périphérique détecté ---
-            def _sanitize(s: str) -> str:
-                s = (s or "").strip().lower()
-                s = re.sub(r"[^a-z0-9]+", "_", s)
-                s = re.sub(r"_+", "_", s).strip("_")
-                return s
-
-            def _extract_device_from_comment(val: str) -> str:
-                try:
-                    if not isinstance(val, str):
-                        return ""
-                    # Expect formats like "# Device: NAME" or just NAME
-                    if "Device:" in val:
-                        part = val.split("Device:", 1)[1]
-                        return part.strip().lstrip('#').strip()
-                    return val.strip().lstrip('#').strip()
-                except Exception:
-                    return ""
-
-            device_name = getattr(config, 'controller_device_name', '') or ''
-            if getattr(config, 'joystick', False) and device_name:
-                target_norm = _sanitize(device_name)
-                try:
-                    for fname in os.listdir(config.PRECONF_CONTROLS_PATH):
-                        if not fname.lower().endswith('.json'):
-                            continue
-                        src = os.path.join(config.PRECONF_CONTROLS_PATH, fname)
-                        try:
-                            with open(src, 'r', encoding='utf-8') as f:
-                                preset = json.load(f)
-                        except Exception:
-                            continue
-                        # Match by explicit device field
-                        dev_field = preset.get('device') if isinstance(preset, dict) else None
-                        if isinstance(dev_field, str) and _sanitize(dev_field) == target_norm:
-                            logging.getLogger(__name__).info(f"Chargement préréglage (device) depuis le fichier: {fname}")
-                            print(f"Chargement prereglage (device) depuis le fichier: {fname}")
-                            return preset
-                except Exception as e:
-                    logging.getLogger(__name__).warning(f"Échec scan préréglages par device: {e}")
-
-            # Fallback préréglage explicite clavier si pas de joystick
-            if not getattr(config, 'joystick', False) or getattr(config, 'keyboard', False):
-                src = os.path.join(config.PRECONF_CONTROLS_PATH, 'keyboard.json')
-                if os.path.exists(src):
-                    with open(src, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, dict) and data:
-                            logging.getLogger(__name__).info("Chargement des contrôles préréglés: keyboard.json")
-                            return data
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Échec du chargement des contrôles préréglés: {e}")
-
-        # 3) Fallback: si joystick présent mais aucun préréglage trouvé, retourner {} pour déclencher le remap
-        if getattr(config, 'joystick', False):
-            logging.getLogger(__name__).info("Aucun préréglage trouvé pour le joystick connecté, ouverture du remap")
-            return {}
-        # Sinon, fallback clavier par défaut
-        logging.getLogger(__name__).info("Aucun fichier utilisateur ou préréglage trouvé, utilisation des contrôles clavier par défaut")
-        return default_config.copy()
-    
-    except Exception as e:
-        logging.getLogger(__name__).error(f"Erreur load_controls_config: {e}")
-        return default_config.copy()
-
-# Fonction pour vérifier si un événement correspond à une action
-def is_input_matched(event, action_name):
-    if not config.controls_config.get(action_name):
-        return False
-    mapping = config.controls_config[action_name]
-    input_type = mapping["type"]
-    
-    if input_type == "key" and event.type == pygame.KEYDOWN:
-        return event.key == mapping.get("key")
-    elif input_type == "button" and event.type == pygame.JOYBUTTONDOWN:
-        return event.button == mapping.get("button")
-    elif input_type == "axis" and event.type == pygame.JOYAXISMOTION:
-        axis = mapping.get("axis")
-        direction = mapping.get("direction")
-        threshold = 0.5
-        # Pour les triggers Xbox (axes 4 et 5), la position de repos est -1.0
-        # Il faut inverser la détection : direction -1 = trigger appuyé (vers +1.0)
-        if axis in [4, 5]:
-            # Triggers Xbox: repos à -1.0, appuyé vers +1.0
-            # On inverse la direction configurée
-            if direction == -1:
-                # Direction -1 configurée = détecter quand trigger appuyé (valeur positive)
-                return event.axis == axis and event.value > threshold
-            else:
-                # Direction +1 configurée = détecter aussi quand trigger appuyé
-                return event.axis == axis and event.value > threshold
-        else:
-            # Autres axes: logique normale
-            return event.axis == axis and abs(event.value) > threshold and (1 if event.value > 0 else -1) == direction
-    elif input_type == "hat" and event.type == pygame.JOYHATMOTION:
-        hat_value = mapping.get("value")
-        if isinstance(hat_value, list):
-            hat_value = tuple(hat_value)
-        return event.value == hat_value
-    elif input_type == "mouse" and event.type == pygame.MOUSEBUTTONDOWN:
-        return event.button == mapping.get("button")
-    
-    # Fallback clavier pour dépannage (fonctionne toujours même avec manette configurée)
-    if event.type == pygame.KEYDOWN:
-        keyboard_fallback = {
-            "up": pygame.K_UP,
-            "down": pygame.K_DOWN,
-            "left": pygame.K_LEFT,
-            "right": pygame.K_RIGHT,
-            "confirm": pygame.K_RETURN,
-            "cancel": pygame.K_ESCAPE,
-            "start": pygame.K_RALT,
-            "filter": pygame.K_f,
-            "history": pygame.K_h,
-            "clear_history": pygame.K_DELETE,
-            "delete": pygame.K_d,
-            "space": pygame.K_SPACE,
-            "page_up": pygame.K_PAGEUP,
-            "page_down": pygame.K_PAGEDOWN,
-        }
-        if action_name in keyboard_fallback:
-            return event.key == keyboard_fallback[action_name]
-    
-    return False
-
-
-def is_global_search_input_matched(event, action_name):
-    """Fallback robuste pour la recherche globale, independant du preset courant."""
-    if is_input_matched(event, action_name):
-        return True
-
-    if event.type == pygame.KEYDOWN:
-        keyboard_fallback = {
-            "up": pygame.K_UP,
-            "down": pygame.K_DOWN,
-            "left": pygame.K_LEFT,
-            "right": pygame.K_RIGHT,
-            "confirm": pygame.K_RETURN,
-            "cancel": pygame.K_ESCAPE,
-            "filter": pygame.K_f,
-            "delete": pygame.K_BACKSPACE,
-            "space": pygame.K_SPACE,
-            "page_up": pygame.K_PAGEUP,
-            "page_down": pygame.K_PAGEDOWN,
-        }
-        if action_name in keyboard_fallback and event.key == keyboard_fallback[action_name]:
-            return True
-
-    if event.type == pygame.JOYBUTTONDOWN:
-        common_button_fallback = {
-            "confirm": {0},
-            "cancel": {1},
-            "filter": {6},
-            "start": {7},
-            "delete": {2},
-            "space": {5},
-            "page_up": {4},
-            "page_down": {5},
-        }
-        if action_name in common_button_fallback and event.button in common_button_fallback[action_name]:
-            return True
-
-    if event.type == pygame.JOYHATMOTION:
-        hat_fallback = {
-            "up": (0, 1),
-            "down": (0, -1),
-            "left": (-1, 0),
-            "right": (1, 0),
-        }
-        if action_name in hat_fallback and event.value == hat_fallback[action_name]:
-            return True
-
-    if event.type == pygame.JOYAXISMOTION:
-        axis_fallback = {
-            "left": (0, -1),
-            "right": (0, 1),
-            "up": (1, -1),
-            "down": (1, 1),
-        }
-        if action_name in axis_fallback:
-            axis_id, direction = axis_fallback[action_name]
-            if event.axis == axis_id and abs(event.value) > 0.5 and (1 if event.value > 0 else -1) == direction:
-                return True
-
-    return False
-
-def _launch_next_queued_download(force: bool = False):
-    """Lance le(s) prochain(s) téléchargement(s) de la queue selon les slots disponibles.
-    Si force=True, ignore la limite (Force Download depuis l'UI).
-    Peut être appelée plusieurs fois pour remplir tous les slots libres.
-    """
-    max_dl = getattr(config, 'max_simultaneous_downloads', 5)
-    active = getattr(config, 'active_download_count', 0)
-    if not force and active >= max_dl:
-        return
-    if not config.download_queue:
-        return
-
-    queue_item = config.download_queue.pop(0)
-    config.active_download_count = active + 1
-    config.download_active = True
-
-    url = queue_item['url']
-    platform = queue_item['platform']
-    game_name = queue_item['game_name']
-    is_zip_non_supported = queue_item['is_zip_non_supported']
-    is_1fichier = queue_item['is_1fichier']
-    task_id = queue_item['task_id']
-
-    # Mettre à jour le statut dans l'historique: queued -> Downloading
-    for entry in config.history:
-        if entry.get('task_id') == task_id and entry.get('status') == 'Queued':
-            entry['status'] = 'Downloading'
-            entry['message'] = _("download_in_progress")
-            save_history(config.history)
-            break
-
-    logger.info(f"📋 Lancement téléchargement (slot {config.active_download_count}/{max_dl}): {game_name} (task_id={task_id})")
-
-    # Lancer le téléchargement de manière asynchrone avec callback
-    try:
-        if is_1fichier:
-            task = asyncio.create_task(download_from_1fichier(url, platform, game_name, is_zip_non_supported, task_id))
-        else:
-            task = asyncio.create_task(download_rom(url, platform, game_name, is_zip_non_supported, task_id))
-        _register_download_task(task_id, task, url, game_name, platform)
-        
-    except Exception as e:
-        logger.error(f"Erreur lancement queue download: {e}")
-        config.active_download_count = max(0, getattr(config, 'active_download_count', 1) - 1)
-        config.download_active = config.active_download_count > 0
-        # Mettre à jour l'historique en erreur
-        for entry in config.history:
-            if entry.get('task_id') == task_id:
-                entry['status'] = 'Erreur'
-                entry['message'] = str(e)
-                save_history(config.history)
-                break
-        # Relancer le suivant
-        _launch_next_queued_download()
-
-
-def _register_download_task(task_id: str, task, url: str, game_name: str, platform: str, increment_slot: bool = False):
-    """Enregistre une tâche de téléchargement et branche la relance de queue à la fin."""
-    if increment_slot:
-        config.active_download_count = getattr(config, 'active_download_count', 0) + 1
-        config.download_active = True
-
-    config.download_tasks[task_id] = (task, url, game_name, platform)
-
-    def on_task_done(t):
-        try:
-            t.result()
-        except asyncio.CancelledError:
-            logger.info(f"Tâche annulée pour {game_name} (task_id={task_id})")
-        except Exception as e:
-            logger.error(f"Erreur tâche download {game_name}: {e}")
-        finally:
-            # Le décrément des slots est géré dans network.notify_download_finished().
-            config.download_active = getattr(config, 'active_download_count', 0) > 0
-            _launch_next_queued_download()
-
-    task.add_done_callback(on_task_done)
-
-
-def _queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None) -> str:
-    """Ajoute un téléchargement à la file d'attente et l'historique."""
-    task_id = str(pygame.time.get_ticks())
-    queue_item = {
-        'url': url,
-        'platform': platform,
-        'game_name': game_name,
-        'is_zip_non_supported': is_zip_non_supported,
-        'is_1fichier': is_1fichier_url(url),
-        'task_id': task_id,
-        'status': 'Queued'
-    }
-    config.download_queue.append(queue_item)
-
-    shown_name = display_name or get_clean_display_name(game_name, platform)
-    config.history.append({
-        'platform': platform,
-        'game_name': game_name,
-        'display_name': shown_name,
-        'status': 'Queued',
-        'url': url,
-        'progress': 0,
-        'message': _("download_queued"),
-        'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'downloaded_size': 0,
-        'total_size': 0,
-        'task_id': task_id
-    })
-    save_history(config.history)
-    show_toast(f"{shown_name}\n{_('download_queued')}")
-    config.needs_redraw = True
-    logger.info(f"{game_name} ajouté à la file d'attente. Queue size: {len(config.download_queue)}")
-    return task_id
-
-
-def _delegate_download_to_manager(url: str, platform: str, game_name: str, display_name: str | None = None):
-    """Délègue un téléchargement au manager RGSX via HTTP (en arrière-plan)."""
-    import urllib.request
-    port = getattr(config, 'manager_port', 5000)
-    shown_name = display_name or get_clean_display_name(game_name, platform)
-
-    def _post():
-        try:
-            body = json.dumps({
-                'platform': platform,
-                'game_name': game_name,
-                'url': url,
-                'mode': 'now',
-            }).encode('utf-8')
-            req = urllib.request.Request(
-                f'http://127.0.0.1:{port}/api/download',
-                data=body,
-                headers={'Content-Type': 'application/json'},
-            )
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-            if data.get('success'):
-                show_toast(f"{shown_name}\n{_('download_started') if _ else 'Download started'}")
-            else:
-                logger.error(f"[MANAGER] /api/download refusé: {data.get('error')}")
-        except Exception as e:
-            logger.error(f"[MANAGER] délégation échouée: {e}")
-
-    threading.Thread(target=_post, daemon=True).start()
-    config.needs_redraw = True
-    return ("queued", "manager")
-
-
-def start_or_queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None, force_start: bool = False) -> tuple[str, str]:
-    """Démarre un téléchargement si un slot est libre, sinon le place en queue."""
-    # Mode manager: tous les téléchargements passent par le daemon (tray/web/TV unifiés).
-    if getattr(config, 'manager_available', False):
-        return _delegate_download_to_manager(url, platform, game_name, display_name)
-
-    max_dl = getattr(config, 'max_simultaneous_downloads', 5)
-    active = getattr(config, 'active_download_count', 0)
-
-    if not force_start and active >= max_dl:
-        task_id = _queue_download(url, platform, game_name, is_zip_non_supported, display_name)
-        _launch_next_queued_download()
-        return ("queued", task_id)
-
-    if is_1fichier_url(url):
-        ensure_download_provider_keys(False)
-        if missing_all_provider_keys():
-            logger.warning("Aucune clé API - Mode gratuit 1fichier sera utilisé (attente requise)")
-        task_id = str(pygame.time.get_ticks())
-        task = asyncio.create_task(download_from_1fichier(url, platform, game_name, is_zip_non_supported, task_id))
-    else:
-        task_id = str(pygame.time.get_ticks())
-        task = asyncio.create_task(download_rom(url, platform, game_name, is_zip_non_supported, task_id))
-
-    _register_download_task(task_id, task, url, game_name, platform, increment_slot=True)
-    shown_name = display_name or get_clean_display_name(game_name, platform)
-    show_toast(f"{_('download_started')}: {shown_name}")
-    config.needs_redraw = True
-    logger.info(f"Téléchargement démarré: {game_name} pour {platform}, task_id={task_id}")
-    return ("started", task_id)
-
-def filter_games_by_search_query() -> list[Game]:
-    base_games = config.games
-    if config.game_filter_obj and config.game_filter_obj.is_active():
-        platform = config.platforms[config.current_platform]
-        platform_name = config.platform_names.get(platform, platform)
-        base_games = config.game_filter_obj.apply_filters(config.games, platform_name)
-  
-    filtered_games = []
-    for game in base_games:
-        game_name = game.display_name 
-        if config.search_query.lower() in game_name.lower():
-            filtered_games.append(game)
-
-    return _sort_local_games(filtered_games)
-
-
-GLOBAL_SEARCH_KEYBOARD_LAYOUT = [
-    ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
-    ['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-    ['Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M'],
-    ['W', 'X', 'C', 'V', 'B', 'N']
-]
-
-
-def _get_platform_id(platform) -> str:
-    return platform.get("name") if isinstance(platform, dict) else str(platform)
-
-
-def _get_platform_label(platform_id: str) -> str:
-    return config.platform_names.get(platform_id, platform_id)
-
-
-def _build_global_search_loading_title() -> str:
-    fallback = "Loading..."
-    if _ is None:
-        return fallback
-    try:
-        text = _("global_search_title").format("").replace(" : ", "").rstrip(': ')
-    except Exception:
-        text = ""
-    return text or fallback
-
-
-def build_global_search_index() -> list[dict]:
-    indexed_games = []
-    total_platforms = max(1, len(config.platforms))
-    for platform_index, platform in enumerate(config.platforms):
-        platform_id = _get_platform_id(platform)
-        platform_label = _get_platform_label(platform_id)
-        _refresh_loading_feedback(
-            current_system=_build_global_search_loading_title(),
-            progress=((platform_index / total_platforms) * 100.0),
-            detail_lines=[
-                _("loading_platform_counter").format(platform_index + 1, total_platforms) if _ else f"Platform {platform_index + 1}/{total_platforms}",
-                _("loading_platform_name").format(platform_label) if _ else f"Platform: {platform_label}",
-                _("loading_read_games_resolve_sources") if _ else "Reading games and resolving sources...",
-            ],
-            force=True,
-        )
-        for game in load_games(platform_id):
-            display_name = game.display_name or Path(game.name).stem
-            indexed_games.append({
-                "platform_id": platform_id,
-                "platform_label": platform_label,
-                "platform_index": platform_index,
-                "game_name": game.name,
-                "display_name": display_name,
-                "search_name": display_name.lower(),
-                "url": game.url,
-                "size": game.size,
-                "size_bytes": parse_game_size_to_bytes(game.size),
-                "game_obj": game,
-            })
-
-    _refresh_loading_feedback(
-        current_system=_build_global_search_loading_title(),
-        progress=100.0,
-        detail_lines=[
-            _("loading_platform_counter").format(total_platforms, total_platforms) if _ else f"Platform {total_platforms}/{total_platforms}",
-        ],
-        force=True,
-    )
-
-    return _sort_global_items(indexed_games)
-
-
-def _load_embedded_global_search_index() -> list[dict] | None:
-    cache_path = getattr(config, 'GLOBAL_SEARCH_INDEX_CACHE_PATH', '')
-    if not cache_path or not os.path.exists(cache_path):
-        return None
-
-    try:
-        with open(cache_path, 'r', encoding='utf-8') as handle:
-            payload = json.load(handle)
-    except Exception as exc:
-        logger.warning(f"Impossible de charger l'index global embarque: {exc}")
-        return None
-
-    raw_entries = payload.get('entries') if isinstance(payload, dict) else None
-    if not isinstance(raw_entries, list):
-        return None
-
-    platform_order: dict[str, int] = {}
-    for index, platform in enumerate(config.platforms):
-        platform_order[_get_platform_id(platform)] = index
-
-    indexed_games = []
-    for raw_entry in raw_entries:
-        if not isinstance(raw_entry, dict):
-            continue
-        platform_id = str(raw_entry.get('platform_id') or '').strip()
-        if not platform_id or platform_id not in platform_order:
-            continue
-
-        game_name = str(raw_entry.get('game_name') or '').strip()
-        if not game_name:
-            continue
-
-        display_name = str(raw_entry.get('display_name') or '').strip() or Path(game_name).stem
-        url = str(raw_entry.get('url') or '').strip() or None
-        size = str(raw_entry.get('size') or '').strip() or None
-        try:
-            size_bytes = int(raw_entry.get('size_bytes') or 0)
-        except (TypeError, ValueError):
-            size_bytes = 0
-
-        game_obj = Game(name=game_name, url=url, size=size, display_name=display_name)
-        indexed_games.append({
-            'platform_id': platform_id,
-            'platform_label': _get_platform_label(platform_id),
-            'platform_index': platform_order[platform_id],
-            'game_name': game_name,
-            'display_name': display_name,
-            'search_name': display_name.lower(),
-            'url': url,
-            'size': size,
-            'size_bytes': size_bytes,
-            'game_obj': game_obj,
-        })
-
-    if indexed_games:
-        logger.info(f"Index global charge depuis le cache embarque: {len(indexed_games)} jeux")
-        return _sort_global_items(indexed_games)
-    return None
-
-
-def _ensure_global_search_index(operation_title: str | None = None) -> None:
-    index_signature = tuple(config.platforms)
-    if getattr(config, 'global_search_index', None) and getattr(config, 'global_search_index_signature', None) == index_signature:
-        return
-
-    embedded_index = _load_embedded_global_search_index()
-    if embedded_index is not None:
-        config.global_search_index = embedded_index
-        config.global_search_index_signature = index_signature
-        return
-
-    previous_menu_state = getattr(config, 'menu_state', 'platform')
-    previous_loading_system = getattr(config, 'current_loading_system', '')
-    previous_loading_progress = getattr(config, 'loading_progress', 0.0)
-    previous_loading_detail_lines = list(getattr(config, 'loading_detail_lines', []) or [])
-
-    config.menu_state = "loading"
-    config.current_loading_system = operation_title or _build_global_search_loading_title()
-    config.loading_progress = 0.0
-    config.loading_detail_lines = [config.current_loading_system]
-    config.needs_redraw = True
-    _refresh_loading_feedback(force=True)
-
-    try:
-        config.global_search_index = build_global_search_index()
-        config.global_search_index_signature = index_signature
-    finally:
-        config.menu_state = previous_menu_state
-        config.current_loading_system = previous_loading_system
-        config.loading_progress = previous_loading_progress
-        config.loading_detail_lines = previous_loading_detail_lines
-        config.needs_redraw = True
-
-
-def refresh_global_search_results(reset_selection: bool = True) -> None:
-    query = (config.global_search_query or "").strip().lower()
-    items = list(getattr(config, 'global_search_index', []) or [])
-
-    filter_obj = getattr(config, 'game_filter_obj', None)
-    if filter_obj and filter_obj.is_active():
-        # Gérer hide_downloaded par item (car chaque item a son platform_label)
-        if getattr(filter_obj, 'hide_downloaded', False):
-            from history import is_game_downloaded
-            items = [item for item in items if not is_game_downloaded(item.get('platform_label', ''), item.get('game_name', ''))]
-        
-        item_by_game = {id(item.get('game_obj')): item for item in items}
-        filtered_games = filter_obj.apply_filters([item.get('game_obj') for item in items if item.get('game_obj') is not None], platform_name=None)
-        items = [item_by_game[id(game)] for game in filtered_games if id(game) in item_by_game]
-
-    if query:
-        items = [
-            item for item in items
-            if query in item.get("search_name", item["display_name"].lower())
-        ]
-    elif not getattr(config, 'global_search_allow_empty', False):
-        items = []
-
-    config.global_search_results = _sort_global_items(items)
-
-    if reset_selection:
-        config.global_search_selected = 0
-        config.global_search_scroll_offset = 0
-    else:
-        max_index = max(0, len(config.global_search_results) - 1)
-        config.global_search_selected = max(0, min(config.global_search_selected, max_index))
-        config.global_search_scroll_offset = max(0, min(config.global_search_scroll_offset, config.global_search_selected))
-
-
-def enter_global_search() -> None:
-    _ensure_global_search_index(_build_global_search_loading_title())
-    config.global_search_query = ""
-    config.global_search_results = []
-    config.global_search_selected = 0
-    config.global_search_scroll_offset = 0
-    config.global_search_editing = bool(getattr(config, 'joystick', False))
-    config.global_search_allow_empty = False
-    config.global_search_title_override = _("global_search_title").format("").replace(" : ", "").rstrip(': ') if _ else 'Recherche globale'
-    config.selected_key = (0, 0)
-    config.menu_state = "platform_search"
-    config.needs_redraw = True
-    logger.debug("Entree en recherche globale inter-plateformes")
-
-
-def enter_global_filtered_results() -> None:
-    _ensure_global_search_index(_("filter_advanced") if _ else "Loading...")
-    config.global_search_query = ""
-    config.global_search_selected = 0
-    config.global_search_scroll_offset = 0
-    config.global_search_editing = False
-    config.global_search_allow_empty = True
-    config.global_search_title_override = _("filter_advanced") if _ else 'Filtrer'
-    refresh_global_search_results(reset_selection=True)
-    config.menu_state = "platform_search"
-    config.needs_redraw = True
-    logger.debug(f"Affichage des resultats globaux filtres: {len(config.global_search_results)}")
-
-
-def enter_global_sorted_results() -> None:
-    _ensure_global_search_index(_("web_sort") if _ else "Loading...")
-    config.global_search_query = ""
-    config.global_search_selected = 0
-    config.global_search_scroll_offset = 0
-    config.global_search_editing = False
-    config.global_search_allow_empty = True
-    config.global_search_title_override = _("web_sort") if _ else 'Trier'
-    refresh_global_search_results(reset_selection=True)
-    config.menu_state = "platform_search"
-    config.needs_redraw = True
-    logger.debug(f"Affichage des resultats globaux tries ({config.global_sort_option}): {len(config.global_search_results)}")
-
-
-def exit_global_search() -> None:
-    config.global_search_query = ""
-    config.global_search_results = []
-    config.global_search_selected = 0
-    config.global_search_scroll_offset = 0
-    config.global_search_editing = False
-    config.global_search_allow_empty = False
-    config.global_search_title_override = ""
-    config.selected_key = (0, 0)
-    config.menu_state = validate_menu_state(getattr(config, 'global_search_return_state', None) or getattr(config, 'previous_menu_state', None))
-    config.needs_redraw = True
-
-
-def open_global_search_result(screen) -> None:
-    if not config.global_search_results:
-        return
-
-    result = config.global_search_results[config.global_search_selected]
-    platform_index = result.get("platform_index", 0)
-    if platform_index < 0 or platform_index >= len(config.platforms):
-        return
-
-    config.current_platform = platform_index
-    config.selected_platform = platform_index
-    config.current_page = platform_index // max(1, config.GRID_COLS * config.GRID_ROWS)
-
-    platform_id = result["platform_id"]
-    config.games = load_games(platform_id)
-    scan_platform_roms_on_enter(platform_id)
-    config.filtered_games = config.games
-    config.search_mode = False
-    config.search_query = ""
-    config.filter_active = False
-
-    target_name = result["game_name"]
-    target_display_name = result["display_name"]
-    target_index = 0
-    for index, game in enumerate(config.games):
-        if game.name == target_name:
-            target_index = index
-            break
-        if game.display_name == target_display_name:
-            target_index = index
-
-    config.current_game = target_index
-    config.scroll_offset = 0
-    config.global_search_editing = False
-
-    from rgsx_settings import get_light_mode
-    if not get_light_mode():
-        draw_validation_transition(screen, config.current_platform)
-
-    config.menu_state = "game"
-    config.needs_redraw = True
-    logger.debug(f"Ouverture du resultat global {target_display_name} sur {platform_id}")
-
-
-def trigger_global_search_download(queue_only: bool = False) -> None:
-    if not config.global_search_results:
-        return
-
-    result = config.global_search_results[config.global_search_selected]
-    url = result.get("url")
-    platform = result.get("platform_id")
-    game_name = result.get("game_name")
-    display_name = result.get("display_name") or get_clean_display_name(game_name, platform)
-
-    if not platform or not game_name:
-        logger.error(f"Resultat de recherche globale invalide: {result}")
-        return
-    if not _has_download_url(url, game_name):
-        return
-
-    pending_download = check_extension_before_download(url, platform, game_name)
-    if not pending_download:
-        logger.error(f"config.pending_download est None pour {game_name}")
-        config.needs_redraw = True
-        return
-
-    is_supported = is_extension_supported(
-        sanitize_filename(game_name),
-        platform,
-        load_extensions_json()
-    )
-    zip_ok = bool(pending_download[3])
-    allow_unknown = get_allow_unknown_extensions()
-
-    if (not is_supported and not zip_ok) and not allow_unknown:
-        config.pending_download = pending_download
-        config.pending_download_is_queue = queue_only
-        config.previous_menu_state = config.menu_state
-        config.menu_state = "extension_warning"
-        config.extension_confirm_selection = 0
-        config.needs_redraw = True
-        logger.debug(f"Extension non supportee, passage a extension_warning pour {game_name}")
-        return
-
-    if queue_only:
-        _queue_download(url, platform, game_name, pending_download[3], display_name)
-        _launch_next_queued_download()
-        return
-
-    start_or_queue_download(url, platform, game_name, pending_download[3], display_name)
 
 def handle_controls(event, sources, joystick, screen):
     """Gère un événement clavier/joystick/souris et la répétition automatique.
@@ -4862,109 +3891,3 @@ def handle_controls(event, sources, joystick, screen):
 
     return action
 
-# Nouvelle implémentation de la répétition des touches
-def update_key_state(action, pressed, event_type=None, event_value=None):
-    """Met à jour l'état d'une touche pour la répétition automatique."""
-    current_time = pygame.time.get_ticks()
-    
-    if pressed:
-        # La touche vient d'être pressée
-        if action not in key_states:
-            key_states[action] = {
-                "pressed": True,
-                "first_press_time": current_time,
-                "last_repeat_time": current_time,
-                "event_type": event_type,
-                "event_value": event_value
-            }
-    else:
-        # La touche vient d'être relâchée
-        if action in key_states:
-            del key_states[action]
-
-
-def clear_joystick_repeat_states() -> None:
-    """Supprime les états de répétition issus de la manette.
-
-    Utile quand une manette Bluetooth se déconnecte sans envoyer tous les
-    événements de relâchement, afin d'éviter des événements fantômes en boucle.
-    """
-    joystick_event_types = {
-        pygame.JOYBUTTONDOWN,
-        pygame.JOYAXISMOTION,
-        pygame.JOYHATMOTION,
-    }
-
-    for action, state in list(key_states.items()):
-        if state.get("event_type") in joystick_event_types:
-            del key_states[action]
-
-def process_key_repeats(sources, joystick, screen):
-    """Traite la répétition des touches."""
-    current_time = pygame.time.get_ticks()
-
-    # Si aucune manette active, purge les états de répétition joystick pour
-    # éviter la génération d'événements JOY* synthétiques bloquants.
-    if not getattr(config, 'joystick', False) or joystick is None:
-        clear_joystick_repeat_states()
-    
-    for action, state in list(key_states.items()):
-        if not state["pressed"]:
-            continue
-
-        # En l'absence de manette, ignorer les repeats joystick résiduels.
-        if state.get("event_type") in (pygame.JOYBUTTONDOWN, pygame.JOYAXISMOTION, pygame.JOYHATMOTION):
-            if not getattr(config, 'joystick', False) or joystick is None:
-                del key_states[action]
-                continue
-            
-        time_since_first_press = current_time - state["first_press_time"]
-        time_since_last_repeat = current_time - state["last_repeat_time"]
-        
-        # Vérifier si nous devons déclencher une répétition
-        if (time_since_first_press > REPEAT_DELAY and 
-            time_since_last_repeat > REPEAT_INTERVAL):
-            
-            # Créer un événement synthétique selon le type
-            event_type = state["event_type"]
-            event_value = state["event_value"]
-            
-            if event_type == pygame.KEYDOWN:
-                event = pygame.event.Event(pygame.KEYDOWN, {"key": event_value})
-            elif event_type == pygame.JOYBUTTONDOWN:
-                event = pygame.event.Event(pygame.JOYBUTTONDOWN, {"button": event_value})
-            elif event_type == pygame.JOYAXISMOTION:
-                axis, value = event_value
-                event = pygame.event.Event(pygame.JOYAXISMOTION, {"axis": axis, "value": value})
-            elif event_type == pygame.JOYHATMOTION:
-                event = pygame.event.Event(pygame.JOYHATMOTION, {"value": event_value})
-            else:
-                continue  # Type d'événement non pris en charge
-            
-            # Traiter l'événement répété
-            handle_controls(event, sources, joystick, screen)
-            
-            # Mettre à jour le temps de la dernière répétition
-            state["last_repeat_time"] = current_time
-            
-            # Forcer le redessinage
-            config.needs_redraw = True
-
-def get_emergency_controls():
-    """Retourne une configuration de contrôles de secours pour permettre la navigation de base."""
-    return {
-        "confirm": {"type": "key", "key": pygame.K_RETURN},
-        "cancel": {"type": "key", "key": pygame.K_ESCAPE},
-        "up": {"type": "key", "key": pygame.K_UP},
-        "down": {"type": "key", "key": pygame.K_DOWN},
-        "left": {"type": "key", "key": pygame.K_LEFT},
-        "right": {"type": "key", "key": pygame.K_RIGHT},
-        "start": {"type": "key", "key": pygame.K_p},
-        "history": {"type": "key", "key": pygame.K_h},
-        "clear_history": {"type": "key", "key": pygame.K_x},
-        "page_up": {"type": "key", "key": pygame.K_PAGEUP},
-        "page_down": {"type": "key", "key": pygame.K_PAGEDOWN},
-        # manette basique
-        "confirm_joy": {"type": "button", "button": 0},
-        "cancel_joy": {"type": "button", "button": 1},
-    }
