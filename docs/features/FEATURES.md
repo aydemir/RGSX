@@ -1,5 +1,36 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Watchdog / Auto-restart (2026.08.10)
+
+**Olay:** `manager_healthy()` tek seferlik kontroldü; manager çöker veya HTTP sunucusu
+takılırsa indirmeler sessizce duruyordu. Sürekli sağlık poll eden mekanizma yoktu.
+
+**Yapılan değişiklikler:**
+- **`watchdog.py`** (YENİ, saf modül): `HysteresisMonitor` — ardışık health fail'leri
+  `DEGRADED` (3) → `UNRESPONSIVE` (6) geçişi üretir; her başarı sayaçları sıfırlar (RUNNING'e
+  döner). `RestartLimiter` — kayan pencerede (1 saat) en fazla 3 restart'a izin verir,
+  crash-loop'u önler; limit dolunca `CRASHED`.
+- **`rgsx_manager.py`:** `_start_watchdog()` thread'i 5 sn'de bir `/api/health` poll eder.
+  UNRESPONSIVE → `_spawn_manager()` ile aynı argümanlarla (orijinal `--no-tray` dahil) spawn
+  + mevcut süreç kapanışı (eski `_restart_manager_for_settings()` deseni ortak helper'a
+  refactor edildi). `/api/health` artık `manager_state` döndürür.
+- **`__main__.py` (TV UI dış supervisor):** Tray manager'ın içinde yaşadığı için hard-crash'te
+  supervise edemez; supervisor rolü manager'ı spawn eden TV UI sürecine verildi.
+  `_manager_supervisor_loop` 5 sn'de bir health poll; UNRESPONSIVE → respawn +
+  `_wait_for_manager_ready()` (port fallback'e kayarsa settings'ten yeniden okunur).
+  Restart limiti aşılırsa CRASHED log. TV UI kapalıyken daemon-only kurulumlar: Task Scheduler
+  (Windows) / systemd (Linux) alternatifi roadmap'te belgeli.
+- **`qbittorrent_backend.py`:** Yaşayan ama WebUI'su yanıt vermeyen process için sınırlı retry
+  (`_WEBUI_RESPONSIVE_RETRIES=3`); tükenince UNRESPONSIVE → `_terminate_managed_process()` →
+  probe/taze başlatma (RESTARTING→RUNNING). `get_backend_state()` ile durum izlenebilir.
+- **`tests/test_watchdog.py`:** 12 state-makinesi/restart-limit testi (watchdog.py %100 kapsam).
+
+**Doğrulama:** 119 test geçti (12 yeni + mevcut). Canlı dev makinesinde: manager PID'ini kill →
+TV UI supervisor respawn'ı spawn log'dan; qBittorrent'i kill → backend log'unda
+UNRESPONSIVE→RESTARTING→RUNNING geçişleri.
+
+---
+
 ## qBittorrent WebUI Port Fallback (2026.08.10)
 
 **Olay:** WebUI portu `_TARGET_PORT=18572` hardcoded'dı; Windows'ta çakışma durumunda

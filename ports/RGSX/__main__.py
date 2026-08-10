@@ -500,6 +500,53 @@ def _manager_healthy(port=None):
         return False
 
 
+def _spawn_manager_process(port):
+    """rgsx_manager.py'yi arka planda spawn eder. Başarılıysa process döner."""
+    manager_script = os.path.join(config.APP_FOLDER, 'rgsx_manager.py')
+    if not os.path.exists(manager_script):
+        logger.warning(f'Manager introuvable: {manager_script}, mode local')
+        return None
+    try:
+        spawn_log = os.path.join(config.log_dir, 'rgsx_manager_spawn.log')
+        with open(spawn_log, 'w', encoding='utf-8') as log_file:
+            if config.OPERATING_SYSTEM == 'Windows':
+                CREATE_NO_WINDOW = 0x08000000
+                proc = subprocess.Popen(
+                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    cwd=config.APP_FOLDER, creationflags=CREATE_NO_WINDOW)
+            else:
+                proc = subprocess.Popen(
+                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    cwd=config.APP_FOLDER)
+        return proc
+    except Exception as e:
+        logger.error(f'Erreur démarrage manager: {e}')
+        return None
+
+
+def _wait_for_manager_ready(proc=None, timeout=30):
+    """Manager sağlıklı olana dek bekler; port settings'ten yeniden okunur
+    (Faz 3 fallback'e geçerse yeni port yakalanır). True = hazır."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            from rgsx_settings import get_manager_port
+            port = get_manager_port()
+            config.manager_port = port
+        except Exception:
+            pass
+        if _manager_healthy(port):
+            return True
+        if proc is not None and proc.poll() is not None:
+            logger.warning(f'Manager arrêté immédiatement (code {proc.returncode}), mode local')
+            return False
+        time.sleep(0.5)
+    logger.warning('Manager non prêt, mode local')
+    return False
+
+
 def ensure_manager():
     """Garantit qu'un manager RGSX est actif et expose config.manager_available.
 
@@ -525,50 +572,75 @@ def ensure_manager():
         logger.info(f'✅ Manager RGSX déjà actif sur http://localhost:{port}')
         return True
 
-    manager_script = os.path.join(config.APP_FOLDER, 'rgsx_manager.py')
-    if not os.path.exists(manager_script):
-        logger.warning(f'Manager introuvable: {manager_script}, mode local')
+    proc = _spawn_manager_process(port)
+    if proc is None:
         return False
 
-    # Tenter de démarrer le manager en arrière-plan
-    try:
-        spawn_log = os.path.join(config.log_dir, 'rgsx_manager_spawn.log')
-        with open(spawn_log, 'w', encoding='utf-8') as log_file:
-            if config.OPERATING_SYSTEM == 'Windows':
-                CREATE_NO_WINDOW = 0x08000000
-                proc = subprocess.Popen(
-                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
-                    stdout=log_file, stderr=subprocess.STDOUT,
-                    cwd=config.APP_FOLDER, creationflags=CREATE_NO_WINDOW)
+    if _wait_for_manager_ready(proc=proc, timeout=30):
+        config.manager_available = True
+        logger.info('✅ Manager RGSX démarré')
+        return True
+    return False
+
+
+# ===== Faz 4 — Dış supervisor (TV UI) =====
+# Tray, manager process'inin İÇİNDE yaşadığı için manager'ı supervise edemez
+# (hard-crash'te ikisi birlikte ölür). Gerçek dış supervisor, manager'ı spawn
+# eden TV UI sürecidir: manager'ın /api/health'i yanıtlamadığını görünce respawn
+# eder. TV UI yoksa (--no-tray / daemon-only) Task Scheduler (Windows) / systemd
+# (Linux) alternatifi ROADMAP_DOWNLOAD_MANAGER.md'de belgelenir.
+
+from watchdog import (  # noqa: E402
+    STATE_UNRESPONSIVE,
+    HysteresisMonitor,
+    RestartLimiter,
+)
+
+_SUPERVISOR_POLL_SECONDS = 5.0
+_SUPERVISOR_DEGRADE_THRESHOLD = 3
+_SUPERVISOR_UNRESPONSIVE_THRESHOLD = 6
+_SUPERVISOR_MAX_RESTARTS = 3
+_SUPERVISOR_RESTART_WINDOW_SECONDS = 3600
+
+
+def _start_manager_supervisor():
+    """Manager hard-crash / kalıcı yanıtsızlık durumunda respawn eden daemon thread."""
+    threading.Thread(target=_manager_supervisor_loop, daemon=True,
+                     name="manager-supervisor").start()
+
+
+def _manager_supervisor_loop():
+    monitor = HysteresisMonitor(_SUPERVISOR_DEGRADE_THRESHOLD, _SUPERVISOR_UNRESPONSIVE_THRESHOLD)
+    limiter = RestartLimiter(_SUPERVISOR_MAX_RESTARTS, _SUPERVISOR_RESTART_WINDOW_SECONDS)
+    while True:
+        time.sleep(_SUPERVISOR_POLL_SECONDS)
+        if not getattr(config, 'manager_available', False):
+            continue
+        try:
+            from rgsx_settings import get_manager_port
+            port = get_manager_port()
+            config.manager_port = port
+        except Exception:
+            port = getattr(config, 'manager_port', 5000)
+        healthy = _manager_healthy(port)
+        state = monitor.report(healthy)
+        logger.debug(f"[SUPERVISOR] manager health={'ok' if healthy else 'fail'} → {state}")
+        if state != STATE_UNRESPONSIVE:
+            continue
+        if limiter.record_restart():
+            logger.error(f"[SUPERVISOR] manager yanıtsız ({port}) → RESTARTING (respawn)")
+            if _spawn_manager_process(port) is None:
+                logger.error("[SUPERVISOR] respawn başlatılamadı — manager kapalı kalabilir")
+                continue
+            # Respawn sonrası yeni portu bekle/yakala; başarısızsa bir sonraki
+            # poll turunda tekrar denenecek (RestartLimiter sınırlar).
+            if _wait_for_manager_ready(timeout=30):
+                monitor.reset()
+                logger.info("[SUPERVISOR] manager yeniden sağlıklı")
             else:
-                proc = subprocess.Popen(
-                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
-                    stdout=log_file, stderr=subprocess.STDOUT,
-                    cwd=config.APP_FOLDER)
-
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            # Faz 4: manager istenen port doluysa 5000+N'ye geçip settings'e yazabilir;
-            # her tur gerçek portu yeniden oku ki alternatif porta geçiş yakalansın.
-            try:
-                from rgsx_settings import get_manager_port
-                port = get_manager_port()
-                config.manager_port = port
-            except Exception:
-                pass
-            if _manager_healthy(port):
-                config.manager_available = True
-                logger.info('✅ Manager RGSX démarré')
-                return True
-            if proc.poll() is not None:
-                logger.warning(f'Manager arrêté immédiatement (code {proc.returncode}), mode local')
-                return False
-            time.sleep(0.5)
-        logger.warning('Manager non prêt après 30s, mode local')
-        return False
-    except Exception as e:
-        logger.error(f'Erreur démarrage manager: {e}')
-        return False
+                logger.warning("[SUPERVISOR] respawn sonrası manager 30s içinde hazır olmadı")
+        else:
+            logger.error("[SUPERVISOR] restart limiti aşıldı → CRASHED, elle müdahale gerekli")
 
 
 def stop_web_server():
@@ -774,6 +846,12 @@ async def main():
     # S'il est joignable, les téléchargements sont délégués au manager via HTTP.
     # Le serveur web est alors fourni par le manager (rgsx_manager -> rgsx_web.run_server).
     ensure_manager()
+
+    # Faz 4: manager crash/hang durumunda respawn eden dış supervisor.
+    # Yalnızca manager devredeyken çalışır (TV UI kapanınca daemon thread ölür;
+    # daemon-only kurulumlar için ROADMAP'te Task Scheduler/systemd notu).
+    if getattr(config, 'manager_available', False):
+        _start_manager_supervisor()
 
     # Démarrer le client SSE pour refléter l'état du manager dans la TV UI.
     _start_manager_sse_listener()

@@ -51,6 +51,16 @@ from network import (
     is_any_download_paused,
 )
 from history import load_history, save_history
+from watchdog import (
+    STATE_CRASHED,
+    STATE_DEGRADED,
+    STATE_INIT,
+    STATE_RESTARTING,
+    STATE_RUNNING,
+    STATE_UNRESPONSIVE,
+    HysteresisMonitor,
+    RestartLimiter,
+)
 
 logger = logging.getLogger("rgsx_manager")
 
@@ -180,6 +190,7 @@ class ManagerHandler(RGSXHandler):
                 "manager": True,
                 "version": getattr(config, "app_version", ""),
                 "pid": os.getpid(),
+                "manager_state": get_manager_state(),
             })
             return
 
@@ -691,16 +702,8 @@ def _restart_manager_for_settings():
         from rgsx_settings import get_manager_port, get_manager_host
         new_port = get_manager_port()
         new_host = get_manager_host()
-        cmd = [sys.executable, os.path.abspath(__file__),
-               f"--port={new_port}", f"--host={new_host}", "--minimized"]
-        if os.name == "nt":
-            CREATE_NO_WINDOW = 0x08000000
-            subprocess.Popen(cmd, cwd=os.path.dirname(os.path.abspath(__file__)),
-                             creationflags=CREATE_NO_WINDOW,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.Popen(cmd, cwd=os.path.dirname(os.path.abspath(__file__)),
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not _spawn_manager([f"--port={new_port}", f"--host={new_host}"]):
+            return
         logger.info(f"[MANAGER] Restart: port={new_port} host={new_host}")
     except Exception as e:
         logger.warning(f"[MANAGER] Restart spawn hatası: {e}")
@@ -757,6 +760,98 @@ def _resume_interrupted_downloads() -> int:
 
     logger.info(f"[RESUME] {len(interrupted)} téléchargement(s) remis en file après redémarrage")
     return len(interrupted)
+
+
+# ---------------------------------------------------------------------------
+# Faz 4 — Watchdog / auto-restart
+# ---------------------------------------------------------------------------
+_WATCHDOG_POLL_SECONDS = 5.0
+_WATCHDOG_HEALTH_TIMEOUT = 3.0
+_WATCHDOG_DEGRADE_THRESHOLD = 3
+_WATCHDOG_UNRESPONSIVE_THRESHOLD = 6
+_WATCHDOG_MAX_RESTARTS = 3
+_WATCHDOG_RESTART_WINDOW_SECONDS = 3600
+
+MANAGER_STATE = STATE_INIT
+MANAGER_STATE_LOCK = threading.Lock()
+
+
+def get_manager_state() -> str:
+    with MANAGER_STATE_LOCK:
+        return MANAGER_STATE
+
+
+def _set_manager_state(new_state: str, reason: str = "") -> None:
+    global MANAGER_STATE
+    with MANAGER_STATE_LOCK:
+        previous = MANAGER_STATE
+        MANAGER_STATE = new_state
+    if previous != new_state:
+        logger.warning(f"[WATCHDOG] manager {previous} → {new_state} ({reason})")
+
+
+def _spawn_manager(extra_args: list[str] | None = None) -> bool:
+    """Mevcut süreci aynı argümanlarla yeniden spawn eder.
+
+    extra_args sona eklenir; argparse son değeri alır, bu yüzden --port/--host
+    override edilebilir. Mevcut process'i kapatmak çağıranın işidir.
+    """
+    cmd = [sys.executable, os.path.abspath(__file__)]
+    cmd.extend(sys.argv[1:])
+    if "--minimized" not in cmd:
+        cmd.append("--minimized")
+    if extra_args:
+        cmd.extend(extra_args)
+    try:
+        popen_kwargs = {
+            "cwd": os.path.dirname(os.path.abspath(__file__)),
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        subprocess.Popen(cmd, **popen_kwargs)
+        logger.info(f"[WATCHDOG] spawn: {' '.join(cmd)}")
+        return True
+    except Exception as e:
+        logger.warning(f"[MANAGER] Restart spawn hatası: {e}")
+        return False
+
+
+def _start_watchdog(port: int) -> threading.Thread:
+    thread = threading.Thread(target=_watchdog_loop, args=(port,),
+                              daemon=True, name="manager-watchdog")
+    thread.start()
+    return thread
+
+
+def _watchdog_loop(port: int) -> None:
+    monitor = HysteresisMonitor(_WATCHDOG_DEGRADE_THRESHOLD, _WATCHDOG_UNRESPONSIVE_THRESHOLD)
+    limiter = RestartLimiter(_WATCHDOG_MAX_RESTARTS, _WATCHDOG_RESTART_WINDOW_SECONDS)
+    _set_manager_state(STATE_RUNNING, "watchdog started")
+    while not STOP.is_set():
+        time.sleep(_WATCHDOG_POLL_SECONDS)
+        healthy = manager_healthy("127.0.0.1", port, timeout=_WATCHDOG_HEALTH_TIMEOUT)
+        state = monitor.report(healthy)
+        _set_manager_state(
+            state,
+            f"health={'ok' if healthy else 'fail'} (#{monitor.consecutive_failures})",
+        )
+        if state == STATE_UNRESPONSIVE:
+            _set_manager_state(
+                STATE_RESTARTING,
+                f"{_WATCHDOG_UNRESPONSIVE_THRESHOLD} ardışık health hatası",
+            )
+            if limiter.record_restart():
+                logger.error("[WATCHDOG] UNRESPONSIVE tespit edildi → RESTARTING (spawn + kapanış)")
+                _restart_manager_for_settings()
+            else:
+                _set_manager_state(
+                    STATE_CRASHED,
+                    "restart limiti aşıldı — dış supervisor gerekli (TV UI / Task Scheduler)",
+                )
+                logger.error("[WATCHDOG] restart limiti aşıldı → CRASHED, otomatik restart durduruldu")
+            return
 
 
 # ---------------------------------------------------------------------------
@@ -873,6 +968,7 @@ def main():
 
     threading.Thread(target=download_queue_worker, daemon=True, name="queue-worker").start()
     threading.Thread(target=_broadcaster_loop, daemon=True, name="sse-broadcaster").start()
+    _start_watchdog(args.port)
 
     try:
         _resume_interrupted_downloads()

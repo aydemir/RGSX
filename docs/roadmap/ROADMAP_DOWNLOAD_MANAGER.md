@@ -119,7 +119,7 @@ probe pre-check, preseed ini yazımı).
 
 ---
 
-## Faz 4 — Watchdog / auto-restart
+## Faz 4 — Watchdog / auto-restart ✅ TAMAMLANDI
 
 **Amaç:** `/api/health`'i periyodik poll eden, hysteresis'li watchdog thread; process çökünce otomatik restart.
 
@@ -127,26 +127,41 @@ probe pre-check, preseed ini yazımı).
 Process çalışırken çökerse indirmeler sessizce takılı kalır.
 
 **Kapsam — iki seviye:**
-1. **Manager process:** `INIT → PORT_RESOLVING → FIREWALL_CHECK/CONFIGURING/VERIFIED →
-   SUBSYSTEMS_STARTING → RUNNING ⇄ DEGRADED → UNRESPONSIVE → RESTARTING → CRASHED`
+1. **Manager process:** `INIT → RUNNING ⇄ DEGRADED → UNRESPONSIVE → RESTARTING → CRASHED`
+   (roadmap'teki PORT_RESOLVING/FIREWALL_CHECK/SUBSYSTEMS_STARTING ara durumları işletim
+   sırasında hiç loglanmadığı için sadeleştirildi — gerçek başlangıç doğrudan INIT→RUNNING).
 2. **qBittorrent backend:** `STOPPED → STARTING → PORT_RESOLVING → WEBUI_AUTH_WAIT →
    RUNNING ⇄ UNRESPONSIVE → RESTARTING`
 
 **Uygulama:**
-- `rgsx_manager.py` içinde watchdog thread: her N sn `/api/health` poll; M ardışık FAIL →
-  `DEGRADED`, daha uzun → `UNRESPONSIVE`; ardından mevcut `_restart_manager_for_settings()`
-  (`rgsx_manager.py:685`) deseniyle spawn-based restart tetiklenir.
-- **Hard-crash self-restart imkansız (aynı process öldü).** Çözüm: dış supervisor.
-  Tray process'i (mevcut `pystray` tray) supervisor rolü üstlenir — manager'ın çöktüğünü
-  fark edip yeniden spawn eder. Tray yoksa (`--no-tray`) Task Scheduler alternatifi belgelenir.
-- qBittorrent tarafı: `_ensure_qbittorrent_running()` kendi içinde zaten yeniden başlatabiliyor;
-  buna `_wait_for_webui` + `_login` retry döngüsüne sınırlı yeniden deneme ve UNRESPONSIVE
-  tespiti eklenir.
+- **`watchdog.py`** (YENİ, saf/bağımlılıksız): `HysteresisMonitor` (ardışık fail →
+  DEGRADED → UNRESPONSIVE; her başarı counter'ı sıfırlar → RUNNING) + `RestartLimiter`
+  (kayan pencerede max restart, crash-loop önler). İki seviye de aynı modülü kullanır.
+- **`rgsx_manager.py`**: `_start_watchdog()` thread'i her 5 sn `/api/health` poll eder;
+  3 ardışık FAIL → `DEGRADED`, 6 → `UNRESPONSIVE`; ardından `_spawn_manager()` ile aynı
+  argümanlarla spawn + mevcut süreci kapatır (`_restart_manager_for_settings()` deseni
+  ortak `_spawn_manager()` yardımcısına refactor edildi, `--no-tray` dahil orijinal
+  argümanları korur). Restart limiti aşılırsa `CRASHED` + log (dış supervisor'a devreder).
+  `/api/health` artık `manager_state` döndürür.
+- **Dış supervisor — TV UI (`__main__.py`)**: roadmap'in "tray supervisor" fikri fiziksel
+  olarak imkânsızdı (tray, manager process'inin İÇİNDE yaşar → manager çökerse tray de ölür,
+  supervise edemez). Gerçek dış supervisor manager'ı spawn eden **TV UI sürecidir**:
+  `_manager_supervisor_loop` 5 sn'de bir health poll; UNRESPONSIVE → `_spawn_manager_process()`
+  ile respawn + `_wait_for_manager_ready()` (port fallback'e kayarsa settings'ten yeniden okur).
+  Restart limiti aşılırsa CRASHED log'u. TV UI kapalıyken daemon-only kurulumlarda alternatif:
+  **Task Scheduler (Windows)** / **systemd unit (Linux)** ile `rgsx_manager.py --minimized`
+  auto-restart.
+- **qBittorrent (`qbittorrent_backend.py`)**: `_ensure_qbittorrent_running()` yaşayan ama
+  WebUI'su yanıt vermeyen process için sınırlı retry (`_WEBUI_RESPONSIVE_RETRIES=3`); tükenince
+  UNRESPONSIVE → `_terminate_managed_process()` → probe/taze başlatma akışına düşer
+  (RESTARTING→RUNNING). Durum takibi: `get_backend_state()` + `_set_qbt_state()`.
 
-**Dosyalar:** `rgsx_manager.py`, `__main__.py` (tray supervisor rolü), `qbittorrent_backend.py`.
+**Dosyalar:** `watchdog.py` (YENİ), `rgsx_manager.py`, `__main__.py`, `qbittorrent_backend.py`.
 
-**Doğrulama:** Process'i kill edip supervisor'ın yeniden spawn ettiğini gözlemle; qBittorrent'i
-öldürüp backend'in RESTARTING→RUNNING geçişini logla.
+**Doğrulama:** `tests/test_watchdog.py` (12 test, watchdog.py %100 kapsam; sandbox). Canlı dev
+makinesinde: (1) manager PID'ini kill → TV UI supervisor'ın respawn ettiğini spawn log'dan doğrula;
+(2) qBittorrent process'ini kill → backend log'unda UNRESPONSIVE→RESTARTING→RUNNING geçişlerini
+gözlemle.
 
 ---
 

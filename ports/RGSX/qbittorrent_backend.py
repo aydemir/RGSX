@@ -30,6 +30,9 @@ _DEFAULT_USERNAME = "admin"
 _STARTUP_TIMEOUT_SECONDS = 25
 # Port fallback aralığı: _TARGET_PORT doluysa +1 .. +_PORT_MAX_ATTEMPTS aranır (Windows + Linux).
 _PORT_MAX_ATTEMPTS = 100
+# Faz 4: yaşayan ama WebUI'su yanıt vermeyen process için deneme sayısı; ardından
+# süreç öldürülüp taze başlatılır (UNRESPONSIVE → RESTARTING → RUNNING).
+_WEBUI_RESPONSIVE_RETRIES = 3
 
 
 def _get_configured_password() -> str:
@@ -215,6 +218,60 @@ _launch_lock = threading.Lock()
 _qbt_process: "subprocess.Popen | None" = None
 _prewarm_lock = threading.Lock()
 _prewarm_thread: "threading.Thread | None" = None
+
+# Faz 4 — backend durum makinesi (STOPPED → STARTING → PORT_RESOLVING →
+# WEBUI_AUTH_WAIT → RUNNING ⇄ UNRESPONSIVE → RESTARTING). Saf okuma; süreç
+# içi/HTTP bağımlılığı yok, kilitli global.
+from watchdog import (  # noqa: E402 (modül seviyesi state sabitleri)
+    STATE_PORT_RESOLVING,
+    STATE_RESTARTING,
+    STATE_RUNNING,
+    STATE_STARTING,
+    STATE_STOPPED,
+    STATE_UNRESPONSIVE,
+    STATE_WEBUI_AUTH_WAIT,
+)
+
+_qbt_state = STATE_STOPPED
+_qbt_state_lock = threading.Lock()
+
+
+def _set_qbt_state(new_state: str, reason: str = "") -> None:
+    global _qbt_state
+    with _qbt_state_lock:
+        previous = _qbt_state
+        _qbt_state = new_state
+    if previous != new_state:
+        logger.warning("qbittorrent_backend: state %s → %s (%s)", previous, new_state, reason)
+
+
+def get_backend_state() -> str:
+    """Güncel qBittorrent backend durumu (watchdog/WebUI bildirimleri için)."""
+    with _qbt_state_lock:
+        return _qbt_state
+
+
+def _terminate_managed_process() -> None:
+    """RGSX'in yönettiği qBittorrent sürecini durdurur (UNRESPONSIVE restarte için)."""
+    global _qbt_process
+    proc = _qbt_process
+    _qbt_process = None
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        logger.warning("qbittorrent_backend: yönetilen qBittorrent süreci sonlandırıldı (pid=%s)", proc.pid)
+    except Exception as exc:
+        logger.debug("qbittorrent_backend: süreç sonlandırma hatası: %s", exc)
 
 
 def _suppress_qbittorrent_window_windows(launcher_pid: int | None, duration_seconds: float = 8.0) -> None:
@@ -549,26 +606,43 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
     session = requests.Session()
     with _launch_lock:
         if _qbt_process is not None and _qbt_process.poll() is None:
+            # Faz 4: UNRESPONSIVE tespiti — sınırlı retry, sonra süreci öldürüp
+            # RESTARTING yoluyla taze başlat (altta probe+taze başlatma akışı).
             if _wait_for_webui(session, _base_url, timeout=5) and _login(session, _base_url, []):
+                _set_qbt_state(STATE_RUNNING, "reused live process")
                 return session
-            return None
+            _set_qbt_state(STATE_UNRESPONSIVE, f"webui/login fail (pid={_qbt_process.pid})")
+            for attempt in range(1, _WEBUI_RESPONSIVE_RETRIES + 1):
+                time.sleep(1.0)
+                if _wait_for_webui(session, _base_url, timeout=5) and _login(session, _base_url, []):
+                    _set_qbt_state(STATE_RUNNING, f"recovered after {attempt} retry")
+                    return session
+            logger.warning("qbittorrent_backend: WebUI %s adına yanıt vermiyor → RESTARTING", _base_url)
+            _set_qbt_state(STATE_RESTARTING, f"{_WEBUI_RESPONSIVE_RETRIES} retry sonrası yanıtsız")
+            _terminate_managed_process()
+            time.sleep(1.0)
 
+        _set_qbt_state(STATE_STARTING, "ensure running")
         for candidate_port in _webui_port_candidates():
             existing_session = _probe_existing_webui_session(candidate_port)
             if existing_session is not None:
                 _base_url = f"http://127.0.0.1:{candidate_port}"
                 logger.info("qbittorrent_backend: réutilisation d'une instance qBittorrent existante sur le port %s", candidate_port)
+                _set_qbt_state(STATE_RUNNING, f"reused instance port {candidate_port}")
                 return existing_session
 
         exe_path = _find_qbittorrent_executable()
         if not exe_path:
+            _set_qbt_state(STATE_STOPPED, "binaire introuvable")
             return None
 
         os.makedirs(_profile_dir, exist_ok=True)
         is_windows = config.OPERATING_SYSTEM == "Windows"
+        _set_qbt_state(STATE_PORT_RESOLVING, "port libre aranıyor")
         webui_port = _find_free_webui_port()
         if webui_port == 0:
             logger.error("qbittorrent_backend: aucun port WebUI libre à partir de %s (%s essais)", _TARGET_PORT, _PORT_MAX_ATTEMPTS)
+            _set_qbt_state(STATE_STOPPED, "port aralığı tükendi")
             return None
         if not is_windows and _is_port_open("127.0.0.1", webui_port):
             logger.warning("qbittorrent_backend: port WebUI %s occupé entre le probe et le lancement, fermeture d'une instance qBittorrent précédente", webui_port)
@@ -576,6 +650,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
             time.sleep(1.0)
             webui_port = _find_free_webui_port()
             if webui_port == 0:
+                _set_qbt_state(STATE_STOPPED, "port aralığı tükendi")
                 return None
         if is_windows:
             # Le port WebUI et l'acceptation de la popup "Legal notice" sont pré-écrits
@@ -588,6 +663,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
             cmd = [exe_path, f"--profile={_profile_dir}", f"--webui-port={webui_port}", "--confirm-legal-notice"]
         bootstrap_url = f"http://127.0.0.1:{webui_port}"
         logger.info("qbittorrent_backend: démarrage de %s sur le port WebUI %s", exe_path, webui_port)
+        _set_qbt_state(STATE_WEBUI_AUTH_WAIT, f"bootstrap {webui_port}")
 
         stdout_lines: list[str] = []
         try:
@@ -685,6 +761,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
                 logger.warning("qbittorrent_backend: authentification échouée sur le port cible après reconfiguration")
                 return None
 
+        _set_qbt_state(STATE_RUNNING, f"WebUI prêt ({_base_url})")
         return session
 
 
