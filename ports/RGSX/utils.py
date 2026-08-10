@@ -1365,6 +1365,42 @@ def restart_application(delay_ms: int = 2000):
         logger.exception(f"Failed to schedule restart: {e}")
 
 
+_REDACTED_PLACEHOLDER = "<redacted>"
+_SENSITIVE_SETTING_KEY_RE = re.compile(
+    r"(password|passwd|secret|token|credential|api[_-]?key|(?:^|[_\-])key$)",
+    re.IGNORECASE,
+)
+
+
+def _is_sensitive_setting_key(key) -> bool:
+    """Hassas ayar anahtarı mı? (password/secret/token/api_key vb.)"""
+    return bool(_SENSITIVE_SETTING_KEY_RE.search(str(key)))
+
+
+def redact_sensitive_settings(data):
+    """Ayarlar ağacındaki hassas alan değerlerini <redacted> ile değiştiren kopyayı döndürür."""
+    if isinstance(data, dict):
+        return {
+            key: (_REDACTED_PLACEHOLDER if _is_sensitive_setting_key(key) else redact_sensitive_settings(value))
+            for key, value in data.items()
+        }
+    if isinstance(data, list):
+        return [redact_sensitive_settings(item) for item in data]
+    return data
+
+
+def _redact_settings_file_text(file_path: str) -> str:
+    """rgsx_settings.json içeriğini redakte edilmiş JSON metnine dönüştürür (disk dosyası değişmez)."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        raw_text = f.read()
+    try:
+        data = json.loads(raw_text)
+    except Exception as exc:
+        logger.warning(f"generate_support_zip: {file_path} parse edilemedi, ham içerik eklenecek: {exc}")
+        return raw_text
+    return json.dumps(redact_sensitive_settings(data), indent=2, ensure_ascii=False)
+
+
 def generate_support_zip():
     """Génère un fichier ZIP contenant tous les fichiers de support pour le diagnostic.
     
@@ -1410,7 +1446,10 @@ def generate_support_zip():
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for archive_name, file_path in files_to_include:
                 try:
-                    zipf.write(file_path, archive_name)
+                    if archive_name == 'rgsx_settings.json':
+                        zipf.writestr(archive_name, _redact_settings_file_text(file_path))
+                    else:
+                        zipf.write(file_path, archive_name)
                     logger.debug(f"Ajouté au ZIP: {archive_name}")
                 except Exception as e:
                     logger.warning(f"Impossible d'ajouter {archive_name}: {e}")
@@ -1436,6 +1475,7 @@ Instructions:
 3. Upload this ZIP file to help the team diagnose your problem
 
 DO NOT share this file publicly as it may contain sensitive information.
+Sensitive values (passwords, API keys, tokens) are redacted.
 """
             zipf.writestr('README.txt', readme_content)
         

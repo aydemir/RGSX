@@ -494,8 +494,9 @@ if defined MISSING_PACKAGES (
 :: =============================================================================
 :: Ajoute des regles entrantes pour le binaire qBittorrent integre et pour le
 :: port TCP 18572 de la WebUI, afin que le debug LAN fonctionne des le premier
-:: lancement manuel. Peut demander une elevation UAC une seule fois (marqueur
-:: ecrit dans tous les cas pour ne jamais redemander a chaque lancement).
+:: lancement manuel. Peut demander une elevation UAC une seule fois. Le marqueur
+:: est ecrit UNIQUEMENT par le script apres verification des regles: en cas
+:: d'echec il n'est pas cree et l'essai est renouvele au prochain lancement.
 set "QBITTORRENT_EXE=%ROOT_DIR%\saves\ports\rgsx\qbittorrent-portable\qbittorrent-portable.exe"
 set "FIREWALL_SCRIPT=%ROOT_DIR%\roms\windows\scripts\rgsx_firewall_setup.ps1"
 set "FIREWALL_MARKER_DIR=%ROOT_DIR%\saves\ports\rgsx"
@@ -504,10 +505,8 @@ set "FIREWALL_MARKER=%FIREWALL_MARKER_DIR%\.firewall_rules_configured"
 if not exist "%FIREWALL_MARKER%" (
     if exist "%FIREWALL_SCRIPT%" (
         echo       %ESC%%YELLOW%^> Configuring Windows Firewall for downloads ^(one-time, background^)...%ESC%%RESET%
-        if not exist "%FIREWALL_MARKER_DIR%" mkdir "%FIREWALL_MARKER_DIR%" 2>nul
-        echo [%DATE% %TIME%] Firewall setup attempted >> "%FIREWALL_MARKER%" 2>nul
-        echo [%DATE% %TIME%] One-time firewall setup: launching %FIREWALL_SCRIPT% detached/hidden in background >> "%LOG_FILE%"
-        start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -QbittorrentPath "%QBITTORRENT_EXE%" -WebUiPort 18572 -LogFile "%LOG_FILE%" >nul 2>&1
+        echo [%DATE% %TIME%] One-time firewall setup: launching %FIREWALL_SCRIPT% detached/hidden in background (marker written by script only after verification) >> "%LOG_FILE%"
+        start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%FIREWALL_SCRIPT%" -QbittorrentPath "%QBITTORRENT_EXE%" -WebUiPort 18572 -LogFile "%LOG_FILE%" -MarkerFile "%FIREWALL_MARKER%" >nul 2>&1
     ) else (
         echo [%DATE% %TIME%] Firewall setup script not found, skipping >> "%LOG_FILE%"
     )

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from email.utils import formatdate, parsedate_to_datetime
 import config
 from history import load_history, save_history, load_downloaded_games, is_game_downloaded, scan_platform_roms_on_enter
-from utils import load_sources, load_games, extract_data, get_clean_display_name, parse_torrent_download_url, request_torrent_manifest_refresh, _resolve_platform_image_path
+from utils import load_sources, load_games, extract_data, get_clean_display_name, parse_torrent_download_url, request_torrent_manifest_refresh, _resolve_platform_image_path, _redact_settings_file_text
 from network import download_rom, download_from_1fichier
 from pathlib import Path
 from rgsx_settings import get_language
@@ -1866,7 +1866,10 @@ class RGSXHandler(BaseHTTPRequestHandler):
                     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                         for archive_name, file_path in files_to_include:
                             try:
-                                zipf.write(file_path, archive_name)
+                                if archive_name == 'rgsx_settings.json':
+                                    zipf.writestr(archive_name, _redact_settings_file_text(file_path))
+                                else:
+                                    zipf.write(file_path, archive_name)
                                 logger.debug(f"Ajouté au ZIP: {archive_name}")
                             except Exception as e:
                                 logger.warning(f"Impossible d'ajouter {archive_name}: {e}")
@@ -1892,6 +1895,7 @@ Instructions:
 3. Upload this ZIP file to help the team diagnose your problem
 
 DO NOT share this file publicly as it may contain sensitive information.
+Sensitive values (passwords, API keys, tokens) are redacted.
 """
                         zipf.writestr('README.txt', readme_content)
                     

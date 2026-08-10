@@ -1,5 +1,46 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Firewall Marker Doğrulama-Öncesi Yazılmıyor (2026.08.10)
+
+**Olay:** `RGSX Retrobat.bat`, Windows Firewall kurulum script'ini çalıştırmadan **önce**
+`.firewall_rules_configured` marker'ını yazıyordu. Script başarısız olsa (UAC reddi, exe yok,
+kural hatası) bile marker vardı → sessiz başarısızlık, bir daha hiç denenmiyordu.
+
+**Yapılan değişiklikler:**
+- **`windows/scripts/rgsx_firewall_setup.ps1`:** Marker yazma sorumluluğu script'e devredildi.
+  `Add-RgsxFirewallRule` / `Add-RgsxPortRule` artık başarı durumunu `$true/$false` döndürüyor;
+  script iki kuralı da doğruladıktan sonra `Write-FirewallMarker` ile marker'ı **kendisi** yazıyor.
+  Herhangi bir kural eklenemezse marker yazılmıyor ve exit 1 dönülüyor → bir sonraki lansman
+  denemeyi tekrarlıyor. `-MarkerFile` parametresi elevation'dan geçiyor.
+- **`windows/RGSX Retrobat.bat`:** Script-öncesi marker yazımı ve marker dizini mkdir kaldırıldı;
+  script artık `-MarkerFile` parametresiyle çağrılıyor.
+
+**Doğrulama:** Kural eklenemezse marker oluşmuyor (exit 1); her iki kural mevcutsa marker yazılıyor (exit 0).
+
+---
+
+## P0 Güvenlik Fix: Support ZIP Secret Redaksiyonu (2026.08.10)
+
+**Olay:** `generate_support_zip()` ve WebUI `/api/support`, `rgsx_settings.json`'ı
+redaksiyonsuz paketliyordu — qBittorrent WebUI şifresi destek ZIP'iyle dışarı sızabiliyordu.
+
+**Yapılan değişiklikler:**
+- **`utils.py`:** `redact_sensitive_settings()` (recursive, hassas alan değerlerini
+  `<redacted>` ile değiştiren kopya), `_is_sensitive_setting_key()` (password/passwd/secret/
+  token/credential/api_key + sonundaki `key` anahtarları), `_redact_settings_file_text()`
+  (disk dosyasını değiştirmeden bellek üzerinde redakte edip JSON metni döndürür; parse
+  hatasında ham metne düşer). `generate_support_zip()` artık `rgsx_settings.json`'ı
+  `zipf.writestr` ile redakte edilmiş olarak ekliyor; README.txt "Sensitive values ... are
+  redacted" notu içeriyor.
+- **`rgsx_web.py`:** `/api/support` handler'ı aynı `_redact_settings_file_text()`'i kullanır
+  (utils'ten import edildi).
+- **`tests/test_support_zip.py`:** Redaksiyon saf fonksiyon testleri (8 test) + ZIP
+  entegrasyonu (redakte edilen ZIP, diskteki orijinalin değişmediği assert'i).
+
+**Doğrulama:** 8 yeni test + mevcut 85 saf mantık testi geçti; py_compile temiz.
+
+---
+
 ## Developer Dokümantasyonu Düzeni + thread_safety Temizliği (2026.08.08)
 
 **Olay:** `docs/` klasörü developer odaklı yeniden düzenlendi ve `thread_safety.py`

@@ -21,6 +21,7 @@ pygame/
 
 # Private agent instructions (contains sensitive info)
 AGENTS.md
+oturum.md
 
 # Docker test data
 data/

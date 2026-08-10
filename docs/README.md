@@ -21,7 +21,8 @@ docs/
 ├── features/
 │   └── FEATURES.md                # Özellikler ve değişiklik günlüğü (changelog)
 ├── roadmap/
-│   └── ROADMAP.md                 # Geliştirme yol haritası (tüm fazlar tamamlandı)
+│   ├── ROADMAP.md                 # Geliştirme yol haritası (tüm fazlar tamamlandı)
+│   └── ROADMAP_DOWNLOAD_MANAGER.md# Fork roadmap — download manager fazları (Faz 1-9)
 ├── user/                          # Kullanıcı kılavuzları
 │   ├── TVUI_FILTERS.md            # TVUI filtre kullanım kılavuzu
 │   └── WEBUI_FILTERS.md           # WebUI filtre kullanım kılavuzu
@@ -43,6 +44,7 @@ docs/
 | [TESTING.md](guides/TESTING.md) | pytest altyapısı ve kapsam gate'leri |
 | [FEATURES.md](features/FEATURES.md) | Tüm özellikler ve sürüm notları |
 | [ROADMAP.md](roadmap/ROADMAP.md) | Yol haritası (Faz 1-7 tamamlandı) |
+| [ROADMAP_DOWNLOAD_MANAGER.md](roadmap/ROADMAP_DOWNLOAD_MANAGER.md) | Fork roadmap — download manager (Faz 1-9, Rust en sonda) |
 
 ## 🧭 Kullanıcı Kılavuzları
 

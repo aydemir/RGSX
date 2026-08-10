@@ -12,7 +12,8 @@
 param(
     [string]$QbittorrentPath,
     [int]$WebUiPort = 18572,
-    [string]$LogFile = ""
+    [string]$LogFile = "",
+    [string]$MarkerFile = ""
 )
 
 function Write-Log {
@@ -63,6 +64,29 @@ function Write-Log {
     }
 }
 
+function Write-FirewallMarker {
+    param([string]$MarkerFile)
+    if (-not $MarkerFile -or -not $MarkerFile.Trim()) {
+        return $false
+    }
+    try {
+        $markerDir = Split-Path -Parent $MarkerFile
+        if ($markerDir -and -not (Test-Path -LiteralPath $markerDir)) {
+            New-Item -ItemType Directory -Path $markerDir -Force | Out-Null
+        }
+        $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RGSX firewall: regles verifiees"
+        [System.IO.File]::AppendAllText(
+            $MarkerFile,
+            $line + [Environment]::NewLine,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        return $true
+    } catch {
+        Write-Log "echec ecriture marqueur '$MarkerFile': $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -73,7 +97,7 @@ function Add-RgsxFirewallRule {
     param([string]$Name, [string]$ProgramPath)
     if (-not $ProgramPath -or -not (Test-Path -LiteralPath $ProgramPath)) {
         Write-Log "programme introuvable, regle ignoree -> $Name ($ProgramPath)"
-        return
+        return $false
     }
     try {
         $existing = Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue
@@ -84,8 +108,10 @@ function Add-RgsxFirewallRule {
         } else {
             Write-Log "regle deja presente -> $Name"
         }
+        return $true
     } catch {
         Write-Log "echec ajout regle '$Name': $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -93,7 +119,7 @@ function Add-RgsxPortRule {
     param([string]$Name, [int]$Port)
     if (-not $Port -or $Port -le 0) {
         Write-Log "port invalide, regle ignoree -> $Name ($Port)"
-        return
+        return $false
     }
     try {
         $existing = Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue
@@ -104,8 +130,10 @@ function Add-RgsxPortRule {
         } else {
             Write-Log "regle port deja presente -> $Name"
         }
+        return $true
     } catch {
         Write-Log "echec ajout regle port '$Name': $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -121,15 +149,29 @@ if (-not (Test-IsAdmin)) {
         if ($LogFile -and $LogFile.Trim()) {
             $selfArgs += @('-LogFile', "`"$LogFile`"")
         }
+        if ($MarkerFile -and $MarkerFile.Trim()) {
+            $selfArgs += @('-MarkerFile', "`"$MarkerFile`"")
+        }
         Start-Process -FilePath 'powershell.exe' -ArgumentList $selfArgs -Verb RunAs -Wait -WindowStyle Hidden
         Write-Log "processus eleve termine"
     } catch {
         Write-Log "elevation refusee ou impossible ($($_.Exception.Message)); poursuite sans regle"
     }
-    exit 0
+    exit 1
 }
 
 Write-Log "debut configuration des regles pare-feu"
-Add-RgsxFirewallRule -Name 'RGSX qBittorrent Embedded' -ProgramPath $QbittorrentPath
-Add-RgsxPortRule -Name 'RGSX qBittorrent WebUI (TCP 18572)' -Port $WebUiPort
-Write-Log "fin configuration pare-feu"
+$programOk = Add-RgsxFirewallRule -Name 'RGSX qBittorrent Embedded' -ProgramPath $QbittorrentPath
+$portOk = Add-RgsxPortRule -Name 'RGSX qBittorrent WebUI (TCP 18572)' -Port $WebUiPort
+
+if ($programOk -and $portOk) {
+    if (Write-FirewallMarker -MarkerFile $MarkerFile) {
+        Write-Log "regles verifiees, marqueur ecrit"
+        exit 0
+    }
+    Write-Log "regles verifiees mais ecriture marqueur echouee"
+    exit 1
+}
+
+Write-Log "echec verification regles (program=$programOk, port=$portOk); marqueur non ecrit, nouvel essai au prochain lancement"
+exit 1
