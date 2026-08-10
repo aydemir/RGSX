@@ -42,30 +42,106 @@ def _manager_healthy(port=None):
         return False
 
 
+class _ScheduledProcess:
+    """schtasks ile başlatılan manager için sentinel.
+
+    Süreç Task Scheduler servisinin child'ı olduğundan Popen handle'ı yoktur;
+    poll() hep None döner (canlılık /api/health üzerinden izlenir).
+    """
+    __slots__ = ()
+
+    def poll(self):
+        return None
+
+
+def _spawn_manager_via_scheduler(cmd, spawn_log):
+    """Manager'ı Task Scheduler (schtasks) üzerinden job object dışında başlatır.
+
+    RetroBat job'ı içindeyken çalıştırılan schtasks, görevi Task Scheduler
+    servisine devreder; servis process'i job dışında spawn eder. Böylece
+    TV UI / RetroBat kapansa da manager ayakta kalır. True = kabul edildi.
+    """
+    import datetime
+    task_name = 'RGSXManagerBoot'
+    # Konsol penceresi açmamak için pythonw.exe kullan (varsa)
+    interp = sys.executable
+    pythonw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    if os.path.exists(pythonw):
+        interp = pythonw
+    command_line = subprocess.list2cmdline([interp] + cmd[1:])
+    no_window = 0x08000000  # CREATE_NO_WINDOW
+    try:
+        create = subprocess.run(
+            ['schtasks', '/Create', '/TN', task_name, '/TR', command_line,
+             '/SC', 'ONCE', '/ST', '00:00', '/IT', '/F'],
+            capture_output=True, timeout=20, creationflags=no_window)
+        if create.returncode != 0:
+            logger.error(f'schtasks /Create başarısız ({create.returncode}): '
+                         f'{create.stderr.decode("utf-8", "replace").strip()}')
+            return False
+        run = subprocess.run(
+            ['schtasks', '/Run', '/TN', task_name],
+            capture_output=True, timeout=20, creationflags=no_window)
+        if run.returncode != 0:
+            logger.error(f'schtasks /Run başarısız ({run.returncode}): '
+                         f'{run.stderr.decode("utf-8", "replace").strip()}')
+            return False
+        with open(spawn_log, 'w', encoding='utf-8') as log_file:
+            log_file.write(
+                f'{datetime.datetime.now().isoformat()} '
+                f'Manager schtasks ile başlatıldı: {command_line}\n')
+        return True
+    except Exception as e:
+        logger.error(f'Manager spawn (schtasks) başarısız: {e}')
+        return False
+
+
 def _spawn_manager_process(port):
-    """rgsx_manager.py'yi arka planda spawn eder. Başarılıysa process döner."""
+    """rgsx_manager.py'yi arka planda spawn eder. Başarılıysa Popen (veya
+    sentinel) döner; hiç başlatılamazsa None.
+
+    RetroBat (ve benzeri emülatör kabukları) RGSX'i bir job object içinde
+    çalıştırır; TV UI kapanınca job kapatılır ve child manager da ölür.
+    Strateji:
+      1. CREATE_BREAKAWAY_FROM_JOB ile job'dan ayrılarak spawn dene.
+      2. Job izin vermezse (access denied) Task Scheduler (schtasks) ile
+         spawn et — süreç job dışında çalışır, kabuk kapanınca ölmez.
+    """
     manager_script = os.path.join(config.APP_FOLDER, 'rgsx_manager.py')
     if not os.path.exists(manager_script):
         logger.warning(f'Manager introuvable: {manager_script}, mode local')
         return None
-    try:
-        spawn_log = os.path.join(config.log_dir, 'rgsx_manager_spawn.log')
-        with open(spawn_log, 'w', encoding='utf-8') as log_file:
-            if config.OPERATING_SYSTEM == 'Windows':
-                CREATE_NO_WINDOW = 0x08000000
-                proc = subprocess.Popen(
-                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
-                    stdout=log_file, stderr=subprocess.STDOUT,
-                    cwd=config.APP_FOLDER, creationflags=CREATE_NO_WINDOW)
-            else:
-                proc = subprocess.Popen(
-                    [sys.executable, manager_script, f'--port={port}', '--minimized'],
-                    stdout=log_file, stderr=subprocess.STDOUT,
+
+    cmd = [sys.executable, manager_script, f'--port={port}', '--minimized']
+    spawn_log = os.path.join(config.log_dir, 'rgsx_manager_spawn.log')
+
+    if config.OPERATING_SYSTEM != 'Windows':
+        try:
+            with open(spawn_log, 'w', encoding='utf-8') as log_file:
+                return subprocess.Popen(
+                    cmd, stdout=log_file, stderr=subprocess.STDOUT,
                     cwd=config.APP_FOLDER)
-        return proc
+        except Exception as e:
+            logger.error(f'Erreur démarrage manager: {e}')
+            return None
+
+    CREATE_NO_WINDOW = 0x08000000
+    CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+    # 1) Önce job'dan ayrılarak spawn dene (en hızlı yol)
+    try:
+        with open(spawn_log, 'w', encoding='utf-8') as log_file:
+            return subprocess.Popen(
+                cmd, stdout=log_file, stderr=subprocess.STDOUT,
+                cwd=config.APP_FOLDER,
+                creationflags=CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB)
     except Exception as e:
-        logger.error(f'Erreur démarrage manager: {e}')
-        return None
+        logger.warning(f'Manager spawn (breakaway) başarısız, Task Scheduler deneniyor: {e}')
+
+    # 2) Fallback: Task Scheduler (job object dışı, TV UI kapanınca ölmez)
+    if _spawn_manager_via_scheduler(cmd, spawn_log):
+        return _ScheduledProcess()
+    return None
 
 
 def _wait_for_manager_ready(proc=None, timeout=30):
@@ -81,9 +157,11 @@ def _wait_for_manager_ready(proc=None, timeout=30):
             pass
         if _manager_healthy(port):
             return True
-        if proc is not None and proc.poll() is not None:
-            logger.warning(f'Manager arrêté immédiatement (code {proc.returncode}), mode local')
-            return False
+        if proc is not None:
+            poll = getattr(proc, 'poll', None)
+            if poll is not None and poll() is not None:
+                logger.warning(f'Manager arrêté immédiatement (code {proc.returncode}), mode local')
+                return False
         time.sleep(0.5)
     logger.warning('Manager non prêt, mode local')
     return False
