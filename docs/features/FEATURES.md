@@ -1,5 +1,31 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## qBittorrent WebUI Port Fallback (2026.08.10)
+
+**Olay:** WebUI portu `_TARGET_PORT=18572` hardcoded'dı; Windows'ta çakışma durumunda
+backend sessizce başarısız olabiliyordu. Linux'ta `_find_free_webui_port()` çağrılıyordu
+ama stub'tı (her zaman 18572 döndürüyordu) — gerçek fallback iki platformda da yoktu.
+
+**Yapılan değişiklikler:**
+- **`qbittorrent_backend.py`:** `_find_free_webui_port()` artık gerçek seçim yapıyor
+  (18572 serbestse 18572, doluysa 18572+1..+100 aralığında ilk serbest port, hiçbiri
+  boş değilse 0). `_ensure_qbittorrent_running()` her iki platformda bunu kullanıyor;
+  `_preseed_windows_profile(webui_port)` Windows'ta seçilen portu qBittorrent.ini'ye yazıyor.
+- **Yeniden kullanım:** Probe artık fallback aralığını da tarıyor (önceki çalışmadan
+  kalan fallback-port instance'ı yeniden kullanılır); kapalı portlar hızlı TCP pre-check
+  ile anında eleniyor.
+- **Doğru adres:** `get_webui_url()`/`_current_webui_port()` fallback portu yansıtıyor;
+  `/api/qbittorrent/start` ve `get_password_status()` doğru `webui_url` döndürüyor.
+  Web UI (app.js) hardcoded `18572` yerine response'taki URL'i kullanıyor.
+- **`rgsx_manager.py`:** `_is_port_free`/`_find_available_port` dublikasyonu kaldırıldı,
+  tek ortak implementasyon `qbittorrent_backend`'de.
+- **`tests/test_qbittorrent_port.py`:** 13 port seçim/probe/preseed testi.
+
+**Doğrulama:** 107 test geçti (13 yeni + mevcut). Canlı Windows testi: 18572'yi işgal
+edip backend'in alternatif porta geçtiğini ve indirmenin çalıştığını doğrula.
+
+---
+
 ## Firewall Marker Doğrulama-Öncesi Yazılmıyor (2026.08.10)
 
 **Olay:** `RGSX Retrobat.bat`, Windows Firewall kurulum script'ini çalıştırmadan **önce**

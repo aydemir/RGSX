@@ -28,6 +28,8 @@ class BackendUnavailableError(RuntimeError):
 _TARGET_PORT = 18572
 _DEFAULT_USERNAME = "admin"
 _STARTUP_TIMEOUT_SECONDS = 25
+# Port fallback aralığı: _TARGET_PORT doluysa +1 .. +_PORT_MAX_ATTEMPTS aranır (Windows + Linux).
+_PORT_MAX_ATTEMPTS = 100
 
 
 def _get_configured_password() -> str:
@@ -127,11 +129,12 @@ def _ensure_ini_settings(ini_path: str, settings: "dict[str, dict[str, str]]") -
         handle.writelines(out_lines)
 
 
-def _preseed_windows_profile() -> None:
+def _preseed_windows_profile(webui_port: int = _TARGET_PORT) -> None:
     """Écrit/complète qBittorrent.ini AVANT chaque lancement pour accepter la popup
-    "Legal notice", fixer le port WebUI et démarrer directement minimisé dans la zone de
-    notification (jamais de fenêtre au premier plan), sans dépendre du passage
-    d'arguments par le lanceur Portapps (qui ne les transmet pas à l'exécutable réel).
+    "Legal notice", fixer le port WebUI (le port effectivement choisi par le fallback
+    Faz 3) et démarrer directement minimisé dans la zone de notification (jamais de
+    fenêtre au premier plan), sans dépendre du passage d'arguments par le lanceur
+    Portapps (qui ne les transmet pas à l'exécutable réel).
     Clés confirmées par un lancement manuel réel : [LegalNotice] Accepted=true."""
     config_dir = os.path.join(_extract_dir, "data", "profile", "qBittorrent", "config")
     ini_path = os.path.join(config_dir, "qBittorrent.ini")
@@ -139,7 +142,7 @@ def _preseed_windows_profile() -> None:
         "LegalNotice": {"Accepted": "true"},
         "Preferences": {
             "WebUI\\Enabled": "true",
-            "WebUI\\Port": str(_TARGET_PORT),
+            "WebUI\\Port": str(webui_port),
             "WebUI\\Address": "127.0.0.1",
             "WebUI\\LocalHostAuth": "false",
             "WebUI\\AuthSubnetWhitelistEnabled": "true",
@@ -310,11 +313,63 @@ def _is_port_open(host: str, port: int) -> bool:
         return False
 
 
-def _find_free_webui_port() -> int:
-    return _TARGET_PORT
+def _is_port_free(port: int, host: str = "0.0.0.0") -> bool:
+    """Port başka bir process tarafından işgal edilmiş mi? (bind testi)
+
+    Not: SO_REUSEADDR bilinçli olarak kullanılmaz — Windows'ta aktif bir dinleyici
+    varken ikinci bind'in başarılı olmasına izin verir, yanlış "serbest" üretir.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((host, port))
+            return True
+        finally:
+            s.close()
+    except OSError:
+        return False
+
+
+def _find_available_port(preferred: int, host: str = "0.0.0.0", max_attempts: int = _PORT_MAX_ATTEMPTS) -> int:
+    """İstenen port doluysa preferred+N aralığında serbest bir port bulur.
+
+    - preferred boşsa preferred döner.
+    - preferred+1 .. preferred+max_attempts aralığında ilk serbest port döner.
+    - Hiçbiri boş değilse 0 döner (çağıran net hata basmalı).
+    """
+    if _is_port_free(preferred, host):
+        return preferred
+    for offset in range(1, max_attempts + 1):
+        candidate = preferred + offset
+        if _is_port_free(candidate, host):
+            return candidate
+    return 0
+
+
+def _find_free_webui_port(max_attempts: int = _PORT_MAX_ATTEMPTS) -> int:
+    """WebUI için serbest port seçer — Windows + Linux aynı davranış.
+
+    _TARGET_PORT (18572) serbestse onu, doluysa 18572+N aralığında ilk serbest
+    portu döndürür; hiçbiri boş değilse 0 döner.
+    """
+    return _find_available_port(_TARGET_PORT, max_attempts=max_attempts)
+
+
+def _webui_port_candidates(max_attempts: int = _PORT_MAX_ATTEMPTS):
+    """Önce _TARGET_PORT, sonra fallback aralığı — önceki çalışmadan kalan
+    (muhtemelen fallback porta düşmüş) bir qBittorrent instance'ını yeniden
+    kullanmak için. Kapalı portlarda bağlantı reddi anında döndüğü için ucuzdur."""
+    yield _TARGET_PORT
+    for offset in range(1, max_attempts + 1):
+        yield _TARGET_PORT + offset
 
 
 def _probe_existing_webui_session(webui_port: int) -> "requests.Session | None":
+    # Hızlı TCP ön-kontrol: kapalı portlarda _wait_for_webui 3 sn bekleme döngüsüne
+    # girdiği için fallback aralığındaki 101 adayın tamamı ancak bu pre-check ile
+    # anında elenir (connection refused → OSError → False).
+    if not _is_port_open("127.0.0.1", webui_port):
+        return None
     session = requests.Session()
     base_url = f"http://127.0.0.1:{webui_port}"
     if not _wait_for_webui(session, base_url, timeout=3):
@@ -498,7 +553,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
                 return session
             return None
 
-        for candidate_port in [_TARGET_PORT]:
+        for candidate_port in _webui_port_candidates():
             existing_session = _probe_existing_webui_session(candidate_port)
             if existing_session is not None:
                 _base_url = f"http://127.0.0.1:{candidate_port}"
@@ -511,17 +566,23 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
 
         os.makedirs(_profile_dir, exist_ok=True)
         is_windows = config.OPERATING_SYSTEM == "Windows"
-        webui_port = _TARGET_PORT if is_windows else _find_free_webui_port()
+        webui_port = _find_free_webui_port()
+        if webui_port == 0:
+            logger.error("qbittorrent_backend: aucun port WebUI libre à partir de %s (%s essais)", _TARGET_PORT, _PORT_MAX_ATTEMPTS)
+            return None
         if not is_windows and _is_port_open("127.0.0.1", webui_port):
-            logger.warning("qbittorrent_backend: port WebUI %s déjà occupé, tentative de fermeture d'une instance qBittorrent précédente", webui_port)
+            logger.warning("qbittorrent_backend: port WebUI %s occupé entre le probe et le lancement, fermeture d'une instance qBittorrent précédente", webui_port)
             _terminate_existing_qbittorrent_processes()
             time.sleep(1.0)
+            webui_port = _find_free_webui_port()
+            if webui_port == 0:
+                return None
         if is_windows:
             # Le port WebUI et l'acceptation de la popup "Legal notice" sont pré-écrits
             # dans qBittorrent.ini avant le premier lancement (voir _preseed_windows_profile) :
             # le lanceur Portapps ne transmet pas d'arguments CLI au binaire réel, donc
             # --webui-port/--confirm-legal-notice n'auraient aucun effet ici.
-            _preseed_windows_profile()
+            _preseed_windows_profile(webui_port)
             cmd = [exe_path]
         else:
             cmd = [exe_path, f"--profile={_profile_dir}", f"--webui-port={webui_port}", "--confirm-legal-notice"]
@@ -911,7 +972,7 @@ def ensure_running(timeout: float = _STARTUP_TIMEOUT_SECONDS) -> bool:
     """Démarre qBittorrent (si besoin) et attend que son WebUI soit accessible.
 
     Utilisé par le manager pour ouvrir la WebUI depuis le bouton du navigateur :
-    au retour, http://127.0.0.1:18572 doit répondre. Retourne True si prêt.
+    au retour, get_webui_url() doit répondre. Retourne True si prêt.
     """
     import time as _time
     deadline = _time.time() + timeout
@@ -935,6 +996,24 @@ def ensure_running(timeout: float = _STARTUP_TIMEOUT_SECONDS) -> bool:
             pass
 
 
+def _current_webui_port() -> int:
+    """Aktif (veya son seçilen) WebUI portunu döndürür; çözümlenemezse hedef port.
+
+    _base_url, _ensure_qbittorrent_running() tarafından hem yeniden kullanım hem
+    taze başlatma yolunda gerçek portla senkron tutulur; taze süreçte varsayılan
+    _TARGET_PORT olur.
+    """
+    try:
+        return int(_base_url.rsplit(":", 1)[1])
+    except Exception:
+        return _TARGET_PORT
+
+
+def get_webui_url() -> str:
+    """WebUI'nin gerçek adresi — fallback portu seçilmişse onu yansıtır."""
+    return f"http://localhost:{_current_webui_port()}/"
+
+
 def get_password_status() -> dict:
     """Varsayılan şifre hâlâ kullanılıyor mu? (WebUI/TVUI uyarı banner'ı için).
 
@@ -949,7 +1028,7 @@ def get_password_status() -> dict:
     return {
         "available": is_available(),
         "using_default": bool(current) and current == default_password,
-        "webui_url": f"http://localhost:{_TARGET_PORT}/",
+        "webui_url": get_webui_url(),
     }
 
 

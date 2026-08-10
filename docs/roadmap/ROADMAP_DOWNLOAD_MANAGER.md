@@ -85,22 +85,37 @@ sözdizimi parantez denge kontrolü + mantık incelemesi ile doğrulandı.
 
 ---
 
-## Faz 3 — qBittorrent WebUI port fallback (Windows)
+## Faz 3 — qBittorrent WebUI port fallback (Windows) ✅ TAMAMLANDI
 
 **Amaç:** 18572 doluysa torrent backend'inin alternatif porta geçmesi (Linux davranışıyla aynı).
 
 **Neden?** Doğrulandı: `_TARGET_PORT=18572` hardcoded, `_ensure_qbittorrent_running()`
 içinde `for candidate_port in [_TARGET_PORT]` tek aday (`qbittorrent_backend.py:501`).
-Windows'ta çakışma durumunda backend sessizce başarısız olabilir; Linux zaten
-`_find_free_webui_port()` kullanıyor.
+Windows'ta çakışma durumunda backend sessizce başarısız olabilir; Linux'ta
+`_find_free_webui_port()` çağrılıyordu ama **stub'tı** (her zaman `_TARGET_PORT` döndürüyordu) —
+gerçek fallback iki platformda da yoktu.
 
-**Uygulama:** `rgsx_manager.py:821`'deki `_find_available_port()` mantığı `qbittorrent_backend.py`'ye
-taşınır (veya ortak helper'a çıkarılır); Windows dalında `webui_port = _find_available_port(_TARGET_PORT)`.
-Gerçek port `_base_url`'e zaten dinamik atanıyor — tek değişiklik aday seçimi.
+**Uygulama:**
+- `qbittorrent_backend.py`: `_is_port_free` (bind testi, SO_REUSEADDR'sız) + `_find_available_port`
+  (preferred+N aralığı) + `_find_free_webui_port()` artık gerçek port seçiyor; `_PORT_MAX_ATTEMPTS=100`.
+- `_ensure_qbittorrent_running()`: her iki platformda `webui_port = _find_free_webui_port()`;
+  `0` dönerse net hata + `None`. `_preseed_windows_profile(webui_port)` seçilen portu
+  qBittorrent.ini'ye yazıyor (Windows). Yeniden kullanım probe'u `_webui_port_candidates()`
+  ile tüm fallback aralığını tarıyor (kapalı portlarda hızlı TCP pre-check ile anında elenir;
+  yoksa `_wait_for_webui` kapalı portta 3 sn beklediği için 101 aday = ~5 dk olurdu).
+- `get_webui_url()`/`_current_webui_port()`: WebUI adresi fallback portu yansıtıyor;
+  `/api/qbittorrent/start` ve password-status `webui_url`'i artık doğru portu döndürüyor.
+  Web UI (app.js) hardcoded `18572` yerine response'taki `url`'i kullanıyor.
+- `rgsx_manager.py`: yerel `_is_port_free`/`_find_available_port` dublikasyonu kaldırıldı,
+  `qbittorrent_backend`'e devredildi (tek ortak implementasyon).
 
-**Dosyalar:** `qbittorrent_backend.py`, muhtemelen `rgsx_manager.py` (helper paylaşımı).
+**Dosyalar:** `qbittorrent_backend.py`, `rgsx_manager.py`, `static/js/app.js`,
+`tests/test_qbittorrent_port.py` (13 test).
 
-**Doğrulama:** 18572'yi işgal edip backend'in alternatif porta geçtiğini ve indirmenin çalıştığını gösteren canlı test.
+**Doğrulama:** 18572'yi işgal edip backend'in alternatif porta geçtiğini ve indirmenin
+çalıştığını gösteren canlı test Windows makinesinde yapılmalı. Sandbox'ta saf port seçim
+mantığı 13 testle doğrulandı (target boşken target, doluysa 18572+N, aralık tükenince 0,
+probe pre-check, preseed ini yazımı).
 
 ---
 

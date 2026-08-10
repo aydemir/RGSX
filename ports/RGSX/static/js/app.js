@@ -334,7 +334,8 @@
 
         function openQbittorrentWebUi() {
             // qBittorrent RGSX tarafından yalnızca torrent indirme başlarken spawn edilir.
-            // Buradan WebUI'ye bağlanmadan önce manager'dan başlatmasını iste (18572 hazır olana kadar bekler).
+            // Buradan WebUI'ye bağlanmadan önce manager'dan başlatmasını iste (port fallback'e
+            // takılmışsa gerçek portu url alanında döndürür).
             fetch('/api/qbittorrent/start', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
@@ -342,8 +343,7 @@
                         showToast(t('web_qbt_password_unable_start'), 'error', 3500);
                         return;
                     }
-                    const qbUrl = new URL(window.location.href);
-                    qbUrl.port = '18572';
+                    const qbUrl = new URL(data.url || window.location.href);
                     qbUrl.pathname = '/';
                     qbUrl.search = '';
                     qbUrl.hash = '';

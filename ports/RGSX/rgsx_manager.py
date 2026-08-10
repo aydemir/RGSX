@@ -27,7 +27,6 @@ import datetime
 import json
 import logging
 import queue as queue_module
-import socket
 import subprocess
 import threading
 import time
@@ -229,10 +228,10 @@ class ManagerHandler(RGSXHandler):
 
         if path == "/api/qbittorrent/start":
             try:
-                from qbittorrent_backend import ensure_running
+                from qbittorrent_backend import ensure_running, get_webui_url
                 ready = ensure_running(timeout=30)
                 self._send_json({"success": ready, "ready": ready,
-                                 "url": "http://localhost:18572/"})
+                                 "url": get_webui_url()})
             except Exception as e:
                 logger.warning(f"[MANAGER] /api/qbittorrent/start: {e}")
                 self._send_json({"success": False, "message": str(e)}, status=500)
@@ -802,36 +801,15 @@ def manager_healthy(host: str = "127.0.0.1", port: int = 5000, timeout: float = 
 
 
 def _is_port_free(port: int, host: str = "0.0.0.0") -> bool:
-    """Port bağlanabilir mi? (başka bir process tarafından işgal edilmemiş mi)
-
-    Not: SO_REUSEADDR Windows'ta ikinci bind'in başarılı olmasına izin verir,
-    bu yüzden kullanılmaz — aktif dinleyen varsa bind OSError ile başarısız olur.
-    """
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            s.bind((host, port))
-            return True
-        finally:
-            s.close()
-    except OSError:
-        return False
+    """Delegué à qbittorrent_backend (Faz 3 — tek ortak implementasyon)."""
+    from qbittorrent_backend import _is_port_free as _qbt_is_port_free
+    return _qbt_is_port_free(port, host)
 
 
 def _find_available_port(preferred: int, host: str = "0.0.0.0", max_attempts: int = 100) -> int:
-    """İstenen port doluysa preferred+N aralığında serbest bir port bulur (Faz 4).
-
-    - preferred boşsa preferred döner.
-    - preferred+1 .. preferred+max_attempts aralığında ilk serbest port döner.
-    - Hiçbiri boş değilse 0 döner (çağıran net hata basmalı).
-    """
-    if _is_port_free(preferred, host):
-        return preferred
-    for offset in range(1, max_attempts + 1):
-        candidate = preferred + offset
-        if _is_port_free(candidate, host):
-            return candidate
-    return 0
+    """Delegué à qbittorrent_backend (Faz 3 — tek ortak implementasyon)."""
+    from qbittorrent_backend import _find_available_port as _qbt_find_available_port
+    return _qbt_find_available_port(preferred, host, max_attempts)
 
 
 # ---------------------------------------------------------------------------
