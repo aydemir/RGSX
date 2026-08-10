@@ -27,7 +27,7 @@ except Exception:
     pygame = None  # type: ignore
 
 # Version actuelle de l'application
-app_version = "2.6.5.6"
+app_version = "2.6.5.7"
 
 # RGSX Download Manager (daemon): True si le manager est joignable.
 # Les téléchargements sont alors délégués via HTTP au manager (tray).
