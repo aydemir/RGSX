@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import hashlib
 import signal
@@ -50,6 +51,32 @@ _TEMP_PASSWORD_PATTERNS = [
     re.compile(r"temporary password.*?:\s*([^\s]+)", re.IGNORECASE),
     re.compile(r"mot de passe temporaire.*?:\s*([^\s]+)", re.IGNORECASE),
 ]
+
+# Faz 5: qBittorrent WebUI'nin bilinen varsayılan şifreleri + eski RGSX hardcoded
+# sabiti. Migration v1, settings'te bu şifrelerden birini görürse rastgele şifre
+# üretir. ÖNEMLİ: _TEMP_PASSWORD_PATTERNS ile yakalanan geçici şifreler bu listeye
+# DAHİL DEĞİLDİR — onlar zaten rastgele üretilir.
+KNOWN_DEFAULT_PASSWORDS = [
+    "RGSXqbt",
+    "admin",
+    "adminadmin",
+    "password",
+]
+
+
+def generate_random_password(length: int = 16) -> str:
+    """Kriptografik olarak güvenli rastgele şifre (secrets.token_urlsafe)."""
+    return secrets.token_urlsafe(length)
+
+
+def _extract_temp_password(stdout_lines: "list[str]") -> str | None:
+    """qBittorrent ilk açılış log'undaki geçici WebUI şifresini ayıklar."""
+    for line in stdout_lines:
+        for pattern in _TEMP_PASSWORD_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                return match.group(1).strip()
+    return None
 
 _PROGS_DIR = os.path.join(config.APP_FOLDER, "assets", "progs")
 _PORTABLE_7Z = os.path.join(_PROGS_DIR, "qbittorrent-portable.7z")
@@ -504,14 +531,6 @@ def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", 
             pass
         return False
 
-    def _extract_temp_password() -> str | None:
-        for line in stdout_lines:
-            for pattern in _TEMP_PASSWORD_PATTERNS:
-                match = pattern.search(line)
-                if match:
-                    return match.group(1).strip()
-        return None
-
     def _is_banned_response(status_code: int, body: str) -> bool:
         if status_code != 403:
             return False
@@ -553,7 +572,7 @@ def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", 
 
     # Le mot de passe temporaire est prioritaire au premier démarrage pour éviter
     # une rafale d'échecs sur des mots de passe persistants potentiellement faux.
-    temp_password = _extract_temp_password()
+    temp_password = _extract_temp_password(stdout_lines)
     if temp_password:
         password_candidates.append((temp_password, "temporary"))
 
@@ -575,7 +594,7 @@ def _login(session: requests.Session, base_url: str, stdout_lines: "list[str]", 
 
     deadline = time.time() + timeout
     while time.time() < deadline:
-        temp_password = _extract_temp_password()
+        temp_password = _extract_temp_password(stdout_lines)
         if temp_password and temp_password not in attempted_passwords:
             ok, banned = _try(_DEFAULT_USERNAME, temp_password, "temporary")
             attempted_passwords.add(temp_password)
@@ -610,12 +629,14 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
             # RESTARTING yoluyla taze başlat (altta probe+taze başlatma akışı).
             if _wait_for_webui(session, _base_url, timeout=5) and _login(session, _base_url, []):
                 _set_qbt_state(STATE_RUNNING, "reused live process")
+                maybe_migrate_qbittorrent_password(session, [])
                 return session
             _set_qbt_state(STATE_UNRESPONSIVE, f"webui/login fail (pid={_qbt_process.pid})")
             for attempt in range(1, _WEBUI_RESPONSIVE_RETRIES + 1):
                 time.sleep(1.0)
                 if _wait_for_webui(session, _base_url, timeout=5) and _login(session, _base_url, []):
                     _set_qbt_state(STATE_RUNNING, f"recovered after {attempt} retry")
+                    maybe_migrate_qbittorrent_password(session, [])
                     return session
             logger.warning("qbittorrent_backend: WebUI %s adına yanıt vermiyor → RESTARTING", _base_url)
             _set_qbt_state(STATE_RESTARTING, f"{_WEBUI_RESPONSIVE_RETRIES} retry sonrası yanıtsız")
@@ -629,6 +650,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
                 _base_url = f"http://127.0.0.1:{candidate_port}"
                 logger.info("qbittorrent_backend: réutilisation d'une instance qBittorrent existante sur le port %s", candidate_port)
                 _set_qbt_state(STATE_RUNNING, f"reused instance port {candidate_port}")
+                maybe_migrate_qbittorrent_password(existing_session, [])
                 return existing_session
 
         exe_path = _find_qbittorrent_executable()
@@ -762,6 +784,7 @@ def _ensure_qbittorrent_running() -> "requests.Session | None":
                 return None
 
         _set_qbt_state(STATE_RUNNING, f"WebUI prêt ({_base_url})")
+        maybe_migrate_qbittorrent_password(session, stdout_lines)
         return session
 
 
@@ -1109,6 +1132,97 @@ def get_password_status() -> dict:
     }
 
 
+def _apply_webui_password(session, new_password: str) -> None:
+    """Şifreyi çalışan WebUI'a setPreferences ile uygular (best effort) ve rgsx_settings'e yazar."""
+    if session is not None:
+        try:
+            session.post(
+                f"{_base_url}/api/v2/app/setPreferences",
+                data={"json": json.dumps({"web_ui_password": new_password})},
+                headers={"Referer": _base_url},
+                timeout=5,
+            )
+            logger.info("qbittorrent_backend: şifre WebUI'a uygulandı (setPreferences)")
+        except requests.exceptions.RequestException as exc:
+            logger.warning("qbittorrent_backend: şifre WebUI'a uygulanamadı, sadece settings'e yazılıyor: %s", exc)
+    from rgsx_settings import set_qbittorrent_webui_password
+    set_qbittorrent_webui_password(new_password)
+
+
+def _notify_password_migrated() -> None:
+    """Faz 5 — migration tamamlanınca TVUI'a tek seferlik bildirim gösterir.
+
+    Manager process'inde koşuyorsak SSE 'toast' olayı yayınlanır (TVUI onu okur);
+    TVUI process'inde koşuyorsak show_toast doğrudan gösterir. İkisi de best effort.
+    """
+    message = None
+    try:
+        from rgsx_web import get_translation
+        message = get_translation("qbt_password_migrated")
+    except Exception:
+        message = None
+    if not message or message == "qbt_password_migrated":
+        message = "qBittorrent WebUI password was automatically rotated for security."
+
+    try:
+        import rgsx_manager
+        if rgsx_manager.SUBSCRIBERS:
+            rgsx_manager._broadcast("toast", {"message": message})
+    except Exception:
+        pass
+    try:
+        from display import show_toast
+        show_toast(message, duration=6000)
+    except Exception:
+        pass
+
+
+def maybe_migrate_qbittorrent_password(session, stdout_lines: "list[str]") -> str:
+    """Faz 5 — migration v1: öntanımlı/eksik şifreyi tek seferlik rastgeleye çevirir.
+
+    Karar, `get_qbittorrent_webui_password`'ün config sabitine düşen davranışıyla
+    DEĞİL, settings'e doğrudan erişimle verilir ("alan yok" ≠ "alan öntanımlı").
+
+    Dönüş: "migrated" | "noop" (kullanıcı tanımlı) | "already_done" | "failed".
+    """
+    from rgsx_settings import (
+        load_rgsx_settings,
+        set_qbittorrent_password_migration_done,
+    )
+
+    try:
+        settings = load_rgsx_settings()
+    except Exception as exc:
+        logger.warning("qbittorrent_backend: migration şifre kararı okunamadı: %s", exc)
+        return "failed"
+
+    if settings.get("migration_v1_done"):
+        return "already_done"
+
+    stored = settings.get("qbittorrent_webui_password")
+    has_stored = isinstance(stored, str) and bool(stored)
+
+    if not has_stored:
+        # Hiç kurulmamış: geçici şifre varsa onu al (zaten rastgele), yoksa üret.
+        new_password = _extract_temp_password(stdout_lines) or generate_random_password()
+        reason = "alan yok → geçici/rastgele"
+    elif stored in KNOWN_DEFAULT_PASSWORDS:
+        new_password = generate_random_password()
+        reason = f"öntanımlı şifre ({stored!r}) → rastgele"
+    else:
+        # Kullanıcı tanımlı: dokunma; yine de flag yaz ki ileride bilinçli olarak
+        # öntanımlıya dönüş sonraki başlatmada üzerine yazılmasın (roadmap guard 2).
+        logger.info("qbittorrent_backend: qBittorrent şifresi kullanıcı tanımlı — migration atlanıyor")
+        set_qbittorrent_password_migration_done(True)
+        return "noop"
+
+    logger.info("qbittorrent_backend: migration v1 — %s", reason)
+    _apply_webui_password(session, new_password)
+    set_qbittorrent_password_migration_done(True)
+    _notify_password_migrated()
+    return "migrated"
+
+
 def change_webui_password(new_password: str) -> tuple[bool, str]:
     """qBittorrent WebUI şifresini değiştirir ve kalıcı olarak rgsx_settings.json'a yazar.
 
@@ -1122,27 +1236,22 @@ def change_webui_password(new_password: str) -> tuple[bool, str]:
 
     try:
         session = _ensure_qbittorrent_running()
-        if session is not None:
-            try:
-                session.post(
-                    f"{_base_url}/api/v2/app/setPreferences",
-                    data={"json": json.dumps({"web_ui_password": new_password})},
-                    headers={"Referer": _base_url},
-                    timeout=5,
-                )
-                logger.info("qbittorrent_backend: şifre WebUI'a uygulandı (setPreferences)")
-            except requests.exceptions.RequestException as exc:
-                logger.warning("qbittorrent_backend: şifre WebUI'a uygulanamadı, sadece settings'e yazılıyor: %s", exc)
-            finally:
-                try:
-                    session.close()
-                except Exception:
-                    pass
     except Exception as exc:
+        session = None
         logger.debug("qbittorrent_backend: change_webui_password qBittorrent erişimi başarısız: %s", exc)
 
-    from rgsx_settings import set_qbittorrent_webui_password
-    set_qbittorrent_webui_password(new_password)
+    if session is not None:
+        try:
+            _apply_webui_password(session, new_password)
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
+    else:
+        from rgsx_settings import set_qbittorrent_webui_password
+        set_qbittorrent_webui_password(new_password)
+
     return True, "ok"
 
 

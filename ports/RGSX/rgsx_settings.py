@@ -768,6 +768,30 @@ def set_qbittorrent_webui_password(password: str) -> str:
     return str(password)
 
 
+def get_qbittorrent_password_migration_done(settings=None) -> bool:
+    """Faz 5 — şifre migration v1'in daha önce tamamlandığını döndürür.
+
+    `migration_v1_done` flag'i rgsx_settings.json'da tutulur; varlığı migration'ın
+    bir kereliğine çalıştığını garanti eder. Flag olmasaydı kullanıcı ileride
+    bilinçli olarak öntanımlı şifreye dönerse her başlatmada üzerine yazılırdı.
+    """
+    if settings is None:
+        settings = load_rgsx_settings()
+    return bool(settings.get("migration_v1_done", False))
+
+
+def set_qbittorrent_password_migration_done(done: bool = True) -> bool:
+    """Faz 5 — `migration_v1_done` flag'ini kalıcı olarak yazar."""
+    try:
+        settings = load_rgsx_settings()
+        settings["migration_v1_done"] = bool(done)
+        save_rgsx_settings(settings)
+        return bool(done)
+    except Exception as e:
+        logger.error(f"Error setting migration_v1_done: {e}")
+        return False
+
+
 # ----------------------- Manager server (port/host) ----------------------- #
 
 def get_manager_port(settings=None) -> int:

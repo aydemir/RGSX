@@ -165,7 +165,7 @@ gözlemle.
 
 ---
 
-## Faz 5 — qBittorrent şifre migration v1 (DRIFT düzeltmesi)
+## Faz 5 — qBittorrent şifre migration v1 (DRIFT düzeltmesi) ✅ TAMAMLANDI
 
 **Amaç:** Öntanımlı şifrede kalan kurulumları tek seferlik otomatik migration ile rastgele
 şifreye taşımak; kullanıcı tanımlı şifreye **asla dokunmamak**.
@@ -205,13 +205,72 @@ aksi halde:                              # kullanıcı değiştirmiş
 `rgsx_settings.py` (`migration_v1_done` persister), `rgsx_manager.py`/`__main__.py` (başlangıç
 hook), TVUI bildirim çevirileri.
 
-**Doğrulama:** Üç senaryo testi: (a) alan yok → rastgele üretilir; (b) alan = öntanımlı → rastgele
-üretilir + flag yazılır; (c) alan = kullanıcı tanımlı → dokunulmaz. İkinci başlatmada flag nedeniyle
-hiçbir şey yapılmadığını doğrula.
+**Doğrulama:** ✅ `tests/test_password_migration.py` (21 test) — üç senaryo (a) alan yok →
+rastgele üretilir, (b) alan = öntanımlı → rastgele üretilir + flag yazılır, (c) alan = kullanıcı
+tanımlı → dokunulmaz; ikinci başlatmada flag nedeniyle hiçbir şey yapılmaz (`already_done`).
+Toplam 140 test geçti, py_compile temiz. Canlı dev makinesinde: şifresiz/`RGSXqbt`'li kurulumda
+ilk RUNNING sonrası settings'te rastgele şifre + `migration_v1_done: true`; ikinci başlatmada
+"already_done" log'u.
+
+---
+## Faz 6 — Büyük dosya refaktörü: tekil .py → paket (display.py deseni)
+
+**Amaç:** 2000+ satırlık tekil dosyaları display.py deseniyle (8f094aa: 6818 satır → `display/`
+paketi, `__init__.py` public API re-export, davranış değişmez) paketlere bölmek. Import yüzeyi
+ve modül-seviyesi state korunur; davranış değişmez.
+
+**Neden?** Yeni fazların (state modeli, toplu indirme, Rust) hedefi bu dosyalar; tekil
+God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
+
+| Dosya | Satır | Kilit nokta |
+|---|---|---|
+| `network.py` | 5667 | indirme hattı + modül-seviyesi state (`progress_queues`, `cancel_events`, `pause_events`, `download_threads`) — `thread_safety.py`, `rgsx_cli.py` doğrudan import ediyor |
+| `controls.py` | 4970 | `handle_controls` **3626 satır** (`:1240-4865`), tek if-elifs zinciri; `language.py` `VALID_STATES` import ediyor |
+| `utils.py` | 4776 | en geniş fan-in: network, controls, rgsx_web, rgsx_manager, __main__, history, rgsx_cli, qbittorrent_backend |
+| `rgsx_web.py` | 2408 | `RGSXHandler` **1759 satır** (`:464-2223`); `rgsx_manager.py` `import rgsx_web` + `RGSXHandler/get_cached_games/get_translation` |
+| `__main__.py` | 2106 | TVUI entry + manager spawn/supervisor karışık |
+
+**Alt fazlar (her biri bağımsız commit — aynı desen, aynı doğrulama):**
+
+- **Faz 6-1 — `utils.py` → `utils/` paketi.** En geniş fan-in, en düşük risk (saf yardımcılar):
+  `games.py` (load_sources/load_games), `sorting.py`, `media.py` (badges/ikon), `torrent.py`
+  (manifest cache + bencode + URL parse), `services.py` (web/DNS boot + connection status),
+  `extensions.py` (ES systems), `text.py` (truncate/sanitize/wrap), `extract.py` (zip/rar/7z +
+  ps3/dos/scummvm/psvita/xbox handler'ları), `security.py` (redact + support zip), `api_keys.py`,
+  `history_matches.py`, `files.py`. `__init__.py` tüm public isimleri re-export eder.
+- **Faz 6-2 — `network.py` → `network/` paketi.** Kritik: modül-seviyesi state
+  (`progress_queues`, `cancel_events`, `pause_events`, `download_threads`, `urls_in_progress`,
+  `url_results`, `url_done_events`) `network/__init__.py`'de **aynı obje kimliğiyle** tutulur —
+  `thread_safety.py`'deki `from network import pause_events` vs. aynı çalışmaya devam eder.
+  Modüller: `upnp.py`, `http_download.py` (headers/challenge/resume/vimm/browser), `lolroms.py`,
+  `archive_org.py`, `1fichier.py`, `queue.py` (worker + pause/resume/cancel/shutdown + state),
+  `updates.py` (changelog + extract_update), `helpers.py`.
+- **Faz 6-3 — `rgsx_web.py` → `rgsx_web/` paketi.** `RGSXHandler` 1759 satırını endpoint
+  grubuna göre ayır: `cache.py` (etag/cached_games/invalidation/watchdog), `i18n.py`
+  (translations + normalize_size), `handlers_download.py`, `handlers_qbittorrent.py`,
+  `handlers_games.py`, `handlers_settings.py`, `server.py` (run_server + FlushFileHandler).
+  `import rgsx_web` + `RGSXHandler/get_cached_games/get_translation` sözleşmesi `__init__.py`'de.
+- **Faz 6-4 — `controls.py` → `controls/` paketi.** `handle_controls`'ı menü-durumu dispatch'ine
+  böl: `input.py` (is_input_matched + key state + joystick), `menus.py` (folder browser + filter
+  menus + `VALID_STATES`/`validate_menu_state`), `downloads.py` (start_or_queue_download +
+  kuyruk + delegate), `search.py` (global search), `handlers.py` (handle_controls dispatch).
+  `language.py`'deki `from controls import VALID_STATES` korunur; `display/controls.py` ile
+  ad karışmaz (üst seviye `controls/` ayrı). Pygame bağımlı olduğu için doğrulama dev
+  makinesinde (sandbox'ta sadece py_compile + non-display testler).
+- **Faz 6-5 — `__main__.py` inceltme.** Entry dosyası kalır; manager spawn/supervisor mantığı
+  `manager_launcher.py`'a, TVUI boot akışı ayrı modüle taşınır. `python __main__.py` aynı
+  davranışı sürdürür.
+
+**Her alt fazın doğrulaması:**
+- `git mv` ile taşı (history korunur); yeni `__init__.py` re-export; `python -m py_compile`
+  temiz; tüm `from X import Y` çağrılarının bozulmadığı grep ile doğrulanır.
+- `RGSX_HEADLESS=1 PYTHONPATH=/tmp/pygame_stub python -m pytest tests/ -q` tam geçer.
+- Modül-seviyesi state kimlikleri korunur (network paketi: `tests/test_thread_safety.py`).
+- Canlı dev makinesinde TVUI + WebUI smoke testi (Faz 6-4 için şart).
 
 ---
 
-## Faz 6 — Test altyapısı: characterization tests (Rust önkoşulu)
+## Faz 7 — Test altyapısı: characterization tests (Rust önkoşulu)
 
 **Amaç:** Mevcut `/api/*` ve SSE davranışını "altın standart" olarak sabitleyen test seti.
 
@@ -234,13 +293,13 @@ kaldırınca kapsam düşüşü belgelenir.
 
 ---
 
-## Faz 7 — Download item state modeli genişletmesi
+## Faz 8 — Download item state modeli genişletmesi
 
 **Amaç:** Mevcut durumlara transient/permanent hata ayrımı ve retry eklemek; sözlük yerine açık model.
 
 **Neden?** Doğrulandı: `Queued/Paused/Connecting/Extracting/Converting/Seeding` zaten var, ama
-hata tek "Failed" gibi ele alınıyor; retry yok. Toplu indirmede (Faz 8) rate limit / geçici ağ
-kesintisi kaçınılmaz — bu faz Faz 8'in **önkoşulu**.
+hata tek "Failed" gibi ele alınıyor; retry yok. Toplu indirmede (Faz 9) rate limit / geçici ağ
+kesintisi kaçınılmaz — bu faz Faz 9'un **önkoşulu**.
 
 **Uygulama:**
 - **State** (anlık): `DOWNLOADING`, `PAUSED`, `FAILED_TRANSIENT`, `FAILED_PERMANENT`,
@@ -261,7 +320,7 @@ kesintisi kaçınılmaz — bu faz Faz 8'in **önkoşulu**.
 
 ---
 
-## Faz 8 — Filtreli listeyi toplu indirme ("Tümünü İndir")
+## Faz 9 — Filtreli listeyi toplu indirme ("Tümünü İndir")
 
 **Amaç:** Filtrelenmiş listenin tek seferde kuyruğa alınması.
 
@@ -277,7 +336,7 @@ tek tek işliyor). `_set_bulk_history_status` yalnızca dahili history güncelle
 
 **Uygulama:** `/api/download/batch` — mevcut `/api/download` mantığını liste üzerinde döngüye
 sokan ince sarmalayıcı; her item mevcut `QUEUED → DOWNLOADING → ...` akışına girer. Yeni state
-machine gerekmez. Faz 7'nin `FAILED_TRANSIENT`/`RETRY_SCHEDULED` ayrımına dayanır.
+machine gerekmez. Faz 8'in `FAILED_TRANSIENT`/`RETRY_SCHEDULED` ayrımına dayanır.
 
 **Dosyalar:** `rgsx_manager.py` (endpoint), `rgsx_web.py` (Web UI satırı), `display/game_list.py`
 (TV UI satırı), `network.py` (`_process_queued_download` çoklu-destek).
@@ -287,25 +346,25 @@ indirilmişler atlanır; transient hatalar retry'lenir.
 
 ---
 
-## Faz 9 — Rust kısmi refaktör (EN SON)
+## Faz 10 — Rust kısmi refaktör (EN SON)
 
 **Amaç:** State machine + concurrency-ağır manager'ı Rust'a taşımak; Linux/Batocera desteği kırılmadan.
 
 **Motivasyon:** `enum`+`match` ile compiler-enforced state transition'ları; `librqbit`
-(`rqbit` motoru) embedded qBittorrent'i ikame edebilir. **Kısıt:** bu faz ancak Faz 1-8
-tamamlandıktan sonra — özellikle Faz 6 (characterization tests) olmadan başlanamaz.
+(`rqbit` motoru) embedded qBittorrent'i ikame edebilir. **Kısıt:** bu faz ancak Faz 1-9
+tamamlandıktan sonra — özellikle Faz 7 (characterization tests) olmadan başlanamaz.
 
 **Platform bölünmesi (doğrulanmış kısıt):**
 | Bileşen | Platform kapsamı | Rust'a geçiş |
 |---|---|---|
-| `rgsx_manager.py` (daemon, tray, autostart, port resolve, SSE, watchdog) | Windows-only | ✅ Faz 9a — risk düşük |
-| `qbittorrent_backend.py` (embedded torrent, `librqbit` adayı) | Windows **+** Linux/Batocera | ⏸ Faz 9b — Linux/ARM test imkânı şart |
+| `rgsx_manager.py` (daemon, tray, autostart, port resolve, SSE, watchdog) | Windows-only | ✅ Faz 10a — risk düşük |
+| `qbittorrent_backend.py` (embedded torrent, `librqbit` adayı) | Windows **+** Linux/Batocera | ⏸ Faz 10b — Linux/ARM test imkânı şart |
 
 **Ara mimari:** Rust manager binary, mevcut `qbittorrent_backend.py`'yi subprocess olarak
 çağırmaya devam eder (JSON-RPC veya local HTTP köprüsü). Windows tarafı kademeli Rust'a geçerken
 Linux/Batocera Python'da kalır.
 
-**Sözleşme:** `/api/*` ve `/api/events` (SSE) — mevcut davranış birebir korunur; Faz 6'daki
+**Sözleşme:** `/api/*` ve `/api/events` (SSE) — mevcut davranış birebir korunur; Faz 7'daki
 characterization tests bunun garantisidir.
 
 **Stack:** `tokio` + `axum` (HTTP/SSE), `windows-rs` (registry + firewall COM), `serde` (JSON).
@@ -328,18 +387,20 @@ Faz 4 (Watchdog)
    ↓
 Faz 5 (Şifre migration v1)
    ↓
-Faz 6 (Characterization tests)
+Faz 6 (Büyük dosya refaktörü: 6-1..6-5)
    ↓
-Faz 7 (Download state modeli)   ← Faz 8'in önkoşulu
+Faz 7 (Characterization tests)
    ↓
-Faz 8 (Toplu indirme)
+Faz 8 (Download state modeli)   ← Faz 9'un önkoşulu
    ↓
-Faz 9 (Rust refaktör)           ← ancak Faz 1-8 sonrası
+Faz 9 (Toplu indirme)
+   ↓
+Faz 10 (Rust refaktör)          ← ancak Faz 1-9 sonrası
 ```
 
 Gerekçeler:
 - **1 → 2 → 3**: hızlı, düşük riskli, bağımsız düzeltmeler (P0 + ~10 dk'lık işler).
 - **4 (watchdog)**: en yüksek değer — crash durumunda sessiz kayıpları önler.
 - **5 (migration)**: P0 ile aynı güvenlik sınıfı; Faz 1'de kurulan şifre sabiti üzerine inşa edilir.
-- **6 (tests) → 7 (state) → 8 (bulk)**: state modeli bulk'un, characterization tests Rust'ın önkoşulu.
-- **9 (Rust)**: en son — ancak davranış sabitlendikten (Faz 6) ve yeni özellikler oturduktan sonra.
+- **7 (tests) → 8 (state) → 9 (bulk)**: state modeli bulk'un, characterization tests Rust'ın önkoşulu.
+- **10 (Rust)**: en son — ancak davranış sabitlendikten (Faz 7) ve yeni özellikler oturduktan sonra.

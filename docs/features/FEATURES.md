@@ -1,5 +1,41 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## qBittorrent Şifre Migration v1 (2026.08.10)
+
+**Olay:** Rastgele şifre üretimi kodda YOKTU (DRIFT) — kurulumlar öntanımlı `RGSXqbt`'de
+duruyordu. Faz 1'deki P0 (support ZIP secret sızıntısı) ile aynı güvenlik sınıfı: aktif
+credential herkesçe biliniyor.
+
+**Yapılan değişiklikler:**
+- **`qbittorrent_backend.py`:**
+  - `KNOWN_DEFAULT_PASSWORDS` sabit listesi (qBittorrent bilinen varsayılanları + eski
+    `RGSXqbt`); `_TEMP_PASSWORD_PATTERNS` **listeye DAHİL DEĞİL** (geçici şifre zaten rastgele).
+  - `generate_random_password()` — `secrets.token_urlsafe(16)` (kriptografik).
+  - `maybe_migrate_qbittorrent_password()` — her başlatmada qBittorrent ilk RUNNING olduğunda:
+    (a) settings'te alan yok → log'dan geçici şifre varsa onu, yoksa rastgele üretir;
+    (b) alan bir varsayılanda → rastgele üretir; (c) kullanıcı tanımlı → **dokunmaz**.
+    Migration `migration_v1_done` flag'i ile **bir kereliğine** çalışır; kullanıcı ileride
+    bilinçli olarak varsayılana dönerse üzerine yazılmaz.
+  - `_extract_temp_password()` modül seviyesine taşındı (`_login` + migration ortak kullanır).
+  - `_apply_webui_password()` helper'ı (setPreferences + settings yazımı); `change_webui_password`
+    artık onu kullanıyor (dublikasyon yok).
+  - Migration hook'u `_ensure_qbittorrent_running()`'in 4 RUNNING dönüş noktasında.
+- **`rgsx_settings.py`:** `get/set_qbittorrent_password_migration_done()` — `migration_v1_done`
+  flag persister'ı.
+- **`rgsx_manager.py` / `__main__.py`:** Migration tamamlanınca manager SSE `toast` olayı
+  yayınlar; TVUI `_apply_manager_event`'te `toast` → `show_toast`. İşlem TVUI process'inde
+  koşuyorsa doğrudan `show_toast`.
+- **7 dil dosyası:** `qbt_password_migrated` bildirim çevirisi.
+- **`tests/test_password_migration.py`** (YENİ): 21 test — üç senaryo (alan yok / varsayılan /
+  kullanıcı tanımlı), flag ile ikinci başlatmada hiçbir şey yapılmaması, rastgele şifre
+  benzersizliği, temp şifre tercihi, setPreferences yazımı.
+
+**Doğrulama:** 140 test geçti (21 yeni + 119 mevcut), py_compile temiz. Canlı dev makinesinde:
+şifre alanı olmayan kurulumda (veya `RGSXqbt`'de) ilk RUNNING sonrası settings'te rastgele
+şifre + `migration_v1_done: true`; ikinci başlatmada log'da "already_done".
+
+---
+
 ## Watchdog / Auto-restart (2026.08.10)
 
 **Olay:** `manager_healthy()` tek seferlik kontroldü; manager çöker veya HTTP sunucusu

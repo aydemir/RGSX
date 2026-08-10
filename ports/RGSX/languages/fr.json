@@ -565,6 +565,7 @@
     "qbt_password_saved": "Mot de passe WebUI qBittorrent mis à jour.",
     "qbt_password_save_error": "Échec de la mise à jour du mot de passe.",
     "qbt_password_manager_unreachable": "Manager inaccessible : mot de passe non enregistré.",
+    "qbt_password_migrated": "Le mot de passe WebUI qBittorrent a été automatiquement renouvelé pour la sécurité.",
     "web_qbt_password_banner": "Avertissement : le mot de passe par défaut de la WebUI qBittorrent est utilisé. Mettez-le à jour pour votre sécurité.",
     "web_qbt_password_update": "Mettre à jour le mot de passe",
     "web_qbt_password_title": "Mot de passe WebUI qBittorrent",

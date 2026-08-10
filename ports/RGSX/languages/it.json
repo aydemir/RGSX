@@ -561,6 +561,7 @@
     "qbt_password_saved": "qBittorrent WebUI password updated.",
     "qbt_password_save_error": "Failed to update password.",
     "qbt_password_manager_unreachable": "Manager unreachable: password not saved.",
+    "qbt_password_migrated": "La password WebUI di qBittorrent è stata ruotata automaticamente per sicurezza.",
     "web_qbt_password_banner": "Warning: qBittorrent WebUI default password is in use. Update it for security.",
     "web_qbt_password_update": "Update Password",
     "web_qbt_password_title": "qBittorrent WebUI Password",

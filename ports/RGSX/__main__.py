@@ -764,6 +764,12 @@ def _apply_manager_event(event_type, payload, last_seen):
             config.downloaded_games = downloaded
             dirty = True
 
+    if event_type == "toast":
+        message = payload.get("message")
+        if message:
+            show_toast(str(message), duration=6000)
+            dirty = True
+
     if dirty:
         config.needs_redraw = True
 

@@ -561,6 +561,7 @@
     "qbt_password_saved": "qBittorrent WebUI şifresi güncellendi.",
     "qbt_password_save_error": "Şifre güncellenemedi.",
     "qbt_password_manager_unreachable": "Manager erişilemiyor: şifre kaydedilemedi.",
+    "qbt_password_migrated": "qBittorrent WebUI şifresi güvenlik için otomatik olarak değiştirildi.",
     "web_qbt_password_banner": "Uyarı: qBittorrent WebUI varsayılan şifresi kullanılıyor. Güvenliğiniz için şifrenizi güncelleyin.",
     "web_qbt_password_update": "Şifreyi Güncelle",
     "web_qbt_password_title": "qBittorrent WebUI Şifresi",
