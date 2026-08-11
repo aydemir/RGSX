@@ -152,6 +152,27 @@ class TestWebGet:
         assert isinstance(body["language"], str)
         assert "_language" in body["translations"]
 
+    def test_translations_reloads_from_disk(self, isolated, monkeypatch):
+        # Bayat TRANSLATIONS yerine diskten taze okuma: dosyaya yeni anahtar eklendiğinde
+        # /api/translations restart olmadan yeni anahtarı servis etmeli.
+        monkeypatch.setattr(config, "LANGUAGES_FOLDER", str(isolated / "langs"))
+        langs = isolated / "langs"
+        langs.mkdir(exist_ok=True)
+        lang_file = langs / "en.json"
+        lang_file.write_text(json.dumps({"custom_key": "one"}), encoding="utf-8")
+
+        status, _, payload = invoke(RGSXHandler, "/api/translations")
+        assert status == 200
+        body = as_json(payload)
+        assert body["translations"]["custom_key"] == "one"
+
+        # Simülasyon: dil dosyası güncellendi (örn. yeni anahtar eklendi)
+        lang_file.write_text(json.dumps({"custom_key": "one", "custom_key_2": "two"}), encoding="utf-8")
+        status, _, payload = invoke(RGSXHandler, "/api/translations")
+        assert status == 200
+        body = as_json(payload)
+        assert body["translations"]["custom_key_2"] == "two"
+
     def test_games_empty_platform(self, isolated):
         status, _, payload = invoke(RGSXHandler, "/api/games/NES")
         assert status == 200
