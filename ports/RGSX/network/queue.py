@@ -26,6 +26,7 @@ from utils import (
     get_clean_display_name,
     parse_torrent_download_url,
 )
+import network
 from network import (
     progress_queues,
     cancel_events,
@@ -36,6 +37,16 @@ from network import (
     urls_lock,
     url_results,
     url_done_events,
+)
+from network.download_state import (
+    DownloadJob,
+    DownloadState,
+    DownloadEvent,
+    IllegalTransitionError,
+    classify_error,
+    emit_state_event,
+    retry_backoff_seconds,
+    transition,
 )
 from network.helpers import (
     InsufficientDiskSpaceError,
@@ -414,8 +425,7 @@ def cancel_all_downloads():
 def shutdown_downloads():
     """Appelée au moment de quitter l'application proprement.
     Arrête les téléchargements actifs et laisse qBittorrent gérer son propre état de reprise."""
-    global _app_shutting_down
-    _app_shutting_down = True
+    network._app_shutting_down = True
     # Vider la file d'attente (pas de téléchargements futurs)
     config.download_queue.clear()
     config.download_active = False
@@ -424,6 +434,198 @@ def shutdown_downloads():
     except Exception as exc:
         logger.debug(f"shutdown_downloads: arrêt qBittorrent échoué: {exc}")
     logger.debug("shutdown_downloads: _app_shutting_down=True, file d'attente vidée.")
+
+
+# ==================== Faz 8: sonuc sonlandirma + retry ======================
+_retry_lock = threading.Lock()
+_retry_in_flight = set()
+
+
+def _max_retries() -> int:
+    return max(0, int(getattr(config, "DOWNLOAD_MAX_RETRIES", 3) or 3))
+
+
+def _retry_backoff(retry_count: int) -> float:
+    return retry_backoff_seconds(
+        retry_count,
+        base=float(getattr(config, "DOWNLOAD_RETRY_BACKOFF_BASE_SEC", 5.0) or 5.0),
+        max_wait=float(getattr(config, "DOWNLOAD_RETRY_BACKOFF_MAX_SEC", 300.0) or 300.0),
+    )
+
+
+def _retry_message(job: DownloadJob, retry_count: int, delay: float) -> str:
+    fallback = f"Retry {job.game_name} (attempt {retry_count}/{job.max_retries}) in {int(delay)}s"
+    try:
+        from language import _
+        msg = _("download_retry_attempt").format(job.game_name, retry_count, job.max_retries, int(delay))
+        if isinstance(msg, str) and msg and not msg.startswith("download_retry_attempt"):
+            return msg
+    except Exception:
+        pass
+    return fallback
+
+
+def _finalize_download_result(task_id, url, success, message, platform, game_name, entry):
+    """download_rom'un final/drain noktalarindan çağrılır.
+
+    Sonucu DownloadJob state modeline gecirir ve dondurur:
+      - 'completed'      -> COMPLETED, status Download_OK (mevcut davranış)
+      - 'retry_scheduled'-> FAILED_TRANSIENT -> RETRY_SCHEDULED, status
+        Téléchargement'te kalır (aktif görünüm), backoff sonrasi yeniden başlatılır
+      - 'failed'         -> FAILED_PERMANENT, status Erreur (mevcut davranış)
+    """
+    try:
+        from history import mark_game_as_downloaded
+    except Exception:
+        mark_game_as_downloaded = None
+
+    current_progress = int(entry.get("progress", 0) or 0)
+    retry_count = int(entry.get("retry_count", 0) or 0)
+    max_retries = int(entry.get("max_retries", _max_retries()) or _max_retries())
+
+    job = DownloadJob.from_history_entry(entry)
+    job.id = job.id or task_id or url
+    job.task_id = task_id or job.task_id or url
+    job.error = str(message or "")
+    job.max_retries = max_retries
+
+    if success:
+        try:
+            transition(job, DownloadEvent.COMPLETED)
+        except IllegalTransitionError:
+            job.state = DownloadState.COMPLETED
+        entry["status"] = "Download_OK"
+        entry["progress"] = 100
+        entry["entity_state"] = DownloadState.COMPLETED.value
+        entry["retry_count"] = retry_count
+        entry["max_retries"] = max_retries
+        entry["message"] = message
+        _save_history_with_feedback("download_state:completed")
+        if mark_game_as_downloaded:
+            try:
+                mark_game_as_downloaded(platform, game_name, entry.get("size", "N/A"))
+            except Exception:
+                pass
+        config.needs_redraw = True
+        emit_state_event("completed", url=url, task_id=task_id, game_name=game_name)
+        return "completed"
+
+    transient = classify_error(message)
+    if transient and retry_count < max_retries:
+        new_count = retry_count + 1
+        delay = _retry_backoff(new_count)
+        retry_at = time.time() + delay
+        # state akisi: DOWNLOADING -> FAILED_TRANSIENT -> RETRY_SCHEDULED.
+        # Retry indirmesi de basarisizsa job.state zaten RETRY_SCHEDULED olabilir
+        # (download_rom start'ta entity_state'i DOWNLOADING'e sifirlar ama stale
+        # kalmis olabilir) — o durumda bu iki transition atlanir.
+        if job.state in (DownloadState.DOWNLOADING, DownloadState.VERIFYING, DownloadState.EXTRACTING):
+            try:
+                transition(job, DownloadEvent.TRANSIENT_FAILURE)
+            except IllegalTransitionError:
+                pass
+        if job.state is DownloadState.FAILED_TRANSIENT:
+            try:
+                transition(job, DownloadEvent.RETRY_TRIGGERED)
+            except IllegalTransitionError:
+                job.state = DownloadState.RETRY_SCHEDULED
+        if job.state not in (DownloadState.RETRY_SCHEDULED, DownloadState.FAILED_TRANSIENT):
+            job.state = DownloadState.RETRY_SCHEDULED
+        job.retry_count = new_count
+        job.retry_at = retry_at
+
+        entry["status"] = "Téléchargement"  # aktif görünüm (legacy)
+        entry["entity_state"] = DownloadState.RETRY_SCHEDULED.value
+        entry["retry_count"] = new_count
+        entry["max_retries"] = max_retries
+        entry["retry_at"] = round(retry_at, 3)
+        entry["error"] = str(message or "")
+        entry["message"] = _retry_message(job, new_count, delay)
+        entry["progress"] = current_progress
+        config.needs_redraw = True
+        _save_history_with_feedback("download_state:retry_scheduled")
+        emit_state_event("retry_scheduled", url=url, task_id=task_id,
+                         game_name=game_name, retry_count=new_count,
+                         max_retries=max_retries, delay=round(delay, 1))
+        _schedule_download_retry(job, delay)
+        return "retry_scheduled"
+
+    # Kalıcı hata (veya retry hakkı tükendi)
+    try:
+        transition(job, DownloadEvent.PERMANENT_FAILURE)
+    except IllegalTransitionError:
+        job.state = DownloadState.FAILED_PERMANENT
+    entry["status"] = "Erreur"
+    entry["progress"] = current_progress
+    entry["entity_state"] = DownloadState.FAILED_PERMANENT.value
+    entry["retry_count"] = retry_count
+    entry["max_retries"] = max_retries
+    entry["error"] = str(message or "")
+    entry["message"] = message
+    config.needs_redraw = True
+    _save_history_with_feedback("download_state:failed_permanent")
+    emit_state_event("failed_permanent", url=url, task_id=task_id,
+                     game_name=game_name, retry_count=retry_count)
+    return "failed"
+
+
+def _schedule_download_retry(job: DownloadJob, delay: float):
+    """Backoff sonrasi ayni URL'yi yeniden indirir (yeni task_id ile).
+
+    Duplikasyonu _retry_in_flight ile önler; app kapanırken veya orijinal
+    task iptal edildiyse atlar; slot kapasitesini bekler.
+    """
+    original_task_id = job.task_id
+    url = job.url
+
+    def runner():
+        deadline = time.time() + max(0.0, delay)
+        while time.time() < deadline:
+            if network._app_shutting_down:
+                return
+            if cancel_events.get(original_task_id):
+                logger.debug(f"[RETRY] İptal edildi (task {original_task_id}), yeniden deneme atlandı: {job.game_name}")
+                return
+            time.sleep(0.5)
+
+        while True:
+            if network._app_shutting_down:
+                return
+            if cancel_events.get(original_task_id):
+                return
+            active = getattr(config, "active_download_count", 0) or 0
+            max_dl = getattr(config, "max_simultaneous_downloads", 5) or 5
+            if active < max_dl:
+                break
+            time.sleep(1)
+
+        with _retry_lock:
+            if url in _retry_in_flight:
+                return
+            _retry_in_flight.add(url)
+        try:
+            logger.info(f"[RETRY] {job.game_name} yeniden deneniyor (deneme {job.retry_count}/{job.max_retries})")
+            config.active_download_count = getattr(config, "active_download_count", 0) + 1
+            config.download_active = True
+            new_task_id = f"retry_{int(time.time()*1000)}_{abs(hash(url)) & 0xFFFFFF:06x}"
+            try:
+                from network.one_fichier import download_from_1fichier, is_1fichier_url
+            except Exception:
+                download_from_1fichier = None
+                is_1fichier_url = lambda _u: False
+            if download_from_1fichier and is_1fichier_url(url):
+                asyncio.run(download_from_1fichier(
+                    url, job.platform, job.game_name, job.is_zip_non_supported, new_task_id))
+            else:
+                asyncio.run(download_rom(
+                    url, job.platform, job.game_name, job.is_zip_non_supported, new_task_id))
+        except Exception as e:
+            logger.error(f"[RETRY] Yeniden deneme hatası {job.game_name}: {e}")
+        finally:
+            with _retry_lock:
+                _retry_in_flight.discard(url)
+
+    threading.Thread(target=runner, daemon=True, name=f"download-retry-{original_task_id}").start()
 async def download_rom(url, platform, game_name, is_zip_non_supported=False, task_id=None):
     logger.debug(f"Début téléchargement: {game_name} depuis {url}, zip non supporté={is_zip_non_supported}, task_id={task_id}")
     
@@ -507,6 +709,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     entry_exists = True
                     # Réinitialiser le status à "Downloading"
                     entry["status"] = "Downloading"
+                    entry["entity_state"] = DownloadState.DOWNLOADING.value  # Faz 8: retry'dan temiz baslangic
                     entry["progress"] = 0
                     entry["downloaded_size"] = 0
                     entry["platform"] = platform
@@ -526,6 +729,7 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     "display_name": get_clean_display_name(game_name, platform),
                     "url": original_history_url,
                     "status": "Downloading",
+                    "entity_state": DownloadState.DOWNLOADING.value,  # Faz 8
                     "progress": 0,
                     "downloaded_size": 0,
                     "total_size": known_total_size,
@@ -1424,19 +1628,14 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                         if isinstance(config.history, list):
                             for entry in config.history:
                                 if "url" in entry and entry["url"] == original_history_url and entry["status"] in ["Downloading", "Téléchargement", "Extracting", "Converting"]:
-                                    current_progress = int(entry.get("progress", 0) or 0)
-                                    entry["status"] = "Download_OK" if success else "Erreur"
-                                    entry["progress"] = 100 if success else current_progress
-                                    entry["message"] = message
-                                    _save_history_with_feedback("download_rom:final")
-                                    # Marquer le jeu comme téléchargé si succès
-                                    if success:
-                                        logger.debug(f"[WHILE_LOOP] Marking game as downloaded: platform={platform}, game={game_name}")
-                                        from history import mark_game_as_downloaded
-                                        file_size = entry.get("size", "N/A")
-                                        mark_game_as_downloaded(platform, game_name, file_size)
-                                    config.needs_redraw = True
-                                    logger.debug(f"Final update in history: status={entry['status']}, progress={entry['progress']}%, message={message}, task_id={task_id}")
+                                    outcome = _finalize_download_result(
+                                        task_id, original_history_url, success, message, platform, game_name, entry
+                                    )
+                                    logger.debug(
+                                        f"Final update in history: status={entry['status']}, "
+                                        f"entity_state={entry.get('entity_state')}, progress={entry['progress']}%, "
+                                        f"outcome={outcome}, message={message}, task_id={task_id}"
+                                    )
                                     break
                     else:
                         # logger.debug(f"[QUEUE] Traitement données progression: {data}, task_id={task_id}")
@@ -1540,16 +1739,9 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                     if isinstance(config.history, list):
                         for entry in config.history:
                             if "url" in entry and entry["url"] == original_history_url and entry["status"] in ["Downloading", "Téléchargement", "Extracting", "Converting"]:
-                                entry["status"] = "Download_OK" if success else "Erreur"
-                                entry["progress"] = 100 if success else 0
-                                entry["message"] = message
-                                _save_history_with_feedback("download_rom:drain")
-                                # Marquer le jeu comme téléchargé si succès
-                                if success:
-                                    logger.debug(f"[DRAIN_QUEUE] Marking game as downloaded: platform={platform}, game={game_name}")
-                                    from history import mark_game_as_downloaded
-                                    file_size = entry.get("size", "N/A")
-                                    mark_game_as_downloaded(platform, game_name, file_size)
+                                _finalize_download_result(
+                                    task_id, original_history_url, success, message, platform, game_name, entry
+                                )
                                 break
     except Exception as e:
         logger.error(f"[DRAIN_QUEUE] Error processing final message: {e}")

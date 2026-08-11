@@ -587,5 +587,7 @@
     "web_qbt_regenerate": "Rastgele Şifre Üret",
     "web_qbt_set_custom": "Özel Şifre Belirle",
     "web_qbt_regenerate_confirm": "Yeni bir rastgele şifre üretilsin mi? Mevcut WebUI oturumları geçersiz olur.",
-    "web_qbt_new_password_hint": "Yeni şifre (şimdi kaydedin):"
+    "web_qbt_new_password_hint": "Yeni şifre (şimdi kaydedin):",
+    "download_retry_attempt": "İndirme yeniden deneniyor (deneme {0}/{1}) — {2} sn sonra. Son hata: {3}",
+    "history_status_retrying": "Yeniden deneme {0}/{1}"
 }

@@ -57,6 +57,7 @@ from network.http_download import (
     _redact_headers,
 )
 from network.queue import notify_download_finished
+from network.download_state import DownloadState
 
 logger = logging.getLogger("network")
 
@@ -584,6 +585,7 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                     entry_exists = True
                     # Réinitialiser le status à "Downloading"
                     entry["status"] = "Downloading"
+                    entry["entity_state"] = DownloadState.DOWNLOADING.value  # Faz 8: retry'dan temiz baslangic
                     entry["progress"] = 0
                     entry["downloaded_size"] = 0
                     entry["platform"] = platform
@@ -601,6 +603,7 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                     "display_name": get_clean_display_name(game_name, platform),
                     "url": url,
                     "status": "Downloading",
+                    "entity_state": DownloadState.DOWNLOADING.value,  # Faz 8
                     "progress": 0,
                     "downloaded_size": 0,
                     "total_size": 0,
@@ -1747,16 +1750,12 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                         if isinstance(config.history, list):
                             for entry in config.history:
                                 if "url" in entry and entry["url"] == url and entry["status"] in ["Downloading", "Téléchargement", "Extracting", "Converting"]:
-                                    entry["status"] = "Download_OK" if success else "Erreur"
-                                    entry["progress"] = 100 if success else 0
-                                    entry["message"] = message
-                                    _save_history_with_feedback("download_1fichier:final")
-                                    # Marquer le jeu comme téléchargé si succès
-                                    if success:
-                                        logger.debug(f"[1F_WHILE_LOOP] Marking game as downloaded: platform={platform}, game={game_name}")
-                                        from history import mark_game_as_downloaded
-                                        file_size = entry.get("size", "N/A")
-                                        mark_game_as_downloaded(platform, game_name, file_size)
+                                    # Faz 8: ortak state modeli + retry (network.queue ile
+                                    # döngüsel import olmamasi için lazy import).
+                                    from network.queue import _finalize_download_result
+                                    _finalize_download_result(
+                                        task_id, url, success, message, platform, game_name, entry
+                                    )
                                     config.needs_redraw = True
                                     logger.debug(f"Mise à jour finale historique: status={entry['status']}, progress={entry['progress']}%, message={message}, task_id={task_id}")
                                     break
@@ -1810,16 +1809,10 @@ async def download_from_1fichier(url, platform, game_name, is_zip_non_supported=
                     if isinstance(config.history, list):
                         for entry in config.history:
                             if "url" in entry and entry["url"] == url and entry["status"] in ["Downloading", "Téléchargement", "Extracting", "Converting"]:
-                                entry["status"] = "Download_OK" if success else "Erreur"
-                                entry["progress"] = 100 if success else 0
-                                entry["message"] = message
-                                _save_history_with_feedback("download_1fichier:drain")
-                                # Marquer le jeu comme téléchargé si succès
-                                if success:
-                                    logger.debug(f"[1F_DRAIN_QUEUE] Marking game as downloaded: platform={platform}, game={game_name}")
-                                    from history import mark_game_as_downloaded
-                                    file_size = entry.get("size", "N/A")
-                                    mark_game_as_downloaded(platform, game_name, file_size)
+                                from network.queue import _finalize_download_result
+                                _finalize_download_result(
+                                    task_id, url, success, message, platform, game_name, entry
+                                )
                                 break
     except Exception as e:
         logger.error(f"[1F_DRAIN_QUEUE] Error processing final message: {e}")

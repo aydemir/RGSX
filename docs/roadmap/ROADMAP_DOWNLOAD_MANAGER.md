@@ -349,7 +349,7 @@ için hedef bir sonraki Faz 7 iterasyonunda daha fazla testle artırılacak.
 
 ---
 
-## Faz 8 — Download item state modeli genişletmesi
+## Faz 8 — Download item state modeli genişletmesi ✅ TAMAMLANDI
 
 **Amaç:** Mevcut durumlara transient/permanent hata ayrımı ve retry eklemek; sözlük yerine açık model.
 
@@ -371,8 +371,49 @@ kesintisi kaçınılmaz — bu faz Faz 9'un **önkoşulu**.
 **Dosyalar:** `network.py` (job modeli), `history.py` (persistence), `rgsx_web.py` (SSE event'leri),
 `display/` (UI durum ikonları).
 
+### Uygulama notları (koda karşı doğrulandı)
+
+- **`network/` monoliti artık paket** olduğundan "network.py (job modeli)" → yeni
+  **`network/download_state.py`** modülü (saf/bağımsız): `DownloadState`/`DownloadEvent`
+  enum'ları, `_TRANSITIONS` tablosu, `transition(job, event, effects)` yan-etkili geçişi
+  (geçersiz kombinasyonda `IllegalTransitionError`), `DownloadJob` @dataclass
+  (`from_history_entry`/`apply_to_history_entry` — eski format geriye dönük uyumlu,
+  status/url/... mevcut alan adları korunur, `entity_state`/`retry_count`/`max_retries`/
+  `error`/`retry_at` eklenir), `classify_error` (transient: 408/409/425/429/5xx + timeout +
+  connection + bariz transient marker'lar; permanent: 401-4xx + paylaşılan kalıcı
+  marker'lar + `InsufficientDiskSpaceError`; belirsiz → varsayılan kalıcı), üstel backoff
+  (`5s,10s,20s,... max 300s`), legacy `<->` enum eşlemesi, opsiyonel SSE emitör
+  (`set_state_emitter`).
+- **`network/queue.py`**: `download_rom`'un ana döngü ve drain sonuç blokları artık
+  `_finalize_download_result(task_id, url, success, message, platform, game_name, entry)`'ye
+  yönlendiriyor → success `COMPLETED`/`Download_OK` (mevcut davranış aynı); transient &
+  `retry_count < max` → `FAILED_TRANSIENT → RETRY_SCHEDULED` (status `Téléchargement`'te kalır,
+  aktif görünüm, `message`'a retry metni, `retry_at`), `_schedule_download_retry` backoff
+  sonrası yeni task_id ile `download_rom`/`download_from_1fichier`'ı yeniden başlatır
+  (slots beklenir, `_retry_in_flight` dublikasyonu önler, iptal/kapanışta atlanır); kalıcı →
+  `FAILED_PERMANENT`/`Erreur` (mevcut davranış aynı). `download_rom` başlangıcında
+  `entity_state = DOWNLOADING` sıfırlanır.
+- **`network/one_fichier.py`**: aynı iki sonuç bloğu + başlangıç reset'i aynı modele bağlandı
+  (lazy import ile döngü kırıldı).
+- **`history.py`**: yazım zaten lenient (ek alanlar korunur); eski format okuma regression'ı
+  test edildi — değişiklik gerekmedi.
+- **SSE**: `rgsx_manager.main()` `set_state_emitter(_broadcast)` kaydeder → durum değişimleri
+  `download_state` SSE event tipiyle yayınlanır; ek olarak `entity_state`/`retry_*` alanları
+  `config.history` repr'ini değiştirdiği için mevcut `history` SSE diff'i de taze state'i taşır.
+- **`display/history.py`**: `RETRY_SCHEDULED`/`FAILED_TRANSIENT` için status sütunu
+  (`history_status_retrying` çevirisi: "Retry {0}/{1}") + uyarı rengi eklendi.
+- **Pre-existing bug fix:** `_app_shutting_down` flag'i `queue.py`'de kötü bir şekilde ayrı
+  modül kopyası olarak set ediliyordu (kimse okumuyordu) — artık paylaşılan
+  `network._app_shutting_down` set ediliyor; retry runner'ı kapanışı böyle görüyor.
+- **Yapılandırma:** `config.DOWNLOAD_MAX_RETRIES=3`,
+  `DOWNLOAD_RETRY_BACKOFF_BASE_SEC=5.0`, `DOWNLOAD_RETRY_BACKOFF_MAX_SEC=300.0`.
+- **7 dil:** `download_retry_attempt` + `history_status_retrying` anahtarları.
+
 **Doğrulama:** Geçici hata → `retry_count` artar ve tekrar dener; kalıcı hata → `FAILED_PERMANENT`.
-`history.json` eski formatla yazılmış veriyi okuyabilir (regression).
+`history.json` eski formatla yazılmış veriyi okuyabilir (regression). `tests/test_download_state.py`
+57 test (transition/illegal, classifier, backoff, legacy mapping, job round-trip, finalize entegrasyonu,
+retry relaunch thread, shutdown abort, emitter, history eski-format regression). Tam suite:
+**325 passed / 23 pre-existing display+pygame-stub** (HEAD baseline birebir aynı 23).
 
 ---
 

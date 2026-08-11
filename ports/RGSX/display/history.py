@@ -250,7 +250,19 @@ def draw_history_list(screen):
         provider_prefix = entry.get("provider_prefix") or (entry.get("provider") + ":" if entry.get("provider") else "")
         
         # Compute status text (optimized version without redundant prefix for errors)
-        if status in ["Téléchargement", "Downloading"]:
+        entity_state = str(entry.get("entity_state") or "")
+        if entity_state in ("RETRY_SCHEDULED", "FAILED_TRANSIENT"):
+            # Faz 8: geçici hata sonrası yeniden deneme bekleniyor — aktif ama retry durumunda
+            retry_count = int(entry.get("retry_count", 0) or 0)
+            max_retries = int(entry.get("max_retries", 0) or 0)
+            custom = entry.get("message") or ""
+            if custom and not str(custom).startswith("Retry ") and not str(custom).startswith("Nouvelle") and not str(custom).startswith("Yeniden"):
+                status_text = str(custom)
+            elif max_retries > 0:
+                status_text = _("history_status_retrying").format(retry_count, max_retries)
+            else:
+                status_text = _("history_status_retrying").format(retry_count, retry_count)
+        elif status in ["Téléchargement", "Downloading"]:
             # Vérifier si un message personnalisé existe (ex: mode gratuit avec attente)
             custom_message = entry.get('message', '')
             total_size_value = int(entry.get("total_size", 0) or 0)
@@ -310,7 +322,10 @@ def draw_history_list(screen):
             status_text = str(status or "")
 
         # Determine color dedicated to status (independent from selection for better readability)
-        if status == "Erreur" or status == "Error":
+        if entity_state in ("RETRY_SCHEDULED", "FAILED_TRANSIENT"):
+            # Faz 8: retry bekleniyor — uyarı rengi (aktiflerden ayırt edilir)
+            status_color = THEME_COLORS.get("warning_text", (255, 100, 0))
+        elif status == "Erreur" or status == "Error":
             status_color = THEME_COLORS.get("error_text", (255, 0, 0))
         elif status == "Canceled":
             status_color = THEME_COLORS.get("warning_text", (255, 100, 0))

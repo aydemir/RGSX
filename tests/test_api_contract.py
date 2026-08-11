@@ -248,12 +248,14 @@ class TestWebGet:
         assert body["success"] is True
         assert "settings" in body
 
-    def test_system_info(self, isolated):
+    def test_system_info(self, isolated, monkeypatch):
+        monkeypatch.setattr(config, "SYSTEM_INFO", {"model": "test", "network_ip": ""})
+        monkeypatch.setattr(config, "get_batocera_system_info", lambda: None)
         status, _, payload = invoke(RGSXHandler, "/api/system_info")
         assert status == 200
         body = as_json(payload)
         assert body["success"] is True
-        assert "system_info" in body
+        assert body["system_info"] == {"model": "test", "network_ip": ""}
 
     def test_browse_directories_root(self, isolated):
         status, _, payload = invoke(RGSXHandler, "/api/browse-directories")

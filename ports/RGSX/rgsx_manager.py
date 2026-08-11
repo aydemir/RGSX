@@ -983,6 +983,14 @@ def main():
     threading.Thread(target=_broadcaster_loop, daemon=True, name="sse-broadcaster").start()
     _start_watchdog(args.port)
 
+    # Faz 8: indirme state makinesi SSE yayınını bu sürecin broadcast'ine bağla
+    # (download_state.emit_state_event -> 'download_state' SSE event tipi).
+    try:
+        from network.download_state import set_state_emitter
+        set_state_emitter(_broadcast)
+    except Exception as e:
+        logger.debug(f"[MANAGER] state emitter kaydı atlandı: {e}")
+
     # qBittorrent WebUI şifresini daha ilk açılışta güvence altına al: settings'te
     # güvenli şifre yoksa rastgele üretilip kaydedilir (spawn'da setPreferences ile
     # uygulanır). Böylece 'varsayılan şifre kullanımda' durumu pratikte oluşmaz.

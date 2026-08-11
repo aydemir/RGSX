@@ -155,3 +155,20 @@ from network.queue import (
     download_rom,
 )
 
+from network.download_state import (
+    DownloadJob,
+    DownloadState,
+    DownloadEvent,
+    IllegalTransitionError,
+    classify_error,
+    emit_state_event,
+    get_state_emitter,
+    is_active_state,
+    legacy_history_status,
+    retry_backoff_seconds,
+    retryable,
+    set_state_emitter,
+    state_from_legacy,
+    transition,
+)
+

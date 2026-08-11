@@ -163,6 +163,12 @@ active_download_count = 0
 # Limite de téléchargements simultanés (chargée depuis rgsx_settings au démarrage, défaut 5)
 max_simultaneous_downloads = 5
 
+# Faz 8 — retry: geçici hatalarda (rate limit / 5xx / timeout) yeniden deneme politikası
+# (download_state.retry_backoff_seconds ile: 5s, 10s, 20s, ... max 300s)
+DOWNLOAD_MAX_RETRIES = 3
+DOWNLOAD_RETRY_BACKOFF_BASE_SEC = 5.0
+DOWNLOAD_RETRY_BACKOFF_MAX_SEC = 300.0
+
 # Cache status de connexion (menu pause > settings)
 connection_status = {}
 connection_status_timestamp = 0.0
