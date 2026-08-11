@@ -2,7 +2,7 @@
 
 - **id:** TASK-001
 - **title:** Faz 7 kapsam artırma — rgsx_settings, rgsx_manager, qbittorrent_backend
-- **status:** in-progress
+- **status:** completed
 - **priority:** P2
 - **created:** 2026-08-11
 - **tags:** tests, coverage, rgsx-settings, rgsx-manager, qbittorrent-backend
@@ -74,3 +74,12 @@ testlerle oraya taşımak; `.coveragerc`'te bu dosyaların omit'li **kalmadığ�
 
 - 2026-08-11 — Roadmap'ten tasks/ yapısına taşındı (in-progress; kısmen ilerlemiş: qbittorrent/
   rgsx_settings için ek testler mevcut, resmi kapsam hedefi henüz tanımlı değil).
+- 2026-08-11 — **TAMAMLANDI.** Üç hedef modül de hedefin üzerine taşındı:
+  `rgsx_settings.py` %94 (hedef ≥60), `rgsx_manager.py` %88 (hedef ≥55),
+  `qbittorrent_backend.py` %80 (hedef ≥45). Test dosyaları: `tests/test_rgsx_settings.py`
+  (870 satır), `tests/test_rgsx_manager.py` (1151 satır), `tests/test_qbittorrent_backend.py`
+  (194+ test; login/ensure/download/seed akışları). Düzeltilen gerçek platform hatası:
+  `os.link` Termux/Android'de `AttributeError` fırlatıyordu → `except (OSError, AttributeError)`
+  ile `shutil.copy2` fallback'i çalışır hale geldi (ports/RGSX/qbittorrent_backend.py:1682).
+  Tam suite: 725 passed / 23 pre-existing display fail (baseline korundu).
+  Commit: `ca14a3f`.
