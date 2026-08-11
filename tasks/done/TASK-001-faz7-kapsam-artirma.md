@@ -2,7 +2,8 @@
 
 - **id:** TASK-001
 - **title:** Faz 7 kapsam artırma — rgsx_settings, rgsx_manager, qbittorrent_backend
-- **status:** completed
+- **status:** done
+- **updated:** 2026-08-11
 - **priority:** P2
 - **created:** 2026-08-11
 - **tags:** tests, coverage, rgsx-settings, rgsx-manager, qbittorrent-backend
