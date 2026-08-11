@@ -1,5 +1,32 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## WebUI Sekme Auto-Refresh Kaldırıldı — İndirmeler/Kuyruk/Geçmiş/Ayarlar (2026.08.11)
+
+**Olay:** Platform listesi auto-refresh'i (5e63c69: imza karşılaştırması + SSE snapshot
+skip-render) daha önce kaldırılmıştı. Aynı yaklaşım diğer sekmelere uyarlandı: WebUI
+artık İndirmeler, Kuyruk, Geçmiş ve Ayarlar sekmelerini **periyodik olarak yenilemiyor**;
+veriler yalnızca sekmeye girildiğinde (veya sayfa yenilendiğinde) yüklenir.
+
+**Yapılan değişiklikler (`static/js/app.js`):**
+- **Kuyruk:** `queueInterval` (2 sn `loadQueue` poll) kaldırıldı — sekme açılışında tek
+  yükleme; eylem sonrası tek seferlik refresh (remove/clear) korundu.
+- **İndirmeler:** `progressInterval` (500 ms `loadProgress` poll) ve
+  `checkProgressTimeout` (5 sn global zamanlayıcı + 30 sn veri yenileme) kaldırıldı.
+- **Tamamlanan indirme toast'ları:** `checkCompletedDownloads` (2 sn `/api/history` poll)
+  ve `trackedDownloads` localStorage takibi kaldırıldı.
+- **SSE:** `refreshFromSse` artık yalnızca platform/oyun listesindeki durum
+  göstergelerini günceller (`downloaded`/`snapshot`/`progress` → `updateGameStatusIndicators`
+  /`loadPlatforms`); downloads/history/queue branch'leri kaldırıldı. `history`/`queue`
+  EventSource dinleyicileri silindi.
+- Atık kod temizliği: `lastProgressUpdate`, `autoRefreshTimeout`, `progressInterval`,
+  `queueInterval`, `trackedDownloads` değişkenleri kaldırıldı.
+
+**Doğrulama:** `node --check app.js` temiz; kalan `setTimeout`'lar yalnızca toast/modal
+animasyonları, arama debounce'u ve kullanıcı eylemi sonrası tek seferlik yenilemeler.
+Değişen dosya test kurulumuna (`C:\RetroBat - Kopya\roms\ports\RGSX`) kopyalandı.
+
+---
+
 ## qBittorrent WebUI Şifre Güvence v2 — Açılışta Şifre Güvence Altına Alma + WebUI Yönetim Paneli (2026.08.11)
 
 **Olay:** Migration v1 yalnızca qBittorrent ilk RUNNING olduğunda çalışıyordu; lazy

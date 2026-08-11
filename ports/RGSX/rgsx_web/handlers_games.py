@@ -5,7 +5,7 @@ import urllib.parse
 
 import config
 from .cache import get_cached_sources, get_cached_games, generate_etag
-from .i18n import TRANSLATIONS, normalize_size
+from .i18n import TRANSLATIONS, load_translations, normalize_size
 from history import is_game_downloaded, scan_platform_roms_on_enter
 from rgsx_settings import get_language
 
@@ -163,8 +163,14 @@ class GamesMixin:
             }, status=500)
 
     def _api_translations(self):
-        # Ajouter le code de langue dans les traductions pour que JS puisse l'utiliser
-        translations_with_lang = TRANSLATIONS.copy()
+        # Ajouter le code de langue dans les traductions pour que JS puisse l'utiliser.
+        # Dil dosyalari manager acikken guncellenebildigi icin TRANSLATIONS'u her
+        # istekte diskten tazele (dil degisikligi / yeni anahtar restart istemez).
+        try:
+            fresh = load_translations()
+        except Exception:
+            fresh = TRANSLATIONS
+        translations_with_lang = dict(fresh)
         translations_with_lang['_language'] = get_language()
         self._send_json({
             'success': True,

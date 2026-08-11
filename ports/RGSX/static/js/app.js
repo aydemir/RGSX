@@ -3,25 +3,12 @@
         let currentGameSort = 'name_asc';  // Type de tri actuel: 'name_asc', 'name_desc', 'size_asc', 'size_desc'
         let currentGames = [];  // Stocke les jeux actuels pour le tri
         const loggedUnparsedSizeTexts = new Set();
-        let lastProgressUpdate = Date.now();
         // Version stable par session pour le cache navigateur des images de plateformes :
         // évite de re-télécharger les 148 images à chaque re-rendu (un rechargement complet
         // de la page génère une nouvelle version => images rafraîchies).
         const platformImageCacheBuster = Date.now();
         let lastPlatformsSignature = null;
-        let autoRefreshTimeout = null;
-        let progressInterval = null;
-        let queueInterval = null;
         let translations = {};  // Contiendra toutes les traductions
-        let trackedDownloads = (() => {
-            // Charger depuis localStorage ou initialiser
-            try {
-                const stored = localStorage.getItem('trackedDownloads');
-                return stored ? JSON.parse(stored) : {};
-            } catch (e) {
-                return {};
-            }
-        })();
         
         // ===== TOAST NOTIFICATIONS =====
         function showToast(message, type = 'info', duration = 3000) {
@@ -379,7 +366,6 @@
                         <div><strong>${securedIcon} ${t('web_qbt_status')}:</strong> ${modeLabel}</div>
                         <div><strong>${t('web_qbt_url')}:</strong> <a href="${data.webui_url}" target="_blank" rel="noopener noreferrer">${data.webui_url}</a></div>
                         <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-                            <button onclick="openQbittorrentWebUi()" style="background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); color: white; border: none; padding: 9px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">🌐 ${t('web_qbt_open')}</button>
                             <button onclick="regenerateQbittorrentPassword()" style="background: linear-gradient(135deg, #6f42c1 0%, #5a32a3 100%); color: white; border: none; padding: 9px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">🎲 ${t('web_qbt_regenerate')}</button>
                             <button onclick="openQbittorrentPasswordModal()" style="background: linear-gradient(135deg, #fd7e14 0%, #e8590c 100%); color: white; border: none; padding: 9px 16px; border-radius: 5px; font-weight: bold; cursor: pointer;">🔑 ${t('web_qbt_set_custom')}</button>
                         </div>
@@ -489,23 +475,6 @@
             }
         }
         
-        // Détecter les blocages de progression et rafraîchir automatiquement
-        function checkProgressTimeout() {
-            const now = Date.now();
-            const timeSinceLastUpdate = now - lastProgressUpdate;
-            
-            // Si pas de mise à jour depuis 30 secondes et qu'on est sur l'onglet téléchargements
-            const downloadsTab = document.getElementById('downloads-content');
-            if (downloadsTab && downloadsTab.style.display !== 'none') {
-                if (timeSinceLastUpdate > 30000) {
-                    console.warn('[AUTO-REFRESH] Aucune mise à jour depuis 30s, rafraîchissement des données...');
-                    // Rafraîchir les données par HTTP au lieu de recharger toute la page
-                    loadProgress(false);
-                    lastProgressUpdate = Date.now();
-                }
-            }
-        }
-        
         // Restaurer un état
         function restoreState(state) {
             if (state.tab) {
@@ -519,16 +488,6 @@
         
         // Afficher un onglet
         function showTab(tab, updateHistory = true) {
-            // Arrêter les intervalles existants
-            if (progressInterval) {
-                clearInterval(progressInterval);
-                progressInterval = null;
-            }
-            if (queueInterval) {
-                clearInterval(queueInterval);
-                queueInterval = null;
-            }
-            
             // Mettre à jour l'UI - tabs desktop
             document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
             const tabButtons = Array.from(document.querySelectorAll('.tab[data-tab]'));
@@ -557,19 +516,12 @@
             
             if (tab === 'platforms') loadPlatforms();
             else if (tab === 'downloads') loadProgress();
-            else if (tab === 'queue') {
-                loadQueue();
-                // Rafraîchir la queue toutes les 2 secondes
-                queueInterval = setInterval(loadQueue, 2000);
-            }
+            else if (tab === 'queue') loadQueue();
             else if (tab === 'history') loadHistory();
             else if (tab === 'settings') loadSettings();
         }
         
         // ===== EVENT LISTENERS =====
-        
-        // Vérifier toutes les 5 secondes pour auto-refresh
-        setInterval(checkProgressTimeout, 5000);
         
         // Gérer le bouton retour du navigateur
         window.addEventListener('popstate', function(event) {
@@ -1714,21 +1666,12 @@
         }
         
         // Charger la progression
-        async function loadProgress(autoRefresh = true) {
+        async function loadProgress() {
             const container = document.getElementById('downloads-content');
-            
-            // Arrêter l'ancien interval si existant
-            if (progressInterval) {
-                clearInterval(progressInterval);
-                progressInterval = null;
-            }
             
             try {
                 const response = await fetch('/api/progress');
                 const data = await response.json();
-                
-                // Mettre à jour le timestamp de dernière mise à jour
-                lastProgressUpdate = Date.now();
                 
                 console.log('[DEBUG] /api/progress response:', data);
                 console.log('[DEBUG] downloads keys:', Object.keys(data.downloads || {}));
@@ -1786,83 +1729,6 @@
                         </div>
                     `;
                 }).join('');
-                
-                // Rafraîchir automatiquement toutes les 500ms pour progression fluide
-                // Créer le setInterval seulement si autoRefresh est true ET qu'il n'existe pas déjà
-                if (autoRefresh && downloads.length > 0 && !progressInterval) {
-                    progressInterval = setInterval(async () => {
-                        const downloadsTab = document.getElementById('downloads-content');
-                        if (downloadsTab && downloadsTab.style.display !== 'none') {
-                            // Rafraîchir juste les données sans recréer le setInterval
-                            try {
-                                const response = await fetch('/api/progress');
-                                const data = await response.json();
-                                
-                                // Mettre à jour le timestamp
-                                lastProgressUpdate = Date.now();
-                                
-                                if (!data.success) throw new Error(data.error);
-                                
-                                const downloads = Object.entries(data.downloads);
-                                
-                                if (downloads.length === 0) {
-                                    container.innerHTML = '<p>' + t('web_no_downloads') + '</p>';
-                                    clearInterval(progressInterval);
-                                    progressInterval = null;
-                                    return;
-                                }
-                                
-                                container.innerHTML = downloads.map(([url, info]) => {
-                                    const percent = info.progress_percent || 0;
-                                    const downloaded = info.downloaded_size || 0;
-                                    const total = info.total_size || 0;
-                                    const status = info.status || t('web_in_progress');
-                                    const speed = info.speed || 0;
-                                    
-                                    let fileName = info.game_name || t('web_downloading');
-                                    if (!info.game_name) {
-                                        try {
-                                            fileName = decodeURIComponent(url.split('/').pop());
-                                        } catch (e) {
-                                            fileName = url.split('/').pop();
-                                        }
-                                    }
-                                    
-                                    const platformInfo = info.platform ? ' (' + info.platform + ')' : '';
-                                    
-                                    return `
-                                        <div class="info-item">
-                                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                <strong>📥 ${fileName}${platformInfo}</strong>
-                                                <button class="btn-action" onclick='cancelDownload("${url.replace(/"/g, "&quot;").replace(/'/g, "&#39;")}", this)' title="${t('web_cancel')}">
-                                                    ❌
-                                                </button>
-                                            </div>
-                                            <div style="margin-top: 10px;">
-                                                <div style="background: #e0e0e0; border-radius: 10px; height: 20px; overflow: hidden;">
-                                                    <div style="background: ${percent >= 100 ? '#28a745' : '#667eea'}; height: 100%; width: ${Math.min(percent, 100)}%; transition: width 0.3s;"></div>
-                                                </div>
-                                                <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.9em;">
-                                                    <span>${status} - ${percent.toFixed(1)}%</span>
-                                                    <span>${formatSpeedFromMib(speed)}</span>
-                                                </div>
-                                                ${total > 0 ? `<div style="font-size: 0.85em; color: #666;">${formatSize(downloaded)} / ${formatSize(total)}</div>` : ''}
-                                                <div style="margin-top: 3px; font-size: 0.85em; color: #666;">
-                                                    📅 ${t('web_started')}: ${info.timestamp || 'N/A'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    `;
-                                }).join('');
-                            } catch (error) {
-                                console.error('[ERROR] Rafraîchissement progression:', error);
-                            }
-                        } else {
-                            clearInterval(progressInterval);
-                            progressInterval = null;
-                        }
-                    }, 500);
-                }
             } catch (error) {
                 container.innerHTML = `<p style="color:red;">Erreur: ${error.message}</p>`;
             }
@@ -1979,54 +1845,6 @@
                 }
             } catch (error) {
                 alert(t('web_error') + ': ' + error.message);
-            }
-        }
-        
-        // Checker les téléchargements terminés pour afficher les toasts
-        async function checkCompletedDownloads() {
-            try {
-                const response = await fetch('/api/history');
-                const data = await response.json();
-                
-                if (!data.success || !data.history) return;
-                
-                // Parcourir l'historique récent pour détecter les complétions
-                data.history.slice(0, 10).forEach(entry => {
-                    const gameKey = `${entry.platform}_${entry.game_name}`;
-                    const status = entry.status || '';
-                    
-                    // Si ce téléchargement n'était pas tracké et il est maintenant complété/erreur/etc
-                    if (!trackedDownloads[gameKey]) {
-                        if (status === 'Download_OK' || status === 'Completed') {
-                            showToast(`✅ "${entry.game_name}" ${t('web_download_success')}`, 'success', 4000);
-                            trackedDownloads[gameKey] = 'completed';
-                        } else if (status === 'Erreur' || status === 'error') {
-                            showToast(`❌ ${t('web_download_error_for')} "${entry.game_name}"`, 'error', 5000);
-                            trackedDownloads[gameKey] = 'error';
-                        } else if (status === 'Already_Present') {
-                            showToast(`ℹ️ "${entry.game_name}" ${t('web_already_present')}`, 'info', 3000);
-                            trackedDownloads[gameKey] = 'already_present';
-                        } else if (status === 'Canceled') {
-                            // Ne pas afficher de toast pour les téléchargements annulés
-                            trackedDownloads[gameKey] = 'canceled';
-                        }
-                    }
-                });
-                
-                // Sauvegarder dans localStorage
-                localStorage.setItem('trackedDownloads', JSON.stringify(trackedDownloads));
-                
-                // Nettoyer les vieux téléchargements (garder seulement les 50 derniers)
-                const keys = Object.keys(trackedDownloads);
-                if (keys.length > 100) {
-                    // Supprimer les 50 plus anciens
-                    keys.slice(0, 50).forEach(key => {
-                        delete trackedDownloads[key];
-                    });
-                    localStorage.setItem('trackedDownloads', JSON.stringify(trackedDownloads));
-                }
-            } catch (error) {
-                console.error('[DEBUG] Erreur checkCompletedDownloads:', error);
             }
         }
         
@@ -2852,8 +2670,10 @@
         }
         
         // ===== SSE (événements temps réel du manager RGSX) =====
-        // Le manager pousse les changements (queue/history/progress/downloaded) via
-        // Server-Sent Events. Le polling existant reste en fallback.
+        // Le manager pousse les changements (downloaded/snapshot) via Server-Sent
+        // Events. İndirmeler/Kuyruk/Geçmiş sekmeleri auto-refresh YAPMAZ: veriler
+        // yalnızca sekmeye girildiğinde (veya sayfa yenilendiğinde) yüklenir.
+        // SSE yalnızca platform/oyun listesindeki durum göstergelerini günceller.
         const sseTimers = {};
 
         function debounceSse(key, fn, ms) {
@@ -2867,15 +2687,6 @@
         }
 
         function refreshFromSse(type) {
-            if (type === 'progress' || type === 'snapshot') {
-                if (isTabVisible('downloads')) debounceSse('progress', () => loadProgress(false), 250);
-            }
-            if (type === 'history' || type === 'snapshot') {
-                if (isTabVisible('history')) debounceSse('history', loadHistory, 800);
-            }
-            if (type === 'queue' || type === 'snapshot') {
-                if (isTabVisible('queue')) debounceSse('queue', loadQueue, 300);
-            }
             if (type === 'downloaded' || type === 'snapshot') {
                 if (isTabVisible('platforms')) {
                     // Une liste de jeux est affichée dans l'onglet plateformes:
@@ -2932,16 +2743,8 @@
 
             source.addEventListener('snapshot', (e) => refreshFromSse('snapshot'));
 
-            source.addEventListener('progress', (e) => {
-                try {
-                    const data = JSON.parse(e.data);
-                    if (data.progress) lastProgressUpdate = Date.now();
-                } catch (err) { /* ignore */ }
-                refreshFromSse('progress');
-            });
+            source.addEventListener('progress', (e) => refreshFromSse('progress'));
 
-            source.addEventListener('history', (e) => refreshFromSse('history'));
-            source.addEventListener('queue', (e) => refreshFromSse('queue'));
             source.addEventListener('downloaded', (e) => refreshFromSse('downloaded'));
 
             source.onerror = () => {
@@ -2958,9 +2761,6 @@
             
             // Connexion SSE temps réel (manager RGSX)
             setupSse();
-            
-            // Vérifier les téléchargements complétés toutes les 2 secondes
-            setInterval(checkCompletedDownloads, 2000);
         }
         
         // Lancer l'initialisation
