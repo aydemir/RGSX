@@ -2,7 +2,7 @@
 
 - **id:** TASK-003
 - **title:** Faz 11 — İlk Açılışta Sistem Dili Otomatik Algılama
-- **status:** todo
+- **status:** in-progress
 - **priority:** P2
 - **created:** 2026-08-11
 - **tags:** language, i18n, rgsx-settings, tvui, rgsx-web
@@ -96,3 +96,15 @@ Batocera dışı + Termux/RetroBat env mirası için ayrı test; mevcut suite ba
 
 - 2026-08-11 — Roadmap'ten tasks/ yapısına taşındı (todo; tasarım tamam, uygulama yok —
   `detect_batocera_language` + `initialize_language` dışında kod karşılığı bulunmuyor).
+- 2026-08-11 — Task Pickup Protocol: todo → in-progress'e taşındı, status güncellendi.
+- 2026-08-11 — Uygulama tamamlandı (23 yeni test `tests/test_language.py`):
+  - `language.py`: `_classify_environment`, `_normalize_lang_code`, `_translation_exists`,
+    `_detect_os_locale`, `detect_system_language`, `_raw_settings`, `initialize_language`
+    yeniden yazım, `set_language`/`save_language_preference` → `language_mode="manual/auto"`.
+  - `rgsx_settings.py`: `get/set_language_mode`, `get/set_language_fallback_notified`;
+    `load_rgsx_settings` artık mevcut dosyaya default `"language"` enjekte etmez
+    ("key yok" sözleşmesini korur; okuyucular `.get("language","en")` fallback kullanır).
+  - `tvui.py`: main() başında `config.language_fallback_notify` → `show_toast(...)`.
+  - 7 dil dosyasına `language_fallback_notice` + `language_auto_detected` anahtarları.
+  - Suite: 760 passed / 11 pre-existing (Linux/posix/tray — değişmedi).
+- 2026-08-11 — Kalan: Kopya kurulumda canlı doğrulama (boot + JSON ayarları) → commit+push → done'a taşı.

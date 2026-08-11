@@ -628,6 +628,11 @@ async def main():
     else:
         _resume_tvui_downloads()
 
+    # Faz 11: tek seferlik dil bildirimi (display hazır olunca toast)
+    if getattr(config, 'language_fallback_notify', False):
+        config.language_fallback_notify = False
+        show_toast(getattr(config, 'language_notify_message', '') or _("language_fallback_notice"), 5000)
+
     running = True
     loading_step = "none"
     ota_update_task = None

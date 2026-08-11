@@ -1,5 +1,7 @@
 {
     "welcome_message": "RGSX'e Hoş Geldiniz",
+    "language_fallback_notice": "Sistem dili desteklenmiyor, İngilizce kullanılıyor.",
+    "language_auto_detected": "Sistem dili algılandı: {lang}",
     "disclaimer_line1": "Yalnız gitmek tehlikelidir, ihtiyacınız olan her şeyi alın!",
     "disclaimer_line2": "Ama yalnızca sahip olduğunuz oyunları indirin",
     "disclaimer_line3": "indirilen içerikten RGSX sorumlu değildir",

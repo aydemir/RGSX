@@ -97,6 +97,12 @@ def load_rgsx_settings():
                 #logger.debug(f"Settings JSON chargé: display={settings.get('display', {})}")
                 # Fusionner avec les valeurs par défaut pour assurer la compatibilité
                 for key, value in default_settings.items():
+                    if key == "language":
+                        # Faz 11: `language` key'i auto modda dosyada kasıtlı olarak YOK olabilir.
+                        # Mevcut dosyaya default "en"i enjekte etmek key'i geri getirir ve
+                        # "key yok = kullanıcı seçimi yok" sözleşmesini bozar. Okuyucular
+                        # zaten `.get("language", "en")` fallback'ini kullanır.
+                        continue
                     if key not in settings:
                         settings[key] = value
                 return settings
@@ -586,6 +592,45 @@ def get_language(settings=None):
     if settings is None:
         settings = load_rgsx_settings()
     return settings.get("language", "en")
+
+
+def get_language_mode(settings=None) -> str:
+    """Dil modu: "auto" (varsayılan) | "manual" (kullanıcı seçimi)."""
+    if settings is None:
+        settings = load_rgsx_settings()
+    mode = settings.get("language_mode")
+    return mode if mode in ("auto", "manual") else "auto"
+
+
+def set_language_mode(mode: str) -> str:
+    """Dil modunu ("auto" | "manual") kalıcı yazar."""
+    mode = mode if mode in ("auto", "manual") else "auto"
+    try:
+        settings = load_rgsx_settings()
+        settings["language_mode"] = mode
+        save_rgsx_settings(settings)
+    except Exception as e:
+        logger.error(f"Error setting language_mode: {e}")
+    return mode
+
+
+def get_language_fallback_notified(settings=None) -> bool:
+    """Tek seferlik auto→en fallback bildiriminin gösterilip gösterilmediği."""
+    if settings is None:
+        settings = load_rgsx_settings()
+    return bool(settings.get("language_fallback_notified", False))
+
+
+def set_language_fallback_notified(notified: bool = True) -> bool:
+    """`language_fallback_notified` marker'ını kalıcı yazar (tek seferlik bildirim garantisi)."""
+    try:
+        settings = load_rgsx_settings()
+        settings["language_fallback_notified"] = bool(notified)
+        save_rgsx_settings(settings)
+        return bool(notified)
+    except Exception as e:
+        logger.error(f"Error setting language_fallback_notified: {e}")
+        return False
 
 
 def load_game_filters():

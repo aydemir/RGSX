@@ -1,5 +1,7 @@
 {
     "welcome_message": "Bienvenido a RGSX",
+    "language_fallback_notice": "Idioma del sistema no compatible, se usará inglés.",
+    "language_auto_detected": "Idioma del sistema detectado: {lang}",
     "disclaimer_line1": "¡Es peligroso ir solo, toma todo lo que necesites!",
     "disclaimer_line2": "Pero solo descarga juegos",
     "disclaimer_line3": "de los que poseas los originales.",
