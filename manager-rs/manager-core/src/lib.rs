@@ -1,7 +1,7 @@
 //! manager-core: platform-bağımsız state machine ve contract tipleri.
 //!
-//! Bu iskelet sürüm: modül yapısı yerinde, implementasyon TASK-002 Faz 10
-//! sırasında eklenecek.
+//! TASK-002a: state.rs (enum + transition), watchdog.rs (hysteresis/restart).
 
 pub mod contract;
 pub mod state;
+pub mod watchdog;

@@ -1,7 +1,7 @@
 ---
 id: TASK-002a
 title: manager-core state machine tasarımı (Faz 10a ilk adım)
-status: todo
+status: in-progress
 priority: P2
 created: 2026-08-11
 tags: [rust, manager-core, state-machine]
@@ -70,3 +70,23 @@ kapsam dışı — TASK-002b/c/d alt-görevlerine bırakılır.
 - `cargo test -p manager-core` ve `cargo check -p manager-core --workspace` geçer
 - Characterization karşılaştırması (Python testlerini Rust'a karşı çalıştırma)
   **bu adımda YOK** — TASK-002b'de
+
+## İlerleme
+
+- [x] **Adım 1 (commit `986d60d`):** üç enum + DownloadEvent, serde `SCREAMING_SNAKE_CASE`
+      eşlemesi, `impl_status_str!` macro (Display/FromStr), legacy map fonksiyonları + testler
+- [x] **Adım 2 (bu task):** `transition()` + `IllegalTransitionError` (download_state.py
+      `_TRANSITIONS` 21 satır birebir, exhaustive match); `ALL_*` varyant listeleri;
+      `watchdog.rs` yeni modül — `HysteresisMonitor` (degrade=3/unresponsive=6,
+      healthy→reset) + `RestartLimiter` (max=3, window=3600s, kayan pencere, `max(1,…)`
+      clamp); lib.rs `pub mod watchdog;`
+- [x] **Testler:** 24 Rust unit test (`cargo test -p manager-core`) — string↔enum roundtrip,
+      legacy eşleme, 21 geçerli transition tablosu + exhaustive "yalnızca 21 geçerli",
+      hysteresis 3→DEGRADED / 6→UNRESPONSIVE / healthy reset, restart: limit dolunca False,
+      kayan pencere prune, window sınırında atım
+- [x] `cargo check --workspace` geçer (1m48s); hedef out-of-tree:
+      `manager-rs/.cargo/config.toml` → target-dir `C:/Users/lv/RGSX/rust-target`
+      (repo içi `target/` üretilmiyor — `.gitignore` da `manager-rs/target/` yedek)
+- [x] Rust toolchain kuruldu: `rust-msvc` 1.97.1 (scoop)
+- [ ] Characterization (Python↔Rust) — TASK-002b
+- [ ] TASK-002a done'a taşı + commit/push

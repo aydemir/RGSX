@@ -1,0 +1,4 @@
+# Derleme çıktısı repo dışında tutulur (git temiz kalır, incremental cache korunur).
+# "Oyun alanı" = üst çalışma dizini (C:\Users\lv\RGSX) — saves/roms ile aynı mantık.
+[build]
+target-dir = "C:/Users/lv/RGSX/rust-target"

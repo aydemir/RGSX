@@ -139,6 +139,53 @@ impl_status_str!(DownloadEvent {
     CancelRequested => "CANCEL_REQUESTED",
 });
 
+/// Tüm varyantlar — exhaustive geçiş testleri / UI enum'ları için.
+pub const ALL_MANAGER_STATES: [ManagerState; 6] = [
+    ManagerState::Init,
+    ManagerState::Running,
+    ManagerState::Degraded,
+    ManagerState::Unresponsive,
+    ManagerState::Restarting,
+    ManagerState::Crashed,
+];
+
+/// Tüm varyantlar — exhaustive geçiş testleri / UI enum'ları için.
+pub const ALL_BACKEND_STATES: [BackendState; 4] = [
+    BackendState::Stopped,
+    BackendState::Starting,
+    BackendState::PortResolving,
+    BackendState::WebuiAuthWait,
+];
+
+/// Tüm varyantlar — exhaustive geçiş testleri / UI enum'ları için.
+pub const ALL_DOWNLOAD_STATES: [DownloadState; 10] = [
+    DownloadState::Queued,
+    DownloadState::Downloading,
+    DownloadState::Paused,
+    DownloadState::Verifying,
+    DownloadState::Extracting,
+    DownloadState::RetryScheduled,
+    DownloadState::FailedTransient,
+    DownloadState::FailedPermanent,
+    DownloadState::Completed,
+    DownloadState::Canceled,
+];
+
+/// Tüm varyantlar — exhaustive geçiş testleri / UI enum'ları için.
+pub const ALL_DOWNLOAD_EVENTS: [DownloadEvent; 11] = [
+    DownloadEvent::Started,
+    DownloadEvent::Progress,
+    DownloadEvent::PauseRequested,
+    DownloadEvent::ResumeRequested,
+    DownloadEvent::TransientFailure,
+    DownloadEvent::PermanentFailure,
+    DownloadEvent::RetryTriggered,
+    DownloadEvent::RetryExhausted,
+    DownloadEvent::Transitioned,
+    DownloadEvent::Completed,
+    DownloadEvent::CancelRequested,
+];
+
 /// Eski history status string'inden enum state'ine; bilinmeyen -> DOWNLOADING
 /// (download_state.py:122-128 ile birebir).
 pub fn state_from_legacy(status: &str) -> DownloadState {
@@ -193,6 +240,68 @@ pub fn legacy_status_to_state() -> &'static [(&'static str, DownloadState)] {
         ("Erreur", DownloadState::FailedPermanent),
         ("Error", DownloadState::FailedPermanent),
     ]
+}
+
+/// İzin verilmeyen (state, event) kombinasyonu (download_state.py:61-63).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IllegalTransitionError {
+    pub state: DownloadState,
+    pub event: DownloadEvent,
+}
+
+impl fmt::Display for IllegalTransitionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Illegal transition: {} + {}", self.state, self.event)
+    }
+}
+
+impl std::error::Error for IllegalTransitionError {}
+
+/// Saf durum geçişi — `_TRANSITIONS` (download_state.py:66-94) ile birebir.
+///
+/// Geçerli (state, event) kombinasyonunda yeni state, geçersizde `Err` döner.
+/// Yan etkiler (persist/emit) yüksek katmanın işidir (TASK-002b).
+pub fn transition(
+    state: DownloadState,
+    event: DownloadEvent,
+) -> Result<DownloadState, IllegalTransitionError> {
+    use DownloadEvent::{
+        CancelRequested, Completed as CompletedEv, PauseRequested, PermanentFailure,
+        ResumeRequested, RetryExhausted, RetryTriggered, Started, TransientFailure, Transitioned,
+    };
+    use DownloadState::{
+        Canceled, Completed as CompletedSt, Downloading, Extracting, FailedPermanent,
+        FailedTransient, Paused, Queued, RetryScheduled, Verifying,
+    };
+    match (state, event) {
+        (Queued, Started) => Ok(Downloading),
+
+        (Downloading, PauseRequested) => Ok(Paused),
+        (Paused, ResumeRequested) => Ok(Downloading),
+        (Paused, CancelRequested) => Ok(Canceled),
+
+        (Downloading, Transitioned) => Ok(Verifying),
+        (Verifying, Transitioned) => Ok(Extracting),
+        (Verifying, CompletedEv) => Ok(CompletedSt),
+        (Extracting, CompletedEv) => Ok(CompletedSt),
+        (Downloading, CompletedEv) => Ok(CompletedSt),
+
+        (Downloading, TransientFailure) => Ok(FailedTransient),
+        (FailedTransient, RetryTriggered) => Ok(RetryScheduled),
+        (RetryScheduled, Started) => Ok(Downloading),
+        (FailedTransient, PermanentFailure) => Ok(FailedPermanent),
+        (FailedTransient, RetryExhausted) => Ok(FailedPermanent),
+        (RetryScheduled, PermanentFailure) => Ok(FailedPermanent),
+        (RetryScheduled, CancelRequested) => Ok(Canceled),
+        (Downloading, PermanentFailure) => Ok(FailedPermanent),
+
+        (Downloading, CancelRequested) => Ok(Canceled),
+        (Verifying, CancelRequested) => Ok(Canceled),
+        (Extracting, CancelRequested) => Ok(Canceled),
+        (FailedTransient, CancelRequested) => Ok(Canceled),
+
+        _ => Err(IllegalTransitionError { state, event }),
+    }
 }
 
 #[cfg(test)]
@@ -294,5 +403,77 @@ mod tests {
         assert_eq!(legacy_history_status(DownloadState::FailedPermanent), "Erreur");
         assert_eq!(legacy_history_status(DownloadState::Completed), "Download_OK");
         assert_eq!(legacy_history_status(DownloadState::Canceled), "Canceled");
+    }
+
+    #[test]
+    fn transition_valid_table_matches_python() {
+        let valid: &[((DownloadState, DownloadEvent), DownloadState)] = &[
+            ((DownloadState::Queued, DownloadEvent::Started), DownloadState::Downloading),
+            ((DownloadState::Downloading, DownloadEvent::PauseRequested), DownloadState::Paused),
+            ((DownloadState::Paused, DownloadEvent::ResumeRequested), DownloadState::Downloading),
+            ((DownloadState::Paused, DownloadEvent::CancelRequested), DownloadState::Canceled),
+            ((DownloadState::Downloading, DownloadEvent::Transitioned), DownloadState::Verifying),
+            ((DownloadState::Verifying, DownloadEvent::Transitioned), DownloadState::Extracting),
+            ((DownloadState::Verifying, DownloadEvent::Completed), DownloadState::Completed),
+            ((DownloadState::Extracting, DownloadEvent::Completed), DownloadState::Completed),
+            ((DownloadState::Downloading, DownloadEvent::Completed), DownloadState::Completed),
+            ((DownloadState::Downloading, DownloadEvent::TransientFailure), DownloadState::FailedTransient),
+            ((DownloadState::FailedTransient, DownloadEvent::RetryTriggered), DownloadState::RetryScheduled),
+            ((DownloadState::RetryScheduled, DownloadEvent::Started), DownloadState::Downloading),
+            ((DownloadState::FailedTransient, DownloadEvent::PermanentFailure), DownloadState::FailedPermanent),
+            ((DownloadState::FailedTransient, DownloadEvent::RetryExhausted), DownloadState::FailedPermanent),
+            ((DownloadState::RetryScheduled, DownloadEvent::PermanentFailure), DownloadState::FailedPermanent),
+            ((DownloadState::RetryScheduled, DownloadEvent::CancelRequested), DownloadState::Canceled),
+            ((DownloadState::Downloading, DownloadEvent::PermanentFailure), DownloadState::FailedPermanent),
+            ((DownloadState::Downloading, DownloadEvent::CancelRequested), DownloadState::Canceled),
+            ((DownloadState::Verifying, DownloadEvent::CancelRequested), DownloadState::Canceled),
+            ((DownloadState::Extracting, DownloadEvent::CancelRequested), DownloadState::Canceled),
+            ((DownloadState::FailedTransient, DownloadEvent::CancelRequested), DownloadState::Canceled),
+        ];
+        assert_eq!(valid.len(), 21, "Python _TRANSITIONS 21 satır");
+        for ((s, e), expected) in valid {
+            assert_eq!(
+                transition(*s, *e),
+                Ok(*expected),
+                "{s} + {e} bekleniyordu: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn transition_covers_exactly_python_table() {
+        let mut allowed = 0usize;
+        for s in ALL_DOWNLOAD_STATES {
+            for e in ALL_DOWNLOAD_EVENTS {
+                match transition(s, e) {
+                    Ok(_) => allowed += 1,
+                    Err(err) => {
+                        assert_eq!(err.state, s);
+                        assert_eq!(err.event, e);
+                    }
+                }
+            }
+        }
+        assert_eq!(allowed, 21, "yalnızca Python _TRANSITIONS'deki 21 kombinasyon geçerli");
+    }
+
+    #[test]
+    fn transition_illegal_examples() {
+        for (s, e) in [
+            (DownloadState::Queued, DownloadEvent::PauseRequested),
+            (DownloadState::Paused, DownloadEvent::Started),
+            (DownloadState::Completed, DownloadEvent::Completed),
+            (DownloadState::Canceled, DownloadEvent::ResumeRequested),
+            (DownloadState::FailedPermanent, DownloadEvent::RetryTriggered),
+        ] {
+            assert!(transition(s, e).is_err(), "{s} + {e} yasak olmali");
+        }
+    }
+
+    #[test]
+    fn transition_error_display() {
+        let err = transition(DownloadState::Queued, DownloadEvent::PauseRequested).unwrap_err();
+        assert_eq!(err.to_string(), "Illegal transition: QUEUED + PAUSE_REQUESTED");
+        assert!(err.to_string().contains("QUEUED"));
     }
 }
