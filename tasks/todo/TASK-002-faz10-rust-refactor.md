@@ -59,7 +59,14 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 
 ---
 
+## Alt-görevler
+
+- **TASK-002a** — manager-core state machine tasarımı (state.rs) → `tasks/todo/TASK-002a-manager-core-state-machine.md`
+- TASK-002b/c/d — HTTP köprüsü, tray/autostart/firewall, characterization doğrulama (tanımlanacak)
+
 ## İlerleme
 
 - 2026-08-11 — Roadmap'ten tasks/ yapısına taşındı (todo; henüz kodda Rust yok — `*.rs` /
   `Cargo.toml` bulunmuyor).
+- 2026-08-11 — Workspace iskeleti kuruldu (5 crate, scaffold commit `dc3aa21`);
+  TASK-002a (state machine) alt-görevine bölündü.
