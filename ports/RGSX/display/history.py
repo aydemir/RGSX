@@ -6,7 +6,7 @@ import pygame  # type: ignore
 
 import config
 
-from history import load_history
+from history import load_history, _strip_history_error_noise
 
 from language import _, get_size_units
 
@@ -19,50 +19,6 @@ from .game_list import get_display_extension
 from . import core
 import logging
 logger = logging.getLogger(__name__)
-
-
-def _strip_history_error_noise(status_text):
-    """Kısa durum sütunu için hata mesajını sadeleştirir.
-
-    Örnek: "Download error Amega Mega Games.zip: Accès refusé (HTTP 500).
-    Fichiers disponibles exemples: ['Addams Family.zip', ..., 'Amiga 500 Tutorial.mp4']"
-    -> "Accès refusé (HTTP 500)"
-
-    Tam mesaj zaten detay ekranında (draw_history_error_details) gösterilir.
-    """
-    if not status_text:
-        return status_text
-
-    text = status_text
-    # "Download error <oyun>:" / "İndirme hatası <oyun>:" / "Erreur téléchargement <oyun>:" önekini çıkar
-    # (oyun adı zaten ayrı bir sütunda görüntülenir).
-    for marker in ("Download error ", "İndirme hatası ", "Erreur téléchargement ", "Erreur téléchargement :",
-                   "Erreur de téléchargement ", "Download failed for "):
-        idx = text.find(marker)
-        if idx != -1:
-            after = text[idx + len(marker):]
-            sep = after.find(":")
-            if sep != -1:
-                text = after[sep + 1:].strip()
-            else:
-                # "Download error X" sonrası ":" yoksa sadece önekten sonrasını al
-                text = after.strip()
-            break
-
-    # Uzun dosya listesi bloklarını at (archive.org "Fichiers disponibles exemples: [...]")
-    for list_marker in ("Fichiers disponibles exemples:", "Available files examples:",
-                        "Available files example:", "Fichiers disponibles:",
-                        "Available files:", "Mevcut dosyalar:"):
-        lidx = text.find(list_marker)
-        if lidx != -1:
-            text = text[:lidx].rstrip(" .:")
-            break
-
-    # Kalan kuyruk noktalamasını temizle
-    text = text.strip()
-    while text and text[-1] in ".:":
-        text = text[:-1].strip()
-    return text.strip()
 
 
 def draw_history_list(screen):

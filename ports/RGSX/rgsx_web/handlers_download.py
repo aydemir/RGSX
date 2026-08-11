@@ -8,7 +8,7 @@ import asyncio
 import config
 from .cache import get_cached_games
 from .i18n import TRANSLATIONS, get_translation
-from history import load_history, save_history
+from history import load_history, save_history, _strip_history_error_noise
 from utils import get_clean_display_name
 from network import download_rom, download_from_1fichier
 
@@ -199,10 +199,21 @@ class DownloadMixin:
             reverse=True
         )
 
+        # WebUI listesi için mesajı sadeleştir: "Download error <oyun>: ... Fichiers disponibles
+        # exemples: [...]" blokları kısa tutulur. history.json'a ham mesaj yazılmaya devam eder
+        # (TVUI detay ekranı tam metni gösterir) - burada yalnızca yanıt üzerinde kırpılır.
+        clean_history = []
+        for entry in visible_history:
+            copy = dict(entry)
+            msg = copy.get('message')
+            if msg:
+                copy['message'] = _strip_history_error_noise(str(msg))
+            clean_history.append(copy)
+
         self._send_json({
             'success': True,
-            'count': len(visible_history),
-            'history': visible_history
+            'count': len(clean_history),
+            'history': clean_history
         })
 
     def _api_queue_get(self):

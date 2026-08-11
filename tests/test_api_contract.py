@@ -183,6 +183,34 @@ class TestWebGet:
         assert body["count"] == 0
         assert body["history"] == []
 
+    def test_history_strips_error_message_noise(self, isolated):
+        noisy = ("Download error Crazy Cars ++.zip: Accès refusé (HTTP 500). "
+                 "Fichiers disponibles exemples: ['Addams Family.zip', 'After Burner II.zip', "
+                 "'Aladdin.zip', 'Amiga 500 Tutorial.mp4']")
+        full = ("Download error Crazy Cars ++.zip: Accès refusé (HTTP 500). "
+                "Fichiers disponibles exemples: ['Addams Family.zip', 'After Burner II.zip', "
+                "'Aladdin.zip', 'Amiga 500 Tutorial.mp4']")
+        entry = {
+            "game_name": "Crazy Cars ++.zip",
+            "platform": "Amiga OCS ECS (Archive)",
+            "status": "Erreur",
+            "message": noisy,
+            "url": "https://archive.org/download/amiga-500-Collection/Crazy%20Cars%20%2B%2B.zip",
+            "timestamp": "2026-08-11 02:42:48",
+        }
+        (isolated / "history.json").write_text(json.dumps([entry]), encoding="utf-8")
+
+        status, _, payload = invoke(RGSXHandler, "/api/history")
+        assert status == 200
+        body = as_json(payload)
+        assert body["success"] is True
+        assert body["count"] == 1
+        got = body["history"][0]
+        assert got["message"] == "Accès refusé (HTTP 500)"
+        # history.json'a ham mesaj korunmali (TVUI detay ekrani tam metin gosterir)
+        stored = json.loads((isolated / "history.json").read_text(encoding="utf-8"))
+        assert stored[0]["message"] == full
+
     def test_queue_get(self, isolated):
         status, _, payload = invoke(RGSXHandler, "/api/queue")
         assert status == 200

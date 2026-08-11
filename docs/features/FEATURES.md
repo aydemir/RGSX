@@ -1,5 +1,26 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## WebUI Geçmiş Sayfası — Hata Mesajı Sadeleştirme (2026.08.11)
+
+**Olay:** Geçmiş sayfası archive.org hata mesajını ham gösteriyordu:
+`Download error <oyun>.zip: Accès refusé (HTTP 500). Fichiers disponibles exemples: ['Addams Family.zip', ...]`
+— uzun dosya listesi bloğu kullanıcıya anlam kazandırmıyor.
+
+**Yapılan değişiklikler:**
+- `_strip_history_error_noise` `display/history.py`'den `history.py`'ye taşındı (pygame'siz
+  ortak modül) — TVUI durum sütunu ve WebUI aynı fonksiyonu kullanır, mantık çoğaltılmaz.
+- `_api_history` (`rgsx_web/handlers_download.py`) yanıttaki her kaydın `message` alanını
+  sadeleştirir; `history.json`'a **ham mesaj yazılmaya devam eder** (TVUI detay ekranı
+  tam metni gösterir).
+- Test: `test_api_contract.py::test_history_strips_error_message_noise` — yanıt sadeleşir,
+  `history.json` korunur.
+
+**Doğrulama:** `pytest` 279 geçti; yeni test dahil `test_api_contract.py` 53/53. Canlı
+smoke: `/api/history` `Accès refusé (HTTP 500)` döner, `history.json` ham blok korur.
+(3 başarısızlık `test_qbittorrent_port.py` ortamsal — qBittorrent 18572'de gerçekten çalışıyor.)
+
+---
+
 ## WebUI Sekme Auto-Refresh Kaldırıldı — İndirmeler/Kuyruk/Geçmiş/Ayarlar (2026.08.11)
 
 **Olay:** Platform listesi auto-refresh'i (5e63c69: imza karşılaştırması + SSE snapshot
