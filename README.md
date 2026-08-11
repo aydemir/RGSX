@@ -259,13 +259,20 @@ If the manager cannot start — or you launch with `--ui-only` / set `RGSX_NO_MA
 /roms/
 ├── ports/
 │   ├── RGSX/
-│   │   ├── __main__.py                # Entry point
+│   │   ├── __main__.py                # Entry point (bootstrap only → tvui.main)
+│   │   ├── tvui.py                    # TV UI main loop / boot
+│   │   ├── manager_launcher.py        # Manager spawn + supervisor (watchdog)
 │   │   ├── rgsx_manager.py            # Background download daemon (Windows/RetroBat)
-│   │   ├── rgsx_web.py                # Web server + REST/SSE API
-│   │   ├── controls.py                # Input handling
-│   │   ├── display.py                 # Rendering engine
-│   │   ├── network.py                 # Download manager
+│   │   ├── rgsx_cli.py                # CLI tool
+│   │   ├── qbittorrent_backend.py     # qBittorrent WebUI client
 │   │   ├── rgsx_settings.py           # Settings manager
+│   │   ├── history.py                 # Download history
+│   │   ├── config.py / language.py / game_filters.py / watchdog.py / thread_safety.py
+│   │   ├── utils/                     # games, sorting, media, torrent, extract, files, ...
+│   │   ├── network/                   # queue, http_download, one_fichier, download_state, ...
+│   │   ├── controls/                  # input, menus, downloads, search (TVUI)
+│   │   ├── display/                   # Rendering engine (game list, menus, history, ...)
+│   │   ├── rgsx_web/                  # Web server + REST/SSE API (handlers, server, ...)
 │   │   ├── assets/controls/           # Controller profiles
 │   │   ├── languages/                 # Translations (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 │   │   └── logs/RGSX.log              # Runtime logs

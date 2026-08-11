@@ -55,15 +55,17 @@ docs/
 
 ## 🔗 Ana Kaynak Kod
 
-- **TVUI (Pygame)**: `../ports/RGSX/display/` (paket), `controls.py`, `__main__.py`
-- **WebUI**: `../ports/RGSX/rgsx_web.py` (`BaseHTTPRequestHandler`), `static/js/app.js`
-- **Download Manager**: `../ports/RGSX/rgsx_manager.py`
+- **TVUI (Pygame)**: `../ports/RGSX/tvui.py` (boot + ana döngü), `../ports/RGSX/display/` (paket), `../ports/RGSX/controls/` (paket)
+- **Giriş noktası**: `../ports/RGSX/__main__.py` (yalnız DPI + logging bootstrap + dispatch → `tvui.main`)
+- **WebUI**: `../ports/RGSX/rgsx_web/` (paket, `BaseHTTPRequestHandler`), `static/js/app.js`
+- **Download Manager**: `../ports/RGSX/rgsx_manager.py` (+ `manager_launcher.py` spawn/supervisor)
 - **Ayarlar**: `../ports/RGSX/rgsx_settings.py`
-- **İndirme Mantığı**: `../ports/RGSX/network.py`
+- **İndirme Mantığı**: `../ports/RGSX/network/` (paket: `queue.py` worker, `download_state.py` Faz 8 state machine, `one_fichier.py`, `http_download.py`, `helpers.py`, ...)
+- **Yardımcılar**: `../ports/RGSX/utils/` (paket: `games.py`, `sorting.py`, `media.py`, `extensions.py`, `extract.py`, `security.py`, ...)
 - **Filtreler**: `../ports/RGSX/game_filters.py`
 - **Thread Güvenliği**: `../ports/RGSX/thread_safety.py`
 - **Çeviriler**: `../ports/RGSX/languages/*.json` (7 dil)
 
 ---
 
-*Son güncelleme: 2026-08-08 (developer dokümantasyonu düzeni)*
+*Son güncelleme: 2026-08-11 (yeni paket yapısı — Faz 6 refaktörü, Faz 8 state machine, Faz 9 toplu indirme)*

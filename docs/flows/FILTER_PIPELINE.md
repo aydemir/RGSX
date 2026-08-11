@@ -1,8 +1,8 @@
 # Kritik Akış: Filtre Pipeline'ı (TVUI + WebUI)
 
-> Geliştirici notu: Satır referansları commit `7f0199f` itibarıyla geçerlidir.
-> Modüller: `game_filters.py`, `display/filter.py`, `controls.py`, `rgsx_web.py`,
-> `static/js/app.js`.
+> Geliştirici notu: Satır referansları commit `c5c5685` (Faz 9) itibarıyla geçerlidir.
+> Modüller: `game_filters.py`, `display/filter.py`, `controls/search.py`,
+> `controls/handlers.py`, `rgsx_web/handlers.py`, `static/js/app.js`.
 
 ## Özet
 
@@ -14,8 +14,8 @@ ilk %98 kapsam hedefiydi.
 ```
 rgsx_settings.json ── game_filters ──┐
                                      ├──► GameFilters (game_filters.py)
-TVUI: controls.py menü + display/filter.py çizim ──┘   │
-WebUI: /api/settings + /api/save_filters + app.js      │
+TVUI: controls/search.py + display/filter.py çizim ──┘   │
+WebUI: /api/settings + /api/save_filters + app.js        │
                                      └──► apply_filters(games, platform_name)
 ```
 
@@ -55,14 +55,16 @@ Sıralı pipeline:
 
 ## 3. TVUI akışı
 
-### Menü / input (controls.py)
+### Menü / input (controls/ paketi)
 
 - Filtre menüsü açıldığında `config.game_filter_obj` üzerinde `region_filters`,
   `hide_non_release`, `one_rom_per_game`, `hide_downloaded`, `region_priority` güncellenir.
-- `filter_games_by_search_query()` (controls.py:879): `game_filter_obj.is_active()` ise
+- `filter_games_by_search_query()` (controls/search.py:33): `game_filter_obj.is_active()` ise
   `apply_filters(config.games, platform_name)` → sonrasında `search_query` substring filtresi
   + `_sort_local_games` sıralama.
 - "Uygula" → `to_dict()` → `rgsx_settings` kaydet + `config.needs_redraw=True`.
+- İndirme menüsü girişi `controls/handlers.py` dispatch'i üzerinden; filtre menüleri
+  `controls/menus.py`'de (`VALID_STATES`/`validate_menu_state`).
 
 ### Çizim (display/filter.py)
 
@@ -80,12 +82,12 @@ if config.game_filter_obj is None:
     return  # veya default çizim
 ```
 
-Aynı koruma `controls.py` (x3) ve `rgsx_web.py` (`getattr(...) is not None`) için de geçerli.
+Aynı koruma `controls/` (x3) ve `rgsx_web/handlers.py` (`getattr(...) is not None`) için de geçerli.
 `tests/test_display_filter.py` bu regresyonu tutar.
 
 ## 4. WebUI akışı
 
-### API (rgsx_web.py)
+### API (rgsx_web/handlers.py + handlers_settings.py)
 
 | Endpoint | Rol |
 |---|---|
@@ -106,7 +108,7 @@ Aynı koruma `controls.py` (x3) ve `rgsx_web.py` (`getattr(...) is not None`) i�
 }
 ```
 
-`rgsx_web.py` tarafında da aynı `config.game_filter_obj is None` guard'ı gereklidir
+`rgsx_web/handlers.py` tarafında da aynı `config.game_filter_obj is None` guard'ı gereklidir
 (server-side render sırasında obj henüz init edilmemiş olabilir).
 
 ### Frontend (static/js/app.js)
@@ -133,7 +135,8 @@ Aynı koruma `controls.py` (x3) ve `rgsx_web.py` (`getattr(...) is not None`) i�
 
 - `game_filters.py` (model + `apply_filters`)
 - `display/filter.py` (`draw_filter_advanced`, `draw_filter_priority_config`)
-- `controls.py` (menü input, `filter_games_by_search_query`)
-- `rgsx_web.py` (`/api/save_filters`, `/api/settings`)
+- `controls/search.py` (`filter_games_by_search_query`), `controls/menus.py` (filtre menüleri),
+  `controls/handlers.py` (dispatch)
+- `rgsx_web/handlers.py` (`/api/save_filters`, `/api/settings`)
 - `static/js/app.js` (`applyAllFilters`, `loadSavedFilters`, `saveFiltersToBackend`)
 - `tests/test_display_filter.py` + `tests/test_game_filters.py` (regresyon)

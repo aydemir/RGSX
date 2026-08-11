@@ -1,5 +1,45 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Yeni Kod Yapısı — Paket Refaktörü Özeti (2026.08.11)
+
+> Aşağıdaki daha eski girişler monolit dönemini (tek `.py` dosyaları) belgeler. **Güncel
+> yapı** için kısaca: monolitler display.py deseniyle (8f094aa) paketlere bölündü,
+> import yüzeyi ve modül-seviyesi state birebir korundu. Bu giriş mevcut (canlı) yapıyı
+> özetler.
+
+**Paketler (Faz 6):**
+- `utils/` (13 modül) — `games.py`, `sorting.py`, `media.py`, `torrent.py`, `services.py`,
+  `extensions.py`, `text.py`, `extract.py`, `security.py`, `api_keys.py`, `history_matches.py`,
+  `files.py`. (Faz 6-1)
+- `network/` (10 modül) — `queue.py` (worker + `download_rom` + Faz 8 finalize/retry),
+  `http_download.py` (resume), `one_fichier.py`, `download_state.py` (Faz 8 state machine),
+  `upnp.py`, `lolroms.py`, `archive_org.py`, `updates.py`, `helpers.py`. (Faz 6-2)
+- `rgsx_web/` (9 modül) — `handlers.py` (`RGSXHandler` dispatcher), `handlers_ui.py`,
+  `handlers_games.py`, `handlers_download.py` (`/api/download/batch` dahil), `handlers_settings.py`,
+  `cache.py`, `i18n.py`, `server.py`. (Faz 6-3)
+- `controls/` (6 modül) — `input.py`, `menus.py`, `downloads.py` (`queue_download_batch` dahil),
+  `search.py`, `handlers.py` (dispatch). (Faz 6-4)
+- `display/` (22 modül) — önceki sürümlerde bölündü. (8f094aa)
+
+**Giriş noktası (Faz 6-5):** `__main__.py` artık yalnız DPI + logging bootstrap +
+`from tvui import main`. TVUI boot/ana döngü `tvui.py`'de; manager spawn/supervisor
+`manager_launcher.py`'de (`ensure_manager`, `_start_manager_supervisor` — watchdog tabanlı).
+
+**Yeni modüller (Faz 4/8/9):**
+- `watchdog.py` — `HysteresisMonitor` + `RestartLimiter` (saf, iki seviye).
+- `network/download_state.py` — `DownloadState`/`DownloadEvent` enum'ları,
+  `transition(job, event, effects)`, `classify_error` (transient/permanent), üstel backoff,
+  `DownloadJob` (history.json geriye dönük uyumlu).
+- Toplu indirme: `rgsx_web/handlers_download.py` `_api_download_batch` +
+  `_kick_batch_if_no_worker` (tek tüketici kuralı: `config.queue_worker_running`),
+  `controls/downloads.py` `queue_download_batch` + `trigger_filtered_batch_download`,
+  `config.queue_worker_running`/`download_all_focus`.
+
+**Test durumu:** `tests/test_download_batch.py` (16 test) + Faz 8 `tests/test_download_state.py`
+(57 test) ile **341 passed / 23 pre-existing** (display+pygame-stub).
+
+---
+
 ## WebUI Geçmiş Sayfası — Hata Mesajı Sadeleştirme (2026.08.11)
 
 **Olay:** Geçmiş sayfası archive.org hata mesajını ham gösteriyordu:

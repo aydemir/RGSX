@@ -1,5 +1,13 @@
 # RGSX Geliştirme Yol Haritası (ROADMAP)
 
+> ⚠️ **Arşiv notu:** Bu belge **tamamlanmış** fazları (Faz 1-7) tarihsel kayıt olarak
+> tutar. İçindeki dosya referansları (`network.py`, `controls.py`, `rgsx_web.py`,
+> `__main__.py`) **o dönemin monolit yapısını** yansıtır — bu dosyalar Faz 6 refaktörüyle
+> paketlere bölünmüştür (güncel yapı için `docs/README.md` "Ana Kaynak Kod" ve
+> `docs/features/FEATURES.md` "Yeni Kod Yapısı" girişi). **Aktif roadmap**
+> [`ROADMAP_DOWNLOAD_MANAGER.md`](ROADMAP_DOWNLOAD_MANAGER.md)'dir (Faz 1-9 ✅, Faz 10 Rust
+> sırada).
+
 Tespit edilen iyileştirmeler, fayda/maliyet dengesine göre fazlara ayrılmıştır.
 Her faz bağımsız commit olarak uygulanır, doğrulanır ve push edilir.
 

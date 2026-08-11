@@ -41,8 +41,8 @@ pip install pygame-ce pytest pytest-cov
 
 ### Adım 1 — Kodu anla
 
-- Değişiklik öncesi **ilgili dosyayı ve çağıranlarını** oku. Büyük dosyalarda
-  (`network.py` 5.7k, `controls.py` 5k, `utils.py` 4.2k) CodeGraph veya grep ile
+- Değişiklik öncesi **ilgili dosyayı ve çağıranlarını** oku. Büyük modüllerde
+  (`controls/` 5.2k, `network/` 6.4k, `utils/` 5.7k — paketler) CodeGraph veya grep ile
   sembol bazlı git.
 - `codegraph explore "<sembol adı>"` — bir çağrıda sembol kaynağı + çağıranlar + blast radius.
 - Yeni modül bölmesi yaparken AGENTS.md "God Object Decomposition" kurallarını izle.
@@ -105,27 +105,35 @@ git push aydemir custom
 
 ## 5. Modül haritası (rol + ölçek)
 
-| Dosya | Rol | Satır |
+> Faz 6 refaktörü sonrası (2026-08-11): eski monolitler paket oldu (`utils/`, `network/`,
+> `rgsx_web/`, `controls/`); `__main__.py` inceltildi (boot `tvui.py`'ye, spawn/supervisor
+> `manager_launcher.py`'ye taşındı). Satırlar `git wc` ile ölçüldü.
+
+| Modül | Rol | Satır |
 |---|---|---|
-| `display/` (paket) | TVUI ekran/UI çizimi; `OVERLAY` `core.py`'de | ~6000 |
-| `network.py` | İndirme/torrent mantığı; resume; queue worker | 5731 |
-| `controls.py` | Kontrol/input + filtre menüsü | 4514 |
-| `utils.py` | Yardımcılar (tar, zip, cache, torrent URL parse) | 4209 |
-| `static/js/app.js` | WebUI frontend | 2734 |
-| `rgsx_web.py` | Web sunucusu `RGSXHandler` | 2221 |
-| `__main__.py` | Giriş noktası, `ensure_manager`, SSE client | 2029 |
-| `rgsx_cli.py` | CLI komutları | 815 |
-| `rgsx_manager.py` | Daemon + tray + SSE; `ManagerHandler` | 929 |
-| `config.py` | Ayarlar / `Game` sınıfı / `game_filter_obj` | 634 |
-| `rgsx_settings.py` | JSON ayar depolama + `get/set_*` accessor'ları | 626 |
+| `display/` (paket, 22 modül) | TVUI ekran/UI çizimi; `OVERLAY` `core.py`'de | 7227 |
+| `network/` (paket, 10 modül) | İndirme/torrent mantığı; `queue.py` worker; `download_state.py` Faz 8 state machine | 6454 |
+| `utils/` (paket, 13 modül) | Yardımcılar (tar, zip, cache, torrent URL parse, security, extract) | 5672 |
+| `controls/` (paket, 6 modül) | Kontrol/input + filtre menüsü + indirme (`downloads.py`) | 5280 |
+| `static/js/app.js` | WebUI frontend | 2831 |
+| `rgsx_web/` (paket, 9 modül) | Web sunucusu `RGSXHandler` + `/api/download/batch` | 2813 |
+| `tvui.py` | TVUI boot + ana döngü (`main()`) | 1862 |
+| `qbittorrent_backend.py` | Gömülü qBittorrent backend | 1748 |
+| `rgsx_manager.py` | Daemon + tray + SSE; `ManagerHandler` | 1046 |
+| `rgsx_cli.py` | CLI komutları | 879 |
+| `rgsx_settings.py` | JSON ayar depolama + `get/set_*` accessor'ları | 862 |
+| `history.py` | İndirme geçmişi I/O (+ `normalize_downloaded_game_name`) | 783 |
+| `config.py` | Ayarlar / `Game` sınıfı / `game_filter_obj` | 730 |
+| `language.py` | Çeviri (`_()`) | 424 |
 | `game_filters.py` | Filtre modeli + `apply_filters` | 329 |
-| `thread_safety.py` | Merkezi kilitler (RLock context manager'lar) | ~300 |
-| `history.py` | İndirme geçmişi I/O (async batched writer) | 490 |
-| `language.py` | Çeviri (`_()`) | 400 |
+| `thread_safety.py` | Merkezi kilitler (RLock context manager'lar) | 303 |
+| `manager_launcher.py` | Manager spawn/supervisor (watchdog tabanlı) | 262 |
+| `__main__.py` | Giriş noktası — yalnız DPI + logging bootstrap + dispatch → `tvui.main` | 111 |
+| `watchdog.py` | Hysteresis monitor + restart limiter (saf) | 97 |
 
 ## 6. Bilinen önemli davranışlar (hızlı başvuru)
 
-- **Çift manager koruması:** `ensure_manager()` + `manager_healthy()` — iki manager yarışmaz.
+- **Çift manager koruması:** `manager_launcher.ensure_manager()` + `manager_healthy()` — iki manager yarışmaz.
 - **Port çakışma:** 5000 doluysa 5000+N; başka process asla öldürülmez.
 - **Auto-start:** varsayılan AÇIK (`get/set_autostart_on_boot`); registry `HKCU\...\Run`.
 - **WebUI perf:** image cache `public, max-age=3600`; snapshot sonrası skip-render.

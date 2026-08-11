@@ -134,7 +134,7 @@ docker stop rgsx && docker rm rgsx
 
 ## How It Works
 
-RGSX already has a headless mode (`RGSX_HEADLESS=1`) and the web server (`rgsx_web.py`) works standalone - this was designed for the Batocera web service. The Docker setup just runs it in a container with proper volume mappings.
+RGSX already has a headless mode (`RGSX_HEADLESS=1`) and the web server (`rgsx_web/` package, `run_server`) works standalone - this was designed for the Batocera web service. The Docker setup just runs it in a container with proper volume mappings.
 
 ## Troubleshooting
 

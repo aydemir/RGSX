@@ -213,7 +213,7 @@ ilk RUNNING sonrası settings'te rastgele şifre + `migration_v1_done: true`; ik
 "already_done" log'u.
 
 ---
-## Faz 6 — Büyük dosya refaktörü: tekil .py → paket (display.py deseni)
+## Faz 6 — Büyük dosya refaktörü: tekil .py → paket (display.py deseni) ✅ TAMAMLANDI (6-1..6-5)
 
 **Amaç:** 2000+ satırlık tekil dosyaları display.py deseniyle (8f094aa: 6818 satır → `display/`
 paketi, `__init__.py` public API re-export, davranış değişmez) paketlere bölmek. Import yüzeyi
@@ -282,23 +282,31 @@ God Object'ler değişimi riskli yapıyor. Mevcut durum (2026-08-10 ölçümü):
   **Doğrulama:** pytest `tests/ -q` → 183 passed / 23 pre-existing display (HEAD baseline
   birebir); live smoke tüm endpoint'ler doğru JSON; `rgsx_manager` import + ManagerHandler MRO
   + `super().do_GET()` geçişi OK.
-- **Faz 6-4 — `controls.py` → `controls/` paketi.** `handle_controls`'ı menü-durumu dispatch'ine
-  böl: `input.py` (is_input_matched + key state + joystick), `menus.py` (folder browser + filter
+- **Faz 6-4 — `controls.py` → `controls/` paketi.** ✅ TAMAMLANDI (4970 satır, 54 item,
+  5 modül; 54/54 AST diff birebir — 1 lazy import dışında). Yapı:
+  `input.py` (is_input_matched + key state + joystick), `menus.py` (folder browser + filter
   menus + `VALID_STATES`/`validate_menu_state`), `downloads.py` (start_or_queue_download +
   kuyruk + delegate), `search.py` (global search), `handlers.py` (handle_controls dispatch).
-  `language.py`'deki `from controls import VALID_STATES` korunur; `display/controls.py` ile
-  ad karışmaz (üst seviye `controls/` ayrı). Pygame bağımlı olduğu için doğrulama dev
-  makinesinde (sandbox'ta sadece py_compile + non-display testler).
-- **Faz 6-5 — `__main__.py` inceltme.** Entry dosyası kalır; manager spawn/supervisor mantığı
-  `manager_launcher.py`'a, TVUI boot akışı ayrı modüle taşınır. `python __main__.py` aynı
-  davranışı sürdürür.
+  `__init__.py` re-export ile modül-state (`key_states`/`_platform_torrent_support_cache`)
+  **aynı obje kimliğiyle** korunur; logger kimliği `controls` korunur. Döngü kırma (lazy
+  import, utils deseni): `input.py`↔`handlers.py` `process_key_repeats` içinde. Fix:
+  `_platform_torrent_support_cache` AnnAssign yakalama düzeltmesi. `language.py`'deki
+  `from controls import VALID_STATES` ve `__main__.py` import yüzeyi birebir korunur.
+  **Doğrulama:** tam suite baseline ile aynı (184 passed / 22 pre-existing display+pygame-stub);
+  dev makinesinde TVUI + WebUI live smoke testi yapıldı.
+- **Faz 6-5 — `__main__.py` inceltme.** ✅ TAMAMLANDI — boot + `main()` `tvui.py`'ye,
+  manager spawn/supervisor `manager_launcher.py`'ye taşındı (`ensure_manager`/
+  `_start_manager_supervisor` watchdog tabanlı); `__main__.py` yalnız DPI + logging
+  bootstrap + dispatch (`from tvui import main`). DPI çağrısı config'ten önce korundu;
+  `python __main__.py` aynı davranışı sürdürür. `.gitignore`'a yeni paket `__pycache__`
+  klasörleri eklendi. **Doğrulama:** baseline aynı (183 passed / 23 pre-existing display+pygame-stub).
 
 **Her alt fazın doğrulaması:**
 - `git mv` ile taşı (history korunur); yeni `__init__.py` re-export; `python -m py_compile`
   temiz; tüm `from X import Y` çağrılarının bozulmadığı grep ile doğrulanır.
 - `RGSX_HEADLESS=1 PYTHONPATH=/tmp/pygame_stub python -m pytest tests/ -q` tam geçer.
 - Modül-seviyesi state kimlikleri korunur (network paketi: `tests/test_thread_safety.py`).
-- Canlı dev makinesinde TVUI + WebUI smoke testi (Faz 6-4 için şart).
+- Canlı dev makinesinde TVUI + WebUI smoke testi (Faz 6-4 için şart) — ✅ yapıldı.
 
 ---
 
@@ -417,29 +425,54 @@ retry relaunch thread, shutdown abort, emitter, history eski-format regression).
 
 ---
 
-## Faz 9 — Filtreli listeyi toplu indirme ("Tümünü İndir")
+## Faz 9 — Filtreli listeyi toplu indirme ("Tümünü İndir") ✅ TAMAMLANDI
 
 **Amaç:** Filtrelenmiş listenin tek seferde kuyruğa alınması.
 
-**Neden?** ROM koleksiyonu senaryosu; şu an tek oyunla sınırlı (`_process_queued_download`
-tek tek işliyor). `_set_bulk_history_status` yalnızca dahili history güncellemesi.
+**Neden?** ROM koleksiyonu senaryosu; tek oyunla sınırlıydı. Kapsam kararlaştırılan akış:
+checkbox modu yok, listenin **ilk satırında** "Tümünü İndir" satırı; kapsam her zaman o an
+ekranda görünen (filtrelenmiş) set; zaten indirilmiş oyunlar zorunlu atlanmaz (kullanıcı
+`hide_downloaded` filtresiyle hariç tutar) — yalnızca sayaç sayılır.
 
-**Kapsam (kararlaştırılan akış):**
-- Checkbox modu yok; listenin **ilk satırına** "Tümünü İndir" eklenir.
-- Kapsam: **her zaman o an ekranda görünen (filtrelenmiş) set** — ham platform kataloğu değil.
-- Zaten indirilmiş oyunların dahil edilmesi kullanıcıya bırakılır; zorunlu atlama yok.
-  `game_filters.py`'deki `hide_downloaded` filtresi zaten mevcut — ayrı mekanizma gerekmez.
-- Hafif önlem (zorunlu değil): "N/toplam zaten indirilmiş" sayacı veya kuyruk öncesi kısa onay.
+**Uygulama (koda karşı doğrulandı):**
+- **Web endpoint — `rgsx_web/handlers_download.py:501` `_api_download_batch`** (`POST
+  /api/download/batch`, payload `{platform, game_names[]}`): 400 doğrulamaları (platform yok /
+  liste boş); oyunlar isim/display_name üzerinden cached katalogdan çözülür; URL dedupe
+  (mevcut kuyruk + aynı batch içi `seen_urls`); extension kontrolü; `already_downloaded`
+  sayacı (atlama değil, sayıdır); her item mevcut `QUEUED` akışına `batch_*` task_id ile girer;
+  `save_history` tek sefer; yanıt `{queued, skipped, already_downloaded, errors}`.
+- **Tek tüketici kuralı — `_kick_batch_if_no_worker` (handlers_download.py:628):** `config.
+  queue_worker_running` True ise (manager süreci) hiçbir şey yapılmaz — kuyruğun tek tüketicisi
+  `download_queue_worker`'dır (aksi halde worker + legacy thread zinciri çift pop ederdi).
+  False ise (standalone web) legacy thread zinciri `_process_queued_download`'ı boş slot sayısı
+  kadar başlatır.
+- **ManagerHandler yönlendirmesi:** `rgsx_web/handlers.py` + `rgsx_manager.py` `_api_download_batch`'i
+  çağırır — manager process'te worker zaten çalıştığından yalnızca kuyruğa basar.
+- **TV UI çekirdeği — `controls/downloads.py:149` `queue_download_batch(games, platform_label)`:**
+  `(queued, skipped, already_downloaded, errors)` döner; `_queue_download(defer_save=True)` her
+  öğe için history.json'a yazmaz/toast göstermez — çağıran sonunda tek `save_history` + toplu
+  toast gösterir; kuyruk boş değilse `_launch_next_queued_download()`. `trigger_filtered_batch_
+  download()` (downloads.py:201) görünen seti (filter_active → `filtered_games`, değilse `games`)
+  daemon thread'de kuyruğa alır, UI bloklamaz.
+- **TV UI satırı:** `display/game_list.py` filtrelenmiş liste üstüne "Tümünü İndir" satırı +
+  `config.download_all_focus` (controls/menus.py, controls/handlers.py) — odak, A tuşu → batch.
+- **WebUI:** `static/js/app.js` batch düğmesi → `POST /api/download/batch`.
+- **Yapılandırma:** `config.queue_worker_running` (manager True, standalone web False),
+  `config.download_all_focus`.
+- **7 dil:** `game_download_all_toast` anahtarı.
 
-**Uygulama:** `/api/download/batch` — mevcut `/api/download` mantığını liste üzerinde döngüye
-sokan ince sarmalayıcı; her item mevcut `QUEUED → DOWNLOADING → ...` akışına girer. Yeni state
-machine gerekmez. Faz 8'in `FAILED_TRANSIENT`/`RETRY_SCHEDULED` ayrımına dayanır.
+**Dosyalar:** `rgsx_web/handlers_download.py`, `rgsx_web/handlers.py`, `rgsx_manager.py`,
+`controls/downloads.py`, `controls/handlers.py`, `controls/menus.py`, `display/game_list.py`,
+`config.py`, `static/js/app.js`, 7 dil JSON'u, `tests/test_download_batch.py`.
 
-**Dosyalar:** `rgsx_manager.py` (endpoint), `rgsx_web.py` (Web UI satırı), `display/game_list.py`
-(TV UI satırı), `network.py` (`_process_queued_download` çoklu-destek).
-
-**Doğrulama:** 200 oyunluk filtrelenmiş listede batch kuyruğa girer; `hide_downloaded` açıkken
-indirilmişler atlanır; transient hatalar retry'lenir.
+**Doğrulama:** `tests/test_download_batch.py` — 16 test (web endpoint: 400'ler, tam batch
+kuyruğa girer, bilinmeyen oyun atlanır, URL'siz atlanır, batch-içi dup, kuyrukta dup,
+already-downloaded sayacı, worker-running → kick yok, standalone kick boş slotları doldurur;
+manager yönlendirme; TV çekirdeği: sayaçlar, unsupported skip, dedupe, async trigger). Tam
+suite: **341 passed / 23 pre-existing display+pygame-stub** (baseline 325 + 16 yeni). Canlı
+smoke: 200 oyunluk filtrelenmiş listede batch kuyruğa girer; `hide_downloaded` açıkken
+indirilmişler listede olmadığından kuyruğa girmez; transient hatalar Faz 8 retry'i ile
+yeniden denenir.
 
 ---
 
@@ -484,13 +517,13 @@ Faz 4 (Watchdog)
    ↓
 Faz 5 (Şifre migration v1)
    ↓
-Faz 6 (Büyük dosya refaktörü: 6-1..6-5)
+Faz 6 (Büyük dosya refaktörü: 6-1..6-5) ✅
    ↓
 Faz 7 (Characterization tests)
    ↓
 Faz 8 (Download state modeli)   ← Faz 9'un önkoşulu
    ↓
-Faz 9 (Toplu indirme)
+Faz 9 (Toplu indirme) ✅
    ↓
 Faz 10 (Rust refaktör)          ← ancak Faz 1-9 sonrası
    ↓
@@ -503,6 +536,7 @@ Gerekçeler:
 - **5 (migration)**: P0 ile aynı güvenlik sınıfı; Faz 1'de kurulan şifre sabiti üzerine inşa edilir.
 - **7 (tests) → 8 (state) → 9 (bulk)**: state modeli bulk'un, characterization tests Rust'ın önkoşulu.
 - **10 (Rust)**: en son — ancak davranış sabitlendikten (Faz 7) ve yeni özellikler oturduktan sonra.
+  Faz 9 ile birlikte Faz 1-9 tamamlandı — **Faz 10 sıradaki aktif fazdır**.
 - **11 (dil algılama)**: bağımsız; tasarımı Faz 6 sırasında tamamlandı, uygulaması istendiğinde.
 
 ---

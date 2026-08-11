@@ -195,13 +195,18 @@ RGSX inclut une interface web pour parcourir et télécharger des jeux à distan
 /roms/
 ├── ports/
 │   ├── RGSX/
-│   │   ├── __main__.py                # Point d'entrée
-│   │   ├── controls.py                # Gestion des entrées
-│   │   ├── display.py                 # Moteur de rendu
-│   │   ├── network.py                 # Gestionnaire de téléchargements
+│   │   ├── __main__.py                # Point d'entrée (bootstrap → tvui.main)
+│   │   ├── tvui.py                    # Boucle principale TV UI
+│   │   ├── manager_launcher.py        # Démarrage + supervision du manager
+│   │   ├── rgsx_manager.py            # Démon de téléchargement (Windows/RetroBat)
 │   │   ├── rgsx_settings.py           # Gestionnaire des paramètres
+│   │   ├── utils/                     # games, sorting, media, torrent, extract, ...
+│   │   ├── network/                   # queue, http_download, one_fichier, download_state, ...
+│   │   ├── controls/                  # input, menus, downloads, search (TVUI)
+│   │   ├── display/                   # Moteur de rendu
+│   │   ├── rgsx_web/                  # Serveur web + API REST/SSE
 │   │   ├── assets/controls/           # Profils de manettes
-│   │   ├── languages/                 # Traductions (EN/FR/DE/ES/IT/PT)
+│   │   ├── languages/                 # Traductions (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 │   │   └── logs/RGSX.log              # Logs d'exécution
 │   ├── gamelist.xml
 │   ├── images/

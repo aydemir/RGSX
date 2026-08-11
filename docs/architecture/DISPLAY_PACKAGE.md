@@ -49,7 +49,7 @@ Taşıma sırasında public API'ye (`display/__init__.py` `__all__`'ında) eklen
 `format_disk_size_gb`, `render_combined_footer_controls`.
 
 ### 3. İçe aktarma disiplini
-- Dış modüller (controls.py, __main__.py, rgsx_web.py) **yalnızca** `display/__init__.py`
+- Dış modüller (`controls/`, `__main__.py`, `rgsx_web/`) **yalnızca** `display/__init__.py`
   üzerinden içe aktarır (`from display import draw_filter_advanced` gibi).
 - Modüller arası ortak erişim: `from .colors import THEME_COLORS`, `from . import core`.
 - Çizim fonksiyonları `config.*` global state'ini okur (bu projenin mevcut deseni).
@@ -61,8 +61,9 @@ Taşıma sırasında public API'ye (`display/__init__.py` `__all__`'ında) eklen
 
 ## Doğrulama
 - `import display` + bağımlı modüller OK; SDL dummy ile ~19 ekran smoke testi geçti.
-- **pytest altyapısı** (tests/): `display/` çekirdeği + `game_filters.py` +
-  `thread_safety.py` için %97 toplam kapsam (bkz. `docs/guides/TESTING.md`).
+- **pytest altyapısı** (tests/): 364 test — 341 passed / 23 pre-existing (pygame-stub);
+  gate modülleri `game_filters.py` + `thread_safety.py` + `watchdog.py` %100
+  (bkz. `docs/guides/TESTING.md`).
 
 ## Gelecek
 - `menus.py`/`history.py` gibi büyük çizim modülleri için per-modül stub test takımları

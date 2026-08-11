@@ -217,13 +217,16 @@ Yönetici başlatılamazsa — veya `--ui-only` ile başlatılırsa / `RGSX_NO_M
 /roms/
 ├── ports/
 │   ├── RGSX/
-│   │   ├── __main__.py                # Giriş noktası
+│   │   ├── __main__.py                # Giriş noktası (yalnız bootstrap → tvui.main)
+│   │   ├── tvui.py                    # TV UI ana döngü / açılış
+│   │   ├── manager_launcher.py        # Manager başlatma + supervisor (watchdog)
 │   │   ├── rgsx_manager.py            # Arka plan indirme daemon'ı (Windows/RetroBat)
-│   │   ├── rgsx_web.py                # Web sunucusu + REST/SSE API
-│   │   ├── controls.py                # Giriş işleme
-│   │   ├── display.py                 # Render motoru
-│   │   ├── network.py                 # İndirme yöneticisi
 │   │   ├── rgsx_settings.py           # Ayarlar yöneticisi
+│   │   ├── utils/                     # games, sorting, media, torrent, extract, ...
+│   │   ├── network/                   # queue, http_download, one_fichier, download_state, ...
+│   │   ├── controls/                  # input, menus, downloads, search (TVUI)
+│   │   ├── display/                   # Render motoru
+│   │   ├── rgsx_web/                  # Web sunucusu + REST/SSE API
 │   │   ├── languages/                 # Çeviriler (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
 │   │   └── logs/RGSX.log              # Çalışma günlükleri
 │   ├── gamelist.xml
