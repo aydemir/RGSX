@@ -1,7 +1,7 @@
 ---
 id: TASK-002a
 title: manager-core state machine tasarımı (Faz 10a ilk adım)
-status: in-progress
+status: done
 priority: P2
 created: 2026-08-11
 tags: [rust, manager-core, state-machine]
@@ -88,5 +88,6 @@ kapsam dışı — TASK-002b/c/d alt-görevlerine bırakılır.
       `manager-rs/.cargo/config.toml` → target-dir `C:/Users/lv/RGSX/rust-target`
       (repo içi `target/` üretilmiyor — `.gitignore` da `manager-rs/target/` yedek)
 - [x] Rust toolchain kuruldu: `rust-msvc` 1.97.1 (scoop)
+- [x] Commit `5895315` + push `aydemir/custom` (`2f2e5cc..5895315`)
+- [x] TASK-002a done'a taşındı
 - [ ] Characterization (Python↔Rust) — TASK-002b
-- [ ] TASK-002a done'a taşı + commit/push
