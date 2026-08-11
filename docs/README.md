@@ -10,7 +10,13 @@ docs/
 ├── README.md                      # Bu dosya - dokümantasyon indeksi
 ├── architecture/                  # Mimari ve tasarım
 │   ├── DOWNLOAD_MANAGER.md        # RGSX Download Manager daemon mimarisi
-│   └── DISPLAY_PACKAGE.md         # display/ paketi mimarisi (display.py bölünmesi)
+│   ├── DISPLAY_PACKAGE.md         # display/ paketi mimarisi (display.py bölünmesi)
+│   ├── NETWORK_PACKAGE.md         # network/ paketi mimarisi (worker, HTTP resume, torrent)
+│   ├── DOWNLOAD_STATE_MACHINE.md  # İndirme state machine (Faz 8): 10 state / 11 event
+│   ├── WEBUI_API.md               # rgsx_web/ paketi + REST/SSE API kataloğu
+│   ├── CONTROLS_PACKAGE.md        # controls/ paketi mimarisi (handle_controls, kuyruk/batch)
+│   ├── UTILS_PACKAGE.md           # utils/ paketi mimarisi (13 modül, re-export disiplini)
+│   └── CONCURRENCY.md             # Eşzamanlılık: kilitler, supervisor, SSE senkronizasyonu
 ├── flows/                         # Kritik çalışma akışları (kod doğrulamalı)
 │   ├── STARTUP.md                 # Başlatma: ensure_manager + SSE yansıması + çift manager
 │   ├── DOWNLOAD_PIPELINE.md       # İndirme: HTTP resume + torrent + kuyruk worker
@@ -41,9 +47,15 @@ docs/
 | [FILTER_PIPELINE.md](flows/FILTER_PIPELINE.md) | Filtre modeli ve TVUI/WebUI uygulaması |
 | [DOWNLOAD_MANAGER.md](architecture/DOWNLOAD_MANAGER.md) | Manager daemon mimarisi |
 | [DISPLAY_PACKAGE.md](architecture/DISPLAY_PACKAGE.md) | display/ paketi mimarisi |
+| [NETWORK_PACKAGE.md](architecture/NETWORK_PACKAGE.md) | network/ paketi: worker, tek tüketici kuralı, HTTP resume, torrent |
+| [DOWNLOAD_STATE_MACHINE.md](architecture/DOWNLOAD_STATE_MACHINE.md) | İndirme state machine: geçiş tablosu, hata sınıflandırma, backoff |
+| [WEBUI_API.md](architecture/WEBUI_API.md) | WebUI REST/SSE endpoint kataloğu (handler + manager) |
+| [CONTROLS_PACKAGE.md](architecture/CONTROLS_PACKAGE.md) | controls/ paketi: handle_controls, kuyruk/batch indirme |
+| [UTILS_PACKAGE.md](architecture/UTILS_PACKAGE.md) | utils/ paketi: modül haritası + kritik fonksiyonlar |
+| [CONCURRENCY.md](architecture/CONCURRENCY.md) | Kilitler, watchdog/supervisor, SSE senkronizasyonu |
 | [TESTING.md](guides/TESTING.md) | pytest altyapısı ve kapsam gate'leri |
 | [FEATURES.md](features/FEATURES.md) | Tüm özellikler ve sürüm notları |
-| [ROADMAP.md](roadmap/ROADMAP.md) | Yol haritası (Faz 1-7 tamamlandı) |
+| [ROADMAP.md](roadmap/ROADMAP.md) | Yol haritası (arşiv — ROADMAP_DOWNLOAD_MANAGER.md'ye yönlendirir) |
 | [ROADMAP_DOWNLOAD_MANAGER.md](roadmap/ROADMAP_DOWNLOAD_MANAGER.md) | Fork roadmap — download manager (Faz 1-9, Rust en sonda) |
 
 ## 🧭 Kullanıcı Kılavuzları
