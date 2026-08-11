@@ -46,6 +46,10 @@ Görevin kapsamı: üç öncelikli modül (`rgsx_settings.py`, `rgsx_manager.py`
 `qbittorrent_backend.py`) için hedeflenen kapsam seviyesini belirlemek ve davranışı sabitleyen
 testlerle oraya taşımak; `.coveragerc`'te bu dosyaların omit'li **kalmadığını** korumak.
 
+**Hedef kapsam (2026-08-11 onayı):** `rgsx_settings.py` ≥ %60, `rgsx_manager.py` ≥ %55,
+`qbittorrent_backend.py` ≥ %45. Baz: settings %26 / manager %30 / qbittorrent %22
+(341 passed / 23 pre-existing display fail).
+
 ## Kapsam / Dosyalar
 
 - `tests/test_qbittorrent_backend.py` — backend davranış testleri

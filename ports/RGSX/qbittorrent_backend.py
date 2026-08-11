@@ -1679,7 +1679,7 @@ def download_torrent_via_qbittorrent(
                 # même volume, copie classique en repli) sans toucher au fichier source.
                 try:
                     os.link(downloaded_path, dest_path)
-                except OSError:
+                except (OSError, AttributeError):
                     shutil.copy2(downloaded_path, dest_path)
                 _promote_active_download_to_seed(task_id, {
                     "hash": torrent_hash, "tag": tag, "dest_path": dest_path,
