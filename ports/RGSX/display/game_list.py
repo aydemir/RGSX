@@ -133,6 +133,9 @@ def draw_game_list(screen):
 
     # Réserver de l'espace pour l'en-tête (header_height)
     available_height = config.screen_height - title_height - extra_margin_top - extra_margin_bottom - 2 * margin_top_bottom - header_height
+    if download_all_row_visible():
+        # Faz 9: ilk satır "Tümünü İndir" için bir satır yüksekliği ayır
+        available_height -= line_height
     items_per_page = max(1, available_height // line_height)
 
     rect_height = header_height + items_per_page * line_height + 2 * margin_top_bottom
@@ -340,6 +343,29 @@ def draw_game_list(screen):
     # Position de départ des lignes après l'en-tête
     list_start_y = rect_y + margin_top_bottom + header_height
 
+    # Faz 9 — Filtre aktifken ilk satır: "Tümünü İndir" (oyun listesinden bağımsız sabit satır)
+    extra_row = 0
+    if download_all_row_visible():
+        extra_row = line_height
+        dl_all_focus = bool(getattr(config, 'download_all_focus', False))
+        dl_all_text = download_all_row_text(download_all_row_games(), platform_name)
+        dl_all_truncated = truncate_text_middle(dl_all_text, config.small_font, name_col_width, is_filename=False)
+        dl_all_surface = config.small_font.render(
+            dl_all_truncated, True,
+            THEME_COLORS["green"] if dl_all_focus else THEME_COLORS["text"],
+        )
+        dl_all_rect = dl_all_surface.get_rect()
+        dl_all_rect.midleft = (rect_x + 20, list_start_y + line_height // 2)
+        if dl_all_focus:
+            glow_width = rect_width - 40
+            glow_height = dl_all_rect.height + 12
+            selection_bg = pygame.Surface((glow_width, glow_height), pygame.SRCALPHA)
+            selection_bg.fill((*THEME_COLORS["fond_lignes"][:3], 90))
+            screen.blit(selection_bg, (rect_x + 20, list_start_y + line_height // 2 - glow_height // 2))
+            border_rect = pygame.Rect(rect_x + 20, list_start_y + line_height // 2 - glow_height // 2, glow_width, glow_height)
+            pygame.draw.rect(screen, THEME_COLORS["border_selected"], border_rect, 2, border_radius=8)
+        screen.blit(dl_all_surface, dl_all_rect)
+
     for i in range(config.scroll_offset, min(config.scroll_offset + items_per_page, len(games))):
         item = games[i]
         game_name = item.display_name
@@ -409,7 +435,7 @@ def draw_game_list(screen):
         name_surface = config.small_font.render(truncated_name, True, name_color)
         ext_surface = config.small_font.render(ext_text, True, THEME_COLORS["text"])
         size_surface = config.small_font.render(size_text, True, THEME_COLORS["text"])
-        row_center_y = list_start_y + (i - config.scroll_offset) * line_height + line_height // 2
+        row_center_y = list_start_y + extra_row + (i - config.scroll_offset) * line_height + line_height // 2
         # Position nom (aligné à gauche dans la boite)
         name_rect = name_surface.get_rect()
         name_rect.midleft = (rect_x + 20, row_center_y)
@@ -477,3 +503,37 @@ def get_display_extension(file_name):
     if not suffix:
         return "-"
     return suffix.lower()
+
+
+def download_all_row_visible() -> bool:
+    """Faz 9 — Filtrelenmiş set (+) görüntülenirken ilk satır 'Tümünü İndir'."""
+    return bool(getattr(config, 'filter_active', False) and not getattr(config, 'search_mode', False))
+
+
+def download_all_row_games():
+    """Faz 9 — 'Tümünü İndir'in etki ettiği o an görünen set."""
+    if getattr(config, 'filter_active', False):
+        return config.filtered_games or []
+    return config.games or []
+
+
+def download_all_row_text(games, platform_name) -> str:
+    """Faz 9 — İlk satır metni: '⬇ Tümünü İndir (N oyun · M zaten indirilmiş)'."""
+    try:
+        already = count_downloaded_in(games, platform_name)
+    except Exception:
+        already = 0
+    try:
+        label = _("game_download_all_label")
+        if isinstance(label, str) and label and not label.startswith("game_download_all_label"):
+            return label.format(len(games), already)
+    except Exception:
+        pass
+    return f"⬇ Download all ({len(games)} games, {already} already downloaded)"
+
+
+def count_downloaded_in(games, platform_name) -> int:
+    try:
+        return sum(1 for g in games if is_game_downloaded(platform_name, g.name))
+    except Exception:
+        return 0

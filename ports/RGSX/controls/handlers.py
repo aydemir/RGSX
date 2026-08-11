@@ -89,6 +89,7 @@ from controls.downloads import (
     _launch_next_queued_download,
     _queue_download,
     start_or_queue_download,
+    trigger_filtered_batch_download,
 )
 from controls.input import (
     is_global_search_input_matched,
@@ -225,6 +226,11 @@ def _warn_missing_api_key_for_1fichier_platform(platform_label: str | None = Non
     config.needs_redraw = True
     logger.warning("Plateforme 1fichier ouverte sans clé API: affichage avertissement mode gratuit")
 
+def download_all_row_enabled() -> bool:
+    """Faz 9 — Filtrelenmiş set görüntülenirken 'Tümünü İndir' satırı var mı."""
+    return bool(getattr(config, 'filter_active', False) and not getattr(config, 'search_mode', False))
+
+
 def _open_selected_platform(screen) -> bool:
     if not config.platforms:
         return False
@@ -244,6 +250,7 @@ def _open_selected_platform(screen) -> bool:
     config.current_platform = config.selected_platform
     config.games = load_games(platform_id)
     scan_platform_roms_on_enter(platform_id)
+    config.download_all_focus = False  # Faz 9: platform değişince odak temizlenir
 
     # Apply saved filters automatically if any
     if config.game_filter_obj and config.game_filter_obj.is_active():
@@ -705,15 +712,26 @@ def handle_controls(event, sources, joystick, screen):
      
             else:
                 if is_input_matched(event, "up"):
-                    if games:
-                        config.current_game = _wrap_index(config.current_game, -1, len(games))
-                        update_key_state("up", True, event.type, event.key if event.type == pygame.KEYDOWN else 
-                                        event.button if event.type == pygame.JOYBUTTONDOWN else 
-                                        (event.axis, event.value) if event.type == pygame.JOYAXISMOTION else 
-                                        event.value)
+                    if download_all_row_enabled() and not getattr(config, 'download_all_focus', False) and config.current_game == 0:
+                        # Faz 9: filtre aktifken ilk oyunda Yukarı → "Tümünü İndir" satırı
+                        config.download_all_focus = True
                         config.needs_redraw = True
+                    else:
+                        config.download_all_focus = False
+                        if games:
+                            config.current_game = _wrap_index(config.current_game, -1, len(games))
+                            update_key_state("up", True, event.type, event.key if event.type == pygame.KEYDOWN else 
+                                            event.button if event.type == pygame.JOYBUTTONDOWN else 
+                                            (event.axis, event.value) if event.type == pygame.JOYAXISMOTION else 
+                                            event.value)
+                            config.needs_redraw = True
                 elif is_input_matched(event, "down"):
-                    if games:
+                    if getattr(config, 'download_all_focus', False):
+                        config.download_all_focus = False
+                        config.current_game = 0
+                        config.scroll_offset = 0
+                        config.needs_redraw = True
+                    elif games:
                         config.current_game = _wrap_index(config.current_game, 1, len(games))
                         update_key_state("down", True, event.type, event.key if event.type == pygame.KEYDOWN else 
                                         event.button if event.type == pygame.JOYBUTTONDOWN else 
@@ -721,6 +739,7 @@ def handle_controls(event, sources, joystick, screen):
                                         event.value)
                         config.needs_redraw = True
                 elif is_input_matched(event, "page_up"):
+                    config.download_all_focus = False
                     config.current_game = max(0, config.current_game - config.visible_games)
                     update_key_state("page_up", True, event.type, event.key if event.type == pygame.KEYDOWN else 
                                     event.button if event.type == pygame.JOYBUTTONDOWN else 
@@ -728,6 +747,7 @@ def handle_controls(event, sources, joystick, screen):
                                     event.value)
                     config.needs_redraw = True
                 elif is_input_matched(event, "left"):
+                    config.download_all_focus = False
                     config.current_game = max(0, config.current_game - config.visible_games)
                     update_key_state("left", True, event.type, event.key if event.type == pygame.KEYDOWN else 
                                     event.button if event.type == pygame.JOYBUTTONDOWN else 
@@ -735,6 +755,7 @@ def handle_controls(event, sources, joystick, screen):
                                     event.value)
                     config.needs_redraw = True
                 elif is_input_matched(event, "page_down"):
+                    config.download_all_focus = False
                     config.current_game = min(len(games) - 1, config.current_game + config.visible_games)
                     update_key_state("page_down", True, event.type, event.key if event.type == pygame.KEYDOWN else 
                                     event.button if event.type == pygame.JOYBUTTONDOWN else 
@@ -742,6 +763,7 @@ def handle_controls(event, sources, joystick, screen):
                                     event.value)
                     config.needs_redraw = True
                 elif is_input_matched(event, "right"):
+                    config.download_all_focus = False
                     config.current_game = min(len(games) - 1, config.current_game + config.visible_games)
                     update_key_state("right", True, event.type, event.key if event.type == pygame.KEYDOWN else 
                                     event.button if event.type == pygame.JOYBUTTONDOWN else 
@@ -827,11 +849,18 @@ def handle_controls(event, sources, joystick, screen):
                             logger.error(f"config.pending_download est None pour {game_name}")
                             config.needs_redraw = True
                 elif is_input_matched(event, "cancel"):
-                    config.menu_state = "platform"
-                    config.current_game = 0
-                    config.scroll_offset = 0
-                    config.needs_redraw = True
-                    logger.debug("Retour à platform")
+                    if getattr(config, 'download_all_focus', False):
+                        # Faz 9: "Tümünü İndir" üzerindeyken cancel → oyun listesine dön
+                        config.download_all_focus = False
+                        config.current_game = 0
+                        config.scroll_offset = 0
+                        config.needs_redraw = True
+                    else:
+                        config.menu_state = "platform"
+                        config.current_game = 0
+                        config.scroll_offset = 0
+                        config.needs_redraw = True
+                        logger.debug("Retour à platform")
                 elif is_input_matched(event, "reload_games_data"):
                     config.previous_menu_state = config.menu_state
                     config.menu_state = "reload_games_data"
@@ -3660,11 +3689,18 @@ def handle_controls(event, sources, joystick, screen):
                config.controls_config.get(action_name, {}).get("key") == event.key:
                 update_key_state(action_name, False)
                 
-            # Gestion spéciale pour confirm dans le menu game (ne dépend pas du key_state)
+             # Gestion spéciale pour confirm dans le menu game (ne dépend pas du key_state)
             if action_name == "confirm" and config.menu_state == "game" and \
                ((action_name in keyboard_fallback and keyboard_fallback[action_name] == event.key) or \
                 (config.controls_config.get(action_name, {}).get("type") == "key" and \
                  config.controls_config.get(action_name, {}).get("key") == event.key)):
+                    # Faz 9: "Tümünü İndir" satırında confirm → filtrelenmiş set topluca kuyruğa
+                    if getattr(config, 'download_all_focus', False):
+                        trigger_filtered_batch_download()
+                        config.download_all_focus = False
+                        config.confirm_press_start_time = 0
+                        config.confirm_long_press_triggered = False
+                        return action
                     press_duration = current_time - config.confirm_press_start_time
                     # Si appui court (< 2 secondes) et pas déjà traité par l'appui long
                     if press_duration < config.confirm_long_press_threshold and not config.confirm_long_press_triggered:
@@ -3771,6 +3807,13 @@ def handle_controls(event, sources, joystick, screen):
                 
                 # Gestion spéciale pour confirm dans le menu game (ne dépend pas du key_state)
                 if action_name == "confirm" and config.menu_state == "game":
+                    # Faz 9: "Tümünü İndir" satırında confirm → filtrelenmiş set topluca kuyruğa
+                    if getattr(config, 'download_all_focus', False):
+                        trigger_filtered_batch_download()
+                        config.download_all_focus = False
+                        config.confirm_press_start_time = 0
+                        config.confirm_long_press_triggered = False
+                        return action
                     press_duration = current_time - config.confirm_press_start_time
                     # Si appui court (< 2 secondes) et pas déjà traité par l'appui long
                     if press_duration < config.confirm_long_press_threshold and not config.confirm_long_press_triggered:

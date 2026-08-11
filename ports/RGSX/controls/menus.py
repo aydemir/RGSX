@@ -180,6 +180,7 @@ def open_unified_filter_menu(source_state: str) -> None:
     config.filter_menu_return_state = validate_menu_state(source_state)
     config.selected_filter_choice = 0
     config.previous_menu_state = source_state
+    config.download_all_focus = False  # Faz 9: filtre menüsü açılınca "Tümünü İndir" odaktan çıkar
     config.menu_state = 'filter_menu_choice'
     config.needs_redraw = True
     logger.debug(f"Ouverture du menu filtre unifie depuis {source_state}")

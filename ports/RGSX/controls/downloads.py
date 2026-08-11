@@ -8,10 +8,11 @@ import pygame
 
 import config
 from display import show_toast
-from history import save_history
+from history import save_history, is_game_downloaded
 from language import _
 from network import download_from_1fichier, download_rom, is_1fichier_url
 from utils import ensure_download_provider_keys, get_clean_display_name, missing_all_provider_keys
+from utils.extensions import check_extension_before_download
 
 logger = logging.getLogger("controls")
 
@@ -105,8 +106,12 @@ def _register_download_task(task_id: str, task, url: str, game_name: str, platfo
 
     task.add_done_callback(on_task_done)
 
-def _queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None) -> str:
-    """Ajoute un téléchargement à la file d'attente et l'historique."""
+def _queue_download(url: str, platform: str, game_name: str, is_zip_non_supported: bool, display_name: str | None = None, defer_save: bool = False) -> str:
+    """Ajoute un téléchargement à la file d'attente et l'historique.
+
+    defer_save=True (Faz 9 batch): her öğe için history.json'a yazmaz/toast
+    göstermez; çağıran sonunda bir kez save_history + toplu toast gösterir.
+    """
     task_id = str(pygame.time.get_ticks())
     queue_item = {
         'url': url,
@@ -133,11 +138,101 @@ def _queue_download(url: str, platform: str, game_name: str, is_zip_non_supporte
         'total_size': 0,
         'task_id': task_id
     })
-    save_history(config.history)
-    show_toast(f"{shown_name}\n{_('download_queued')}")
+    if not defer_save:
+        save_history(config.history)
+        show_toast(f"{shown_name}\n{_('download_queued')}")
     config.needs_redraw = True
     logger.info(f"{game_name} ajouté à la file d'attente. Queue size: {len(config.download_queue)}")
     return task_id
+
+
+def queue_download_batch(games: list, platform_label: str):
+    """Faz 9 — TV UI: o an görünen (filtrelenmiş) seti topluca kuyruğa alır.
+
+    Her item mevcut QUEUED → DOWNLOADING akışına girer (slot yönetimi
+    _launch_next_queued_download'da). Zaten indirilmiş oyunlar zorunlu atlanmaz
+    (kullanıcı hide_downloaded filtresiyle hariç tutar); yalnızca sayaç sayılır.
+    Aynı URL kuyrukta/aynı batch içinde ise tekrar eklenmez.
+
+    Döner: (queued, skipped, already_downloaded, errors)
+    """
+    if not games:
+        return (0, 0, 0, [])
+    seen = {q.get('url') for q in getattr(config, 'download_queue', [])}
+    queued = skipped = already = 0
+    errors = []
+    for g in games:
+        try:
+            name = getattr(g, 'name', None)
+            url = getattr(g, 'url', None)
+            if not name or not url:
+                skipped += 1
+                continue
+            if url in seen:
+                skipped += 1
+                errors.append(f"{name}: déjà dans la queue")
+                continue
+            check_result = check_extension_before_download(url, platform_label, name)
+            if not check_result:
+                skipped += 1
+                errors.append(f"{name}: extension non supportée")
+                continue
+            is_zip_non_supported = bool(check_result[3]) if len(check_result) > 3 else False
+            _queue_download(url, platform_label, name, is_zip_non_supported, defer_save=True)
+            seen.add(url)
+            queued += 1
+            try:
+                if is_game_downloaded(platform_label, name):
+                    already += 1
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"[BATCH_TV] öğe atlandı: {e}")
+            skipped += 1
+    if queued:
+        try:
+            save_history(config.history)
+        except Exception:
+            pass
+        _launch_next_queued_download()
+    return (queued, skipped, already, errors)
+
+
+def trigger_filtered_batch_download():
+    """Faz 9 — 'Tümünü İndir' satırı: arka planda görünen seti kuyruğa alır (UI bloklamaz)."""
+    if getattr(config, 'filter_active', False):
+        games = list(getattr(config, 'filtered_games', None) or [])
+    else:
+        games = list(getattr(config, 'games', None) or [])
+
+    platform_entry = config.platforms.get(config.current_platform) if isinstance(config.platforms, dict) else None
+    if isinstance(platform_entry, dict) and platform_entry.get('name'):
+        platform_label = platform_entry['name']
+    elif isinstance(platform_entry, str) and platform_entry:
+        platform_label = platform_entry
+    else:
+        platform_label = config.current_platform
+
+    def _run():
+        try:
+            queued, skipped, already, _ = queue_download_batch(games, platform_label)
+        except Exception as e:
+            logger.error(f"[BATCH_TV] toplu indirme başlatılamadı: {e}")
+            config.needs_redraw = True
+            return
+        try:
+            msg = _("game_download_all_toast")
+            if isinstance(msg, str) and msg and not msg.startswith("game_download_all_toast"):
+                text = msg.format(queued, skipped, already)
+            else:
+                text = f"Batch: {queued} queued, {skipped} skipped, {already} already downloaded"
+        except Exception:
+            text = f"Batch: {queued} queued, {skipped} skipped, {already} already downloaded"
+        show_toast(text)
+        config.needs_redraw = True
+
+    threading.Thread(target=_run, daemon=True, name="batch-download").start()
+    config.needs_redraw = True
 
 def _delegate_download_to_manager(url: str, platform: str, game_name: str, display_name: str | None = None):
     """Délègue un téléchargement au manager RGSX via HTTP (en arrière-plan)."""

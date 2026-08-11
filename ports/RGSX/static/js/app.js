@@ -1276,6 +1276,8 @@
                 statusDiv.textContent = statusParts.join(' • ');
             }
 
+            updateDownloadAllLabel(visibleCount);
+
             return visibleCount;
         }
 
@@ -1468,6 +1470,7 @@
                 let html = `
                     <button class="back-btn" onclick="goBackToPlatforms()">← ${backText}</button>
                     <h2>${platform} ${gameCountText}</h2>
+                    <button class="download-all-btn" id="download-all-btn" onclick="downloadAllFiltered()" title="${t('web_download_all')}" style="display:inline-block; margin: 4px 0 8px 0; padding: 6px 14px; background: #2f8f46; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 0.95em;">⬇️ ${t('web_download_all')} <span id="download-all-count">(${data.count ?? 0})</span></button>
                     <div class="search-box">
                         <input type="text" id="game-search" placeholder="🔍 ${searchPlaceholder}"
                                oninput="applyAllFilters()">
@@ -1559,6 +1562,7 @@
                 
                 // Appliquer le tri par défaut (A-Z)
                 sortGames(currentGameSort);
+                updateDownloadAllLabel();
                 
             } catch (error) {
                 let backText = t('web_back');
@@ -1575,6 +1579,66 @@
             currentPlatform = null;
             window.history.pushState({ tab: 'platforms' }, '', '/');
             loadPlatforms();
+        }
+        
+        // Faz 9 — "Tümünü İndir": o an ekranda görünen (filtrelenmiş) setin isimlerini topla
+        function getVisibleGameNames() {
+            const names = [];
+            document.querySelectorAll('.game-item').forEach(item => {
+                if (item.style.display !== 'none') {
+                    const nameEl = item.querySelector('.game-name');
+                    if (nameEl && nameEl.textContent) names.push(nameEl.textContent);
+                }
+            });
+            return names;
+        }
+        
+        function updateDownloadAllLabel(visibleCount) {
+            const btn = document.getElementById('download-all-btn');
+            const counter = document.getElementById('download-all-count');
+            if (!btn || !counter) return;
+            const count = typeof visibleCount === 'number' ? visibleCount : getVisibleGameNames().length;
+            counter.textContent = `(${count})`;
+            btn.style.display = count > 0 ? 'inline-block' : 'none';
+        }
+        
+        // Faz 9 — filtrelenmiş listeyi toplu kuyruğa al
+        async function downloadAllFiltered() {
+            const names = getVisibleGameNames();
+            if (names.length === 0) {
+                showToast(t('web_download_all_empty'), 'error', 3000);
+                return;
+            }
+            if (!confirm(t('web_download_all_confirm').replace('{0}', names.length))) {
+                return;
+            }
+            const btn = document.getElementById('download-all-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ ' + t('web_download_all') + '...'; }
+            try {
+                const response = await fetch('/api/download/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ platform: currentPlatform, game_names: names })
+                });
+                const data = await response.json();
+                if (data && data.success) {
+                    const msg = t('web_batch_result')
+                        .replace('{0}', data.queued ?? 0)
+                        .replace('{1}', data.skipped ?? 0)
+                        .replace('{2}', data.already_downloaded ?? 0);
+                    showToast(msg, 'success', 4500);
+                } else {
+                    throw new Error((data && data.error) || t('web_error_unknown'));
+                }
+            } catch (error) {
+                showToast('Erreur: ' + error.message, 'error', 5000);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '⬇️ ' + t('web_download_all') + ' <span id="download-all-count"></span>';
+                    updateDownloadAllLabel();
+                }
+            }
         }
         
         // Télécharger un jeu

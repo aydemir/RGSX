@@ -163,6 +163,10 @@ active_download_count = 0
 # Limite de téléchargements simultanés (chargée depuis rgsx_settings au démarrage, défaut 5)
 max_simultaneous_downloads = 5
 
+# Faz 9 — Toplu indirme: queue'yu tüketen download_queue_worker çalışıyor mu?
+# Manager sürecinde True; standalone web'de False (legacy thread zinciri devreye girer).
+queue_worker_running = False
+
 # Faz 8 — retry: geçici hatalarda (rate limit / 5xx / timeout) yeniden deneme politikası
 # (download_state.retry_backoff_seconds ile: 5s, 10s, 20s, ... max 300s)
 DOWNLOAD_MAX_RETRIES = 3
@@ -484,6 +488,7 @@ current_game = 0  # Index du jeu actuellement sélectionné
 menu_state = "loading"  # État actuel de l'interface menu
 scroll_offset = 0  # Offset de défilement pour la liste des jeux
 visible_games = 15  # Nombre de jeux visibles en même temps par défaut
+download_all_focus = False  # Faz 9: filtre aktifken ilk satır "Tümünü İndir" odakta mı?
 
 # Options d'affichage
 accessibility_mode = False  # Mode accessibilité pour les polices agrandies

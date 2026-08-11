@@ -219,6 +219,18 @@ class ManagerHandler(RGSXHandler):
             self._handle_download_worker()
             return
 
+        if path == "/api/download/batch":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                post_data = self.rfile.read(content_length)
+                data = json.loads(post_data.decode("utf-8")) if content_length > 0 else {}
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, status=400)
+                return
+            # Faz 9: queue-worker tek tüketicidir → sadece kuyruğa bas (kick yok).
+            self._api_download_batch(data)
+            return
+
         if path == "/api/cancel":
             self._handle_cancel_worker()
             return
@@ -979,6 +991,7 @@ def main():
     logger.info(f"[MANAGER] http://localhost:{args.port}")
     logger.info("=" * 60)
 
+    config.queue_worker_running = True  # Faz 9: batch endpoint'i standalone kick'ini atlar
     threading.Thread(target=download_queue_worker, daemon=True, name="queue-worker").start()
     threading.Thread(target=_broadcaster_loop, daemon=True, name="sse-broadcaster").start()
     _start_watchdog(args.port)

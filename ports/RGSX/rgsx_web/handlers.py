@@ -208,6 +208,10 @@ class RGSXHandler(UIMixin, GamesMixin, DownloadMixin, SettingsMixin, BaseHTTPReq
             if path == '/api/download':
                 self._api_download(data)
 
+            # Route: Toplu indirme (Faz 9) — filtrelenmiş listeyi kuyruğa al
+            elif path == '/api/download/batch':
+                self._api_download_batch(data)
+
             # Route: Annuler un téléchargement
             elif path == '/api/cancel':
                 self._api_cancel(data)

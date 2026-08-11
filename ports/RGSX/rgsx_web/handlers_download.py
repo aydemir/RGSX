@@ -498,6 +498,151 @@ class DownloadMixin:
                 'is_1fichier': is_1fichier
             })
 
+    def _api_download_batch(self, data):
+        """Faz 9 — Filtrelenmiş listenin tek seferde kuyruğa alınması.
+
+        Her item mevcut QUEUED → DOWNLOADING akışına girer; slot yönetimini
+        download_queue_worker (veya legacy thread zinciri) yapar. Yeni state
+        machine gerekmez — Faz 8'in FAILED_TRANSIENT/RETRY_SCHEDULED ayrımına
+        dayanır.
+
+        İstenen davranış (ROADMAP Faz 9):
+          - Zaten indirilmiş oyunlar zorunlu atlanmaz (kullanıcı hide_downloaded
+            filtresiyle dışarıda bırakır); yalnızca sayaç döndürülür.
+          - Aynı URL kuyrukta/in-batch ise tekrar eklenmez (dublikasyon önlemi).
+        """
+        import datetime as _dt
+
+        platform = data.get('platform')
+        game_names = data.get('game_names') or []
+        if not platform:
+            self._send_json({
+                'success': False,
+                'error': 'Paramètre manquant: platform requis',
+            }, status=400)
+            return
+        if not isinstance(game_names, list) or not game_names:
+            self._send_json({
+                'success': False,
+                'error': 'Paramètre manquant: game_names requis (liste non vide)',
+            }, status=400)
+            return
+
+        games, _, _ = get_cached_games(platform)
+        by_name = {}
+        for g in games:
+            by_name.setdefault(g.name, g)
+            by_name.setdefault(g.name.lower(), g)
+            if g.display_name:
+                by_name.setdefault(g.display_name, g)
+
+        from utils import check_extension_before_download
+        from history import is_game_downloaded
+
+        # Kuyrukta hâlihazırda bekleyen url'ler: batch içinde ve mevcut
+        # kuyrukla dublikasyonu önlemek için.
+        queued_urls = {q.get('url') for q in getattr(config, 'download_queue', [])}
+        seen_urls = set(queued_urls)
+
+        results = {
+            'queued': 0,
+            'skipped': 0,
+            'already_downloaded': 0,
+            'errors': [],
+        }
+        base_ts = int(time.time() * 1000)
+        now_str = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        queued_message = get_translation('download_queued')
+
+        for i, raw_name in enumerate(game_names):
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                results['skipped'] += 1
+                continue
+            game = by_name.get(raw_name) or by_name.get(raw_name.strip().lower())
+            if game is None:
+                results['errors'].append(f"{raw_name}: jeu introuvable")
+                results['skipped'] += 1
+                continue
+
+            url = game.url
+            if not url:
+                results['errors'].append(f"{game.name}: URL manquante")
+                results['skipped'] += 1
+                continue
+            if url in seen_urls:
+                results['errors'].append(f"{game.name}: déjà dans la queue")
+                results['skipped'] += 1
+                continue
+
+            check_result = check_extension_before_download(url, platform, game.name)
+            if not check_result:
+                results['errors'].append(f"{game.name}: extension non supportée")
+                results['skipped'] += 1
+                continue
+
+            is_zip_non_supported = bool(check_result[3]) if len(check_result) > 3 else False
+            task_id = f"batch_{base_ts}_{i}"
+
+            config.download_queue.append({
+                'url': url,
+                'platform': platform,
+                'game_name': game.name,
+                'is_zip_non_supported': is_zip_non_supported,
+                'is_1fichier': '1fichier.com' in url,
+                'task_id': task_id,
+                'status': 'Queued',
+                'batch': True,
+            })
+            config.history.append({
+                'platform': platform,
+                'game_name': game.name,
+                'display_name': get_clean_display_name(game.name, platform),
+                'status': 'Queued',
+                'url': url,
+                'progress': 0,
+                'message': queued_message,
+                'timestamp': now_str,
+                'downloaded_size': 0,
+                'total_size': 0,
+                'task_id': task_id,
+            })
+
+            if platform and is_game_downloaded(platform, game.name):
+                results['already_downloaded'] += 1
+            results['queued'] += 1
+            seen_urls.add(url)
+
+        if results['queued']:
+            try:
+                save_history(config.history)
+            except Exception as e:
+                logger.warning(f"[BATCH] save_history échec: {e}")
+            self._kick_batch_if_no_worker()
+
+        logger.info(
+            f"[BATCH] {platform}: {results['queued']} kuyruğa alındı, "
+            f"{results['skipped']} atlandı, {len(config.download_queue)} toplam kuyruk"
+        )
+        self._send_json({'success': True, 'platform': platform, **results})
+
+    def _kick_batch_if_no_worker(self):
+        """download_queue_worker yoksa (standalone web) legacy thread zincirini başlatır.
+
+        Manager sürecinde queue-worker tek tüketicidir; bu durumda asla dokunulmaz
+        — aksi halde hem worker hem thread zinciri queue'dan pop ederek çift
+        tüketim yaratır.
+        """
+        if getattr(config, 'queue_worker_running', False):
+            return
+        max_dl = getattr(config, 'max_simultaneous_downloads', 5)
+        active = getattr(config, 'active_download_count', 0)
+        free = max_dl - active
+        for _ in range(max(0, free)):
+            if not config.download_queue:
+                break
+            item = config.download_queue.pop(0)
+            threading.Thread(target=lambda i=item: self._process_queued_download(i), daemon=True).start()
+
     def _api_cancel(self, data):
         url = data.get('url')
 
