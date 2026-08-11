@@ -1,0 +1,20 @@
+[package]
+name = "manager-bin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Ana binary: core/http/windows/bridge'i bağlar"
+
+[dependencies]
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+manager-core.workspace = true
+manager-http.workspace = true
+manager-bridge.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+manager-windows = { path = "../manager-windows" }

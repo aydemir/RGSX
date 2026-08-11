@@ -1,0 +1,9 @@
+[package]
+name = "manager-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Platform-bağımsız state machine: enum + match, contract tipleri"
+
+[dependencies]
+serde.workspace = true

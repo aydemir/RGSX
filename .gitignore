@@ -28,6 +28,9 @@ data/
 docker-compose.test.yml
 config/
 pyrightconfig.json
+
+# Rust workspace
+manager-rs/target/
 ports/RGSX/languages/__pycache__/
 ports/RGSX/display/__pycache__/
 ports/RGSX/utils/__pycache__/
