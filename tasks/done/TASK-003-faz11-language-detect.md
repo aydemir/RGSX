@@ -2,7 +2,7 @@
 
 - **id:** TASK-003
 - **title:** Faz 11 — İlk Açılışta Sistem Dili Otomatik Algılama
-- **status:** in-progress
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-11
 - **tags:** language, i18n, rgsx-settings, tvui, rgsx-web
@@ -93,6 +93,14 @@ Batocera dışı + Termux/RetroBat env mirası için ayrı test; mevcut suite ba
 ---
 
 ## İlerleme
+
+- [x] Implementasyon (kod + 24 test) — `tests/test_language.py`; suite 761 passed / 11 pre-existing
+- [x] Kopya kurulum canlı doğrulama: legacy `tr` → `language_mode=manual` migrasyonu (algılama çağrılmadı),
+      yeni kurulum → gerçek Windows deteksiyonu `tr`/`auto` (notify yok), `ru` unsupported → key yok + tek
+      seferlik fallback bildirimi. Windows İngilizce tam-ad locale eşlemesi eklendi
+      (`Turkish_Turkey` → `tr`) — gerçek sistemde `'turkish'` dönmesi üzerine keşfedildi.
+- [x] Commit `4b3ec4e` + push `aydemir/custom` (`986d60d..4b3ec4e`)
+- [x] Görev done'a taşındı
 
 - 2026-08-11 — Roadmap'ten tasks/ yapısına taşındı (todo; tasarım tamam, uygulama yok —
   `detect_batocera_language` + `initialize_language` dışında kod karşılığı bulunmuyor).
