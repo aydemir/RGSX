@@ -1,3 +1,5 @@
+> Görevler tasks/ klasörüne taşındı, bkz. tasks/todo, tasks/in-progress, tasks/gap. Bu dosya artık sadece tarihsel referans.
+
 # RGSX Fork — Download Manager Yol Haritası (Revize)
 
 Önceki `ROADMAP.md` (Faz 1-7) tamamlandı; bu belge **fork'a özgü** yeni dönem yol
