@@ -1,5 +1,13 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## librqbit Embedded Engine — Faz 10b (2026.08.12)
+
+`manager-torrent::LibrqbitEngine` (librqbit 8.1.1) in-process embedded torrent motoru
+`TorrentBackend` sözleşmesini uygular; `manager-bin` `RGSX_TORRENT_ENGINE=librqbit` ile etkinleşir.
+Aarch64 Linux'ta uçtan uca doğrulandı (`/api/download` → gerçek `.torrent` indi → `Download_OK`).
+**Opt-in**: varsayılan hâlâ Python bridge (qBittorrent WebUI/port-fallback/şifre migration korunur).
+ERTELENMİŞ KARAR: Windows'ta derlendiği doğrulanınca varsayılan yapılacak.
+
 ## Rust Manager Köprüsü — Faz 10 (2026.08.12)
 
 `manager-rs/` workspace'i büyüyor: TASK-002a/002b/002c kapsamında Rust manager binary
