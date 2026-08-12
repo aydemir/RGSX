@@ -61,6 +61,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/qbittorrent/change-password", post(api::change_password))
         .route("/api/qbittorrent/start", post(api::qb_start))
         .route("/api/qbittorrent/password-status", get(api::qb_password_status))
+        .route("/api/qbittorrent/regenerate-password", post(api::qb_regenerate_password))
         .route("/api/events", get(sse::events))
         .fallback(api::fallback)
         .with_state(app)

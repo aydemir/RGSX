@@ -230,6 +230,15 @@ impl Bridge {
         Ok((ok, msg))
     }
 
+    /// `regenerate_qbittorrent_password` → `(ok, password)` (yeni rastgele şifre).
+    pub async fn regenerate_qbittorrent_password(&self) -> Result<(bool, String), BridgeError> {
+        let v = self.call("regenerate_qbittorrent_password", json!({})).await?;
+        let arr = v.as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+        let ok = arr.first().and_then(Value::as_bool).unwrap_or(false);
+        let pw = arr.get(1).and_then(Value::as_str).unwrap_or_default().to_string();
+        Ok((ok, pw))
+    }
+
     /// `get_app_paths` → tray menüsü için indirme/log klasör yolları.
     pub async fn get_app_paths(&self) -> Result<(String, String), BridgeError> {
         let v = self.call("get_app_paths", json!({})).await?;
@@ -319,6 +328,15 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
         let ok = arr.first().and_then(Value::as_bool).unwrap_or(false);
         let msg = arr.get(1).and_then(Value::as_str).unwrap_or_default().to_string();
         Ok((ok, msg))
+    }
+
+    /// `regenerate_qbittorrent_password` → `(ok, password)` (yeni rastgele şifre).
+    async fn regenerate_qbittorrent_password(&self) -> Result<(bool, String), BridgeError> {
+        let v = self.call("regenerate_qbittorrent_password", json!({})).await?;
+        let arr = v.as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+        let ok = arr.first().and_then(Value::as_bool).unwrap_or(false);
+        let pw = arr.get(1).and_then(Value::as_str).unwrap_or_default().to_string();
+        Ok((ok, pw))
     }
 
     /// `get_app_paths` → tray menüsü için indirme/log klasör yolları.

@@ -55,7 +55,7 @@
 | `/api/pause` | `pause` | 🔗 proxy | `rgsx_manager.py::pause_all_downloads` | test_rgsx_manager (**TASK-002k-4 proxy'lendi**) |
 | `/api/resume` | `resume` | 🔗 proxy | `rgsx_manager.py::resume_all_downloads` | test_rgsx_manager (**TASK-002k-4 proxy'lendi**) |
 | `/api/qbittorrent/change-password` | `change_password` | 🔗 bridge | `bridge_call("change_webui_password")` → `TorrentBackend` | test_password_migration (**TASK-002k-5 bridge'e bağlı**) |
-| `/api/qbittorrent/regenerate-password` | — | ⚠️ yok | `rgsx_manager.py` → `qbittorrent_backend.regenerate_qbittorrent_password` | test_password_migration |
+| `/api/qbittorrent/regenerate-password` | `qb_regenerate_password` | 🔗 bridge | `bridge_call("regenerate_qbittorrent_password")` → `TorrentBackend` | test_password_migration (**TASK-002k-5-gap kapatıldı**) |
 | `/api/qbittorrent/start` | `qb_start` | 🔗 bridge | `bridge_call("ensure_running"/"get_webui_url")` → `TorrentBackend` | test_qbittorrent_*.py (**TASK-002k-5 bridge'e bağlı**) |
 | `/api/qbittorrent/password-status` | `qb_password_status` | 🔗 bridge | `bridge_call("get_password_status")` → `TorrentBackend` | test_password_migration (**TASK-002k-5 bridge'e bağlı**) |
 

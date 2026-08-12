@@ -1219,3 +1219,12 @@ async fn test_qb_password_status_placeholder() {
     assert_eq!(body["using_default"], json!(true));
     assert_eq!(body["webui_url"], json!(""));
 }
+
+#[tokio::test]
+async fn test_qb_regenerate_password_bridge_unavailable() {
+    // Köprü yok → 500 + birebir Python sözleşmesi (success:false, message).
+    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/regenerate-password", Value::Null).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["success"], json!(false));
+    assert!(body["message"].as_str().is_some());
+}

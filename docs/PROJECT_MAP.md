@@ -60,6 +60,9 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   `TorrentBackend` trait'ine bağlı (Python bridge veya librqbit); köprü yoksa placeholder.
   (Kod önceden hazırdı; 4 yeni kontrat testi eklendi — 98/98 yeşil.)
 - `regenerate-password` route'u Rust'te henüz YOK (Python tarafında kalan gap).
+  **KAPATILDI:** `qb_regenerate_password` handler + `regenerate_qbittorrent_password` bridge
+  metodu eklendi; köprü yoksa 500 `{"success":false,"message":"bridge_unavailable"}`
+  (Python sözleşmesi korunur). 99/99 test yeşil.
 
 ### Rust WebUI + SSE cutover (Faz 10c/3/6, TASK-002k-6) — flag-gated
 - Rust `index`/`static_file` (static_root + hydration + traversal koruması) ve SSE `/api/events`

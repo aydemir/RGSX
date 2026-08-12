@@ -718,6 +718,36 @@ pub async fn qb_password_status(State(state): State<AppState>) -> Response {
     }
 }
 
+/// POST `/api/qbittorrent/regenerate-password` — bridge'e `regenerate_qbittorrent_password`.
+/// Python 1:1: `(ok, password)` → `{"success": True, "password": pw}`; başarısız 500.
+pub async fn qb_regenerate_password(State(state): State<AppState>) -> Response {
+    match state
+        .bridge_call("regenerate_qbittorrent_password", json!({}))
+        .await
+    {
+        Ok(v) => {
+            let arr = v.as_array();
+            let ok_flag = arr.and_then(|a| a.first()).and_then(Value::as_bool).unwrap_or(false);
+            let pw = arr
+                .and_then(|a| a.get(1))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if !ok_flag {
+                return cors_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    json!({ "success": false, "message": "password_regeneration_failed" }),
+                );
+            }
+            ok(contract::ok(json!({ "password": pw })))
+        }
+        Err(_) => cors_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "success": false, "message": "bridge_unavailable" }),
+        ),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Fallback
 // ---------------------------------------------------------------------------
