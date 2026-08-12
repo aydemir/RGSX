@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-6
 - **title:** `index`/`static_file` gerçek asset root + SSE tek elden; Python sunucuyu flag-gated kapat
-- **status:** todo
+- **status:** in-progress
 - **priority:** P2
 - **created:** 2026-08-12
 - **environment:** both
@@ -32,3 +32,11 @@ modda da çalışır.
 ## İlerleme
 
 - 2026-08-12 — Tanımlandı (planın parçası).
+- 2026-08-12 — Rust çekirdeği ZATEN hazır: `index`/`static_file` (`static_root` + hydration +
+  path-traversal koruması) ve SSE `/api/events` (`sse.rs`, native) mevcut ve contract testli
+  (98/98). `manager-bin/main.rs`: `RGSX_WEBUI_DIR` env ile statik kök override eklendi (additive).
+- **BLOKE — port topolojisi kararı gerekli**: 002k-2/3/4 catalog'ı Python'a PROXY'liyor
+  (Python HTTP 5000 gerekir), ama bu görev "Python HTTP sunucusunu kapat" diyor. İkisi çelişir:
+  Python HTTP kapanırsa `RGSX_PYTHON_MANAGER_URL` proxy'si connection-refused olur. Kullanıcıya
+  soruldu (Rust 5000 mı / 5010 mı, catalog Python'a nasıl ulaşır). Yanıt gelene dek Python skip
+  değişikliği GERİ ALINDI (bozuk olurdu).

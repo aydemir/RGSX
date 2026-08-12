@@ -1034,6 +1034,8 @@ def main():
     except Exception as e:
         logger.debug(f"[MANAGER] rust daemon başlatma atlandı: {e}")
 
+    # Faz 10c/3/6 cutover: RGSX_RUST_WEBUI modu, TASK-002k-6 kapsamında
+    # PORT TOPOLOJİSİ netleşince tamamlanacak (bkz. kullanıcı kararı).
     try:
         rgsx_web.run_server(host=args.host, port=args.port, handler_class=ManagerHandler,
                             kill_conflicts=False)

@@ -198,11 +198,18 @@ async fn main() {
 
     let mut data = StateData::empty();
     data.manager_state = ManagerState::Running;
-    // WebUI statik kökü: bridge script'inin yanındaki `static/` klasörü.
-    let static_root = std::path::Path::new(&script)
-        .parent()
-        .map(|p| p.join("static"))
-        .filter(|p| p.is_dir());
+    // WebUI statik kökü: `RGSX_WEBUI_DIR` set ise onu kullan, yoksa bridge
+    // script'inin yanındaki `static/` klasörü (varsa).
+    let static_root = std::env::var("RGSX_WEBUI_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::path::Path::new(&script)
+                .parent()
+                .map(|p| p.join("static"))
+                .filter(|p| p.is_dir())
+        });
     // Faz 10c/3/2: katalog proxy kaynağı — `RGSX_PYTHON_MANAGER_URL` set ise Python'a
     // bağlanır (devre dışıysa handler'lar placeholder'a düşer, geriye uyumlu).
     let catalog = std::env::var("RGSX_PYTHON_MANAGER_URL")
