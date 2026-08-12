@@ -319,6 +319,7 @@ dependencies = [
  "axum",
  "futures-util",
  "http-body-util",
+ "manager-bridge",
  "manager-core",
  "serde",
  "serde_json",

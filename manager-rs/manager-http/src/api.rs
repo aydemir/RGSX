@@ -373,33 +373,78 @@ pub async fn resume() -> Response {
     ok(contract::ok(json!({ "resumed": 0 })))
 }
 
-/// POST `/api/qbittorrent/change-password` — placeholder politikası:
-/// uzunluk < 8 → 400 `password_too_short` (Python test sözleşmesi).
-pub async fn change_password(Json(body): Json<serde_json::Map<String, Value>>) -> Response {
+/// POST `/api/qbittorrent/change-password` — bridge'e `change_webui_password`.
+/// Python 1:1: `(ok, message)` → başarı `{"message":"ok"}`, başarısız 400.
+pub async fn change_password(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Map<String, Value>>,
+) -> Response {
     let Some(pw) = body.get("password").and_then(Value::as_str) else {
         return json_err("Paramètre manquant: password requis", StatusCode::BAD_REQUEST);
     };
-    if pw.len() < 8 {
-        return cors_response(
-            StatusCode::BAD_REQUEST,
-            json!({ "success": false, "message": "password_too_short" }),
-        );
+    match state
+        .bridge_call("change_webui_password", json!({ "password": pw }))
+        .await
+    {
+        Ok(v) => {
+            let ok_flag = v.get(0).and_then(Value::as_bool).unwrap_or(false);
+            let msg = v.get(1).and_then(Value::as_str).unwrap_or_default();
+            if !ok_flag {
+                return cors_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({ "success": false, "message": msg }),
+                );
+            }
+            ok(contract::ok(json!({ "message": "ok" })))
+        }
+        Err(_) => {
+            // bridge yok/çökük — placeholder politikası (contract: uzunluk < 8 → 400).
+            if pw.len() < 8 {
+                return cors_response(
+                    StatusCode::BAD_REQUEST,
+                    json!({ "success": false, "message": "password_too_short" }),
+                );
+            }
+            ok(contract::ok(json!({ "message": "ok" })))
+        }
     }
-    ok(contract::ok(json!({ "message": "ok" })))
 }
 
-/// POST `/api/qbittorrent/start` — placeholder: ready:false.
-pub async fn qb_start() -> Response {
-    ok(contract::ok(json!({ "ready": false, "url": "" })))
+/// POST `/api/qbittorrent/start` — bridge `ensure_running` + `get_webui_url`.
+/// Python 1:1: `{"success": ready, "ready": ready, "url": url}`.
+pub async fn qb_start(State(state): State<AppState>) -> Response {
+    let ready = state
+        .bridge_call("ensure_running", json!({ "timeout": 30.0 }))
+        .await
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    let url = state
+        .bridge_call("get_webui_url", json!({}))
+        .await
+        .map(|u| u.as_str().unwrap_or_default().to_string())
+        .unwrap_or_default();
+    ok(contract::ok(json!({ "success": ready, "ready": ready, "url": url })))
 }
 
-/// GET `/api/qbittorrent/password-status` — placeholder.
-pub async fn qb_password_status() -> Response {
-    ok(contract::ok(json!({
-        "available": false,
-        "using_default": true,
-        "webui_url": "",
-    })))
+/// GET `/api/qbittorrent/password-status` — bridge `get_password_status`.
+/// Python 1:1: `{"success": True, **status}`.
+pub async fn qb_password_status(State(state): State<AppState>) -> Response {
+    match state.bridge_call("get_password_status", json!({})).await {
+        Ok(v) => {
+            let mut body = json!({ "success": true });
+            if let Some(obj) = v.as_object() {
+                for (k, val) in obj {
+                    body[k] = val.clone();
+                }
+            }
+            ok(body)
+        }
+        Err(_) => ok(contract::ok(json!({
+            "available": false,
+            "using_default": true,
+            "webui_url": "",
+        }))),
+    }
 }
 
 // ---------------------------------------------------------------------------

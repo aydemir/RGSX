@@ -1746,3 +1746,104 @@ def shutdown() -> None:
             except Exception:
                 pass
     _qbt_process = None
+
+
+# ---------------------------------------------------------------------------
+# Bridge (--bridge): stdio satır-delimited JSON-RPC ucu
+# ---------------------------------------------------------------------------
+#
+# Rust manager-bin bu modülü subprocess başlatır (Faz 10 "ara mimari"):
+# `python qbittorrent_backend.py --bridge`
+#
+# Protokol: her satır bir JSON-RPC 2.0 mesajı (tek satır, tek nesne).
+#   istemci -> sunucu: {"jsonrpc":"2.0","id":1,"method":"ping","params":{}}
+#   sunucu -> istemci: {"jsonrpc":"2.0","id":1,"result":"pong"}
+#   hata:              {"jsonrpc":"2.0","id":1,"error":{"code":..,"message":".."}}
+#   bildirim (id yok): {"jsonrpc":"2.0","method":"shutdown"} -> süreç çıkar
+#
+# Metodlar (toplam 8): ping, status, is_available, ensure_running, get_webui_url,
+# get_password_status, change_webui_password, shutdown.
+
+_BRIDGE_METHODS = {
+    "ping": lambda params: "pong",
+    "status": lambda params: {
+        "state": get_backend_state(),
+        "available": is_available(),
+    },
+    "is_available": lambda params: is_available(),
+    "ensure_running": lambda params: ensure_running(
+        timeout=float((params or {}).get("timeout", _STARTUP_TIMEOUT_SECONDS))
+    ),
+    "get_webui_url": lambda params: get_webui_url(),
+    "get_password_status": lambda params: get_password_status(),
+    "change_webui_password": lambda params: change_webui_password(
+        str((params or {}).get("password", ""))
+    ),
+    "shutdown": lambda params: shutdown(),
+}
+
+
+def _bridge_reply(message: dict) -> str | None:
+    """Tek JSON-RPC mesajını işler; yanıt satırı döner (bildirimse None)."""
+    method = message.get("method")
+    if not isinstance(method, str):
+        return _bridge_error(message.get("id"), -32600, "Invalid Request: method gerekli")
+    params = message.get("params") or {}
+    handler = _BRIDGE_METHODS.get(method)
+    if handler is None:
+        return _bridge_error(message.get("id"), -32601, f"Method not found: {method}")
+    try:
+        result = handler(params)
+    except Exception as exc:  # noqa: BLE001 — RPC sınırına kadar zararsız
+        logger.warning("qbittorrent_backend bridge: %s hata: %s", method, exc)
+        return _bridge_error(message.get("id"), -32000, str(exc))
+    if "id" not in message:
+        return None
+    return json.dumps(
+        {"jsonrpc": "2.0", "id": message["id"], "result": result},
+        ensure_ascii=False,
+    )
+
+
+def _bridge_error(request_id, code: int, message: str) -> str:
+    if request_id is not None and not isinstance(request_id, (int, str)):
+        request_id = None
+    return json.dumps(
+        {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}},
+        ensure_ascii=False,
+    )
+
+
+def _bridge_serve_loop() -> None:
+    """stdin'den satır okur, stdout'a satır yazar; `shutdown` bildiriminde çıkar."""
+    import sys
+
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+            if not isinstance(message, dict):
+                raise ValueError("JSON nesnesi gerekli")
+        except Exception:
+            sys.stdout.write(_bridge_error(None, -32700, "Parse error") + "\n")
+            sys.stdout.flush()
+            continue
+
+        reply = _bridge_reply(message)
+        if reply is not None:
+            sys.stdout.write(reply + "\n")
+            sys.stdout.flush()
+
+        if message.get("method") == "shutdown" and "id" not in message:
+            break
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--bridge" in sys.argv:
+        _bridge_serve_loop()
+    else:
+        print("qbittorrent_backend bridge: python qbittorrent_backend.py --bridge")

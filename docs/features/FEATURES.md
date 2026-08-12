@@ -1,5 +1,22 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Rust Manager Köprüsü — Faz 10 (2026.08.12)
+
+`manager-rs/` workspace'i büyüyor: TASK-002a/002b/002c kapsamında Rust manager binary
+Python arka planıyla **stdio JSON-RPC köprüsü** üzerinden konuşuyor.
+
+- **TASK-002a** — `manager-core` state machine (`ManagerState` geçişleri + `HysteresisMonitor`/
+  `RestartLimiter` watchdog saf mantığı). 30 unit test.
+- **TASK-002b** — `manager-http`: axum `/api/*` + SSE sözleşmesi, Python `test_api_contract.py`
+  ile 1:1 (CORS `*`, `{"success":...}` zarfı, SSE `event:`/`data:` formatı). 52 contract testi.
+- **TASK-002c** — Python `qbittorrent_backend.py --bridge` stdio JSON-RPC ucu +
+  `manager-bridge` crate (subprocess spawn, satır-delimited JSON-RPC client, typed wrappers:
+  ping/status/ensure_running/get_webui_url/get_password_status/change_webui_password/shutdown) +
+  `manager-bin` entegrasyonu (bridge `AppState`'e; qbittorrent `/api/*` handler'ları gerçek
+  Python işine proxy). `RGSX_HEADLESS=1` spawn (import print'leri JSON'u kirletmesin).
+- Doğrulama: 88 Rust testi yeşil, `cargo check --workspace` temiz, canlı smoke OK
+  (health / password-status / qbittorrent start / change-password). Python suite baseline değişmez.
+
 ## Yeni Kod Yapısı — Paket Refaktörü Özeti (2026.08.11)
 
 > Aşağıdaki daha eski girişler monolit dönemini (tek `.py` dosyaları) belgeler. **Güncel

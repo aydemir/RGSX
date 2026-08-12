@@ -478,8 +478,10 @@ async fn test_resume() {
 async fn test_qbittorrent_start() {
     let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/start", json!({})).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["success"], json!(true));
+    // Python 1:1: `success` == `ready` (bridge yoksa ikisi de false).
     assert!(body["ready"].is_boolean());
+    assert_eq!(body["success"], body["ready"]);
+    assert!(body["url"].is_string());
 }
 
 #[tokio::test]

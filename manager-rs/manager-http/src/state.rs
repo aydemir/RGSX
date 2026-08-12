@@ -7,6 +7,7 @@
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 
+use manager_bridge::Bridge;
 use manager_core::state::ManagerState;
 
 use crate::sse;
@@ -85,6 +86,9 @@ impl StateData {
 pub struct AppState {
     pub data: Arc<RwLock<StateData>>,
     pub events: Sender<String>,
+    /// Python `qbittorrent_backend.py --bridge` subprocess'i (spawn edilmediyse None).
+    /// manager-bin başlatır; handler'lar buradan `call` yapar.
+    pub bridge: Option<Arc<Bridge>>,
 }
 
 impl AppState {
@@ -93,6 +97,7 @@ impl AppState {
         Self {
             data: Arc::new(RwLock::new(StateData::empty())),
             events: sse::channel(),
+            bridge: None,
         }
     }
 
@@ -101,6 +106,18 @@ impl AppState {
         Self {
             data: Arc::new(RwLock::new(data)),
             events,
+            bridge: None,
+        }
+    }
+
+    /// bridge yoksa sahte `BridgeError::Spawn` döndürür (handler'lar placeholder
+    /// davranışına düşer). Varsa `call`'ı proxy eder.
+    pub async fn bridge_call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, manager_bridge::BridgeError> {
+        match &self.bridge {
+            Some(b) => b.call(method, params).await,
+            None => Err(manager_bridge::BridgeError::Spawn(
+                "bridge başlatılmadı".to_string(),
+            )),
         }
     }
 

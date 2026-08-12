@@ -63,7 +63,7 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 
 - **TASK-002a** — manager-core state machine tasarımı → ✅ done (`tasks/done/`)
 - **TASK-002b** — HTTP köprüsü: axum `/api/*` + SSE sözleşmesi → ✅ done (`tasks/done/`)
-- **TASK-002c** — qbittorrent_backend subprocess köprüsü + manager-bin entegrasyonu → `tasks/todo/TASK-002c-bridge-bin-integration.md`
+- **TASK-002c** — qbittorrent_backend subprocess köprüsü + manager-bin entegrasyonu → ✅ done (`tasks/done/`)
 - **TASK-002d** — manager-windows: tray / autostart / firewall → `tasks/todo/TASK-002d-manager-windows.md`
 - **Faz 10b (`librqbit`)** — Linux/ARM test imkânı şart olduğundan **askıda**
 
@@ -76,3 +76,5 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 - 2026-08-12 — TASK-002a done; alt-görevler b/c/d tanımlandı; Windows kapsamına alındı
   (tray/autostart/firewall dahil; yalnızca 10b askıda). Sıradaki: TASK-002b.
 - 2026-08-12 — TASK-002b done: contract (52 Rust testi) + canlı smoke OK. Sıradaki: TASK-002c.
+- 2026-08-12 — TASK-002c done: stdio JSON-RPC bridge (Python `--bridge` ucu + manager-bridge crate +
+  AppState/manager-bin entegrasyonu), 88 Rust testi + canlı smoke OK. Sıradaki: TASK-002d.
