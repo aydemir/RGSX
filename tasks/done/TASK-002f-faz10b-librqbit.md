@@ -2,7 +2,7 @@
 
 - **id:** TASK-002f
 - **title:** embedded torrent: qbittorrent_backend yerine librqbit engine (askıdaki iş)
-- **status:** in-progress
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-12
 - **environment:** both
