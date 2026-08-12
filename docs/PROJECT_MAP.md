@@ -61,6 +61,14 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   (Kod önceden hazırdı; 4 yeni kontrat testi eklendi — 98/98 yeşil.)
 - `regenerate-password` route'u Rust'te henüz YOK (Python tarafında kalan gap).
 
+### Rust WebUI + SSE cutover (Faz 10c/3/6, TASK-002k-6) — flag-gated
+- Rust `index`/`static_file` (static_root + hydration + traversal koruması) ve SSE `/api/events`
+  (`sse.rs`, native) zaten mevcut ve testli. `RGSX_WEBUI_DIR` ile statik kök override.
+- `RGSX_RUST_WEBUI=1` → Rust 5000 (TV UI portu değişmez), Python SADECE `RGSX_CATALOG_PORT`
+  (vars. 5001) üzerinden catalog servis eder; Rust oraya proxy'ler. `manager-bin/main.rs`
+  port default 5000, `rgsx_manager.py` run_server portu 5001 + env'ler set edilir.
+- Varsayılan (flag kapalı) davranış birebir korunur; launcher değişikliği gerekmedi.
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`

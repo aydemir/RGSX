@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-6
 - **title:** `index`/`static_file` gerçek asset root + SSE tek elden; Python sunucuyu flag-gated kapat
-- **status:** in-progress
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-12
 - **environment:** both
@@ -34,9 +34,12 @@ modda da çalışır.
 - 2026-08-12 — Tanımlandı (planın parçası).
 - 2026-08-12 — Rust çekirdeği ZATEN hazır: `index`/`static_file` (`static_root` + hydration +
   path-traversal koruması) ve SSE `/api/events` (`sse.rs`, native) mevcut ve contract testli
-  (98/98). `manager-bin/main.rs`: `RGSX_WEBUI_DIR` env ile statik kök override eklendi (additive).
-- **BLOKE — port topolojisi kararı gerekli**: 002k-2/3/4 catalog'ı Python'a PROXY'liyor
-  (Python HTTP 5000 gerekir), ama bu görev "Python HTTP sunucusunu kapat" diyor. İkisi çelişir:
-  Python HTTP kapanırsa `RGSX_PYTHON_MANAGER_URL` proxy'si connection-refused olur. Kullanıcıya
-  soruldu (Rust 5000 mı / 5010 mı, catalog Python'a nasıl ulaşır). Yanıt gelene dek Python skip
-  değişikliği GERİ ALINDI (bozuk olurdu).
+  (98/98). `manager-bin/main.rs`: `RGSX_WEBUI_DIR` env ile statik kök override.
+- **Port topolojisi kararı (kullanıcı): Rust 5000, Python catalog 5001.**
+  - `manager-bin/main.rs`: `RGSX_RUST_WEBUI=1` → varsayılan port 5000 (5010 yerine).
+  - `rgsx_manager.py`: `RGSX_RUST_WEBUI=1` → Python SADECE `RGSX_CATALOG_PORT` (vars. 5001)
+    üzerinden catalog servis eder (`run_server` portu 5001); `RGSX_PYTHON_MANAGER_URL`=:5001,
+    `RGSX_MANAGER_BIN_PORT`=5000, `RGSX_RUST_DAEMON`=1 set edilir (Rust 5000'i alır).
+  - TV UI portu (5000) DEĞİŞMEZ → kesintisiz cutover; launcher değişikliği GEREKMİYOR
+    (ensure_manager 5000'de Rust'ı sağlık kontrol eder).
+  - Varsayılan (flag kapalı) davranış birebir korunur.

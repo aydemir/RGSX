@@ -187,10 +187,14 @@ async fn main() {
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
         .init();
 
-    let port: u16 = std::env::var("RGSX_MANAGER_BIN_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(5010);
+    let port: u16 = {
+        let rust_webui = std::env::var("RGSX_RUST_WEBUI").map(|v| v == "1").unwrap_or(false);
+        let default = if rust_webui { 5000 } else { 5010 };
+        std::env::var("RGSX_MANAGER_BIN_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default)
+    };
 
     // Python bridge'i başlat (script yoksa None — placeholder davranışı).
     let script = resolve_script();

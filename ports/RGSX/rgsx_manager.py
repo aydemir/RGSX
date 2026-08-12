@@ -1022,6 +1022,20 @@ def main():
     if not args.no_tray:
         _setup_tray(icon_path, args.port, no_tray=False)
 
+    # Faz 10c/3/6 cutover (RGSX_RUST_WEBUI=1): Rust `manager-bin` 5000'i devralır
+    # (TV UI portu değişmez — kesintisiz cutover); Python SADECE catalog'u dahili
+    # `RGSX_CATALOG_PORT` (vars. 5001) üzerinden servis eder, Rust oraya proxy'ler.
+    # Bu modda Rust daemon zorunlu (WebUI sunucusu odur) → RGSX_RUST_DAEMON=1.
+    rust_webui = os.environ.get("RGSX_RUST_WEBUI") == "1"
+    http_port = args.port
+    if rust_webui:
+        catalog_port = int(os.environ.get("RGSX_CATALOG_PORT", "5001"))
+        os.environ.setdefault("RGSX_PYTHON_MANAGER_URL", f"http://127.0.0.1:{catalog_port}")
+        os.environ.setdefault("RGSX_MANAGER_BIN_PORT", "5000")
+        os.environ.setdefault("RGSX_RUST_DAEMON", "1")
+        http_port = catalog_port
+        logger.info(f"RGSX_RUST_WEBUI=1 → Python catalog port {catalog_port}, Rust 5000 (UI)")
+
     # Faz 10c/1: Rust `manager-bin` sidecar torrent daemon (RGSX_RUST_DAEMON flag'iyle;
     # binary yoksa Python-only devam eder). Sağlık süpervizörü ayrı thread'te izler.
     try:
@@ -1034,10 +1048,8 @@ def main():
     except Exception as e:
         logger.debug(f"[MANAGER] rust daemon başlatma atlandı: {e}")
 
-    # Faz 10c/3/6 cutover: RGSX_RUST_WEBUI modu, TASK-002k-6 kapsamında
-    # PORT TOPOLOJİSİ netleşince tamamlanacak (bkz. kullanıcı kararı).
     try:
-        rgsx_web.run_server(host=args.host, port=args.port, handler_class=ManagerHandler,
+        rgsx_web.run_server(host=args.host, port=http_port, handler_class=ManagerHandler,
                             kill_conflicts=False)
     finally:
         STOP.set()
