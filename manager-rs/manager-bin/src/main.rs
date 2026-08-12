@@ -36,6 +36,7 @@ fn resolve_script() -> String {
 }
 
 /// İkon dosyasını bridge script'inin yanından bulur (`assets/images/favicon_rgsx.ico`).
+#[cfg(windows)]
 fn resolve_icon(script: &str) -> Option<String> {
     let p = std::path::Path::new(script)
         .parent()?
@@ -86,22 +87,34 @@ fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray
 }
 
 #[cfg(not(windows))]
-fn setup_windows(_port: u16, _script: &str) -> Option<()> {
+fn setup_windows(_port: u16, _script: &str) -> Option<manager_windows_tray::Tray> {
     None
 }
 
 #[cfg(windows)]
 use manager_windows::tray as manager_windows_tray;
 #[cfg(not(windows))]
+#[allow(dead_code)]
 mod manager_windows_tray {
-    pub struct Tray;
-    #[derive(Debug)]
+    use std::sync::mpsc::TryRecvError;
+
+    /// Windows dışı stub — tray yok; arayüz Windows karşılığıyla aynı kalır.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum TrayAction {
         OpenUi,
         OpenSettings,
         OpenDownloads,
         OpenLogs,
         Quit,
+    }
+
+    pub struct Tray;
+
+    impl Tray {
+        /// Asla eylem üretmez; tray olmadığı için kanal hep "koptu" sayılır.
+        pub fn try_action(&self) -> Result<TrayAction, TryRecvError> {
+            Err(TryRecvError::Disconnected)
+        }
     }
 }
 
