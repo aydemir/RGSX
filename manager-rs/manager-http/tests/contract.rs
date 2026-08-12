@@ -585,3 +585,154 @@ async fn debug_alt_syntax() {
         .unwrap();
     println!("OLD-SYNTAX STATUS: {:?}", res2.status());
 }
+
+// ---------------------------------------------------------------------------
+// GET /static/* — WebUI statik servisi (TASK-002e)
+// ---------------------------------------------------------------------------
+
+/// Geçici static_root kurar; test sonunda silinir. Dizin adı test adına göre
+/// benzersizdir (paralel testler çakışmasın).
+fn cleanup_static_root(dir: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn app_with_static(root: &std::path::Path) -> Router {
+    let mut state = AppState::empty();
+    state.static_root = Some(root.to_path_buf());
+    router(state)
+}
+
+fn static_app(unique: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("rgsx_static_{unique}"));
+    std::fs::create_dir_all(dir.join("js")).unwrap();
+    std::fs::create_dir_all(dir.join("css")).unwrap();
+    std::fs::write(dir.join("index.html"), "<h1>RGSX</h1>__CSS_VERSION__ __JS_VERSION__").unwrap();
+    std::fs::write(dir.join("js/app.js"), "console.log('rgsx');").unwrap();
+    std::fs::write(dir.join("css/app.css"), "body{}").unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn test_static_index_served() {
+    let dir = static_app("index_served");
+    let (status, headers, text) = call_get(app_with_static(&dir), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(has_header(&headers, "content-type").unwrap().contains("text/html"));
+    let text = match text {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    assert!(text.contains("RGSX"));
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_index_hydrates_versions() {
+    let dir = static_app("index_hydrates");
+    let (status, _, text) = call_get(app_with_static(&dir), "/").await;
+    assert_eq!(status, StatusCode::OK);
+    let text = match text {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    assert!(!text.contains("__CSS_VERSION__"), "css placeholder hydrate edilmeli");
+    assert!(!text.contains("__JS_VERSION__"), "js placeholder hydrate edilmeli");
+    assert!(!text.contains("{version}"), "version placeholder hydrate edilmeli");
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_js_served() {
+    let dir = static_app("js_served");
+    let (status, headers, text) = call_get(app_with_static(&dir), "/static/js/app.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(has_header(&headers, "content-type").unwrap().contains("javascript"));
+    let text = match text {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    assert!(text.contains("console.log('rgsx')"));
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_css_served() {
+    let dir = static_app("css_served");
+    let (status, headers, _) = call_get(app_with_static(&dir), "/static/css/app.css").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(has_header(&headers, "content-type").unwrap().contains("text/css"));
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_missing_returns_404() {
+    let dir = static_app("missing_404");
+    let (status, _, _) = call_get(app_with_static(&dir), "/static/js/nope.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_path_traversal_blocked() {
+    let dir = static_app("traversal");
+    let (status, _, _) = call_get(app_with_static(&dir), "/static/../secret.txt").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_disabled_when_root_none() {
+    let (status, _, _) = call_get(empty_app(), "/static/js/app.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// SPA fallback — /settings, /downloads, /history, /platform/* → index (Python handlers.py:111)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_spa_settings_serves_index() {
+    let dir = static_app("spa_settings");
+    let (status, _, text) = call_get(app_with_static(&dir), "/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    let text = match text {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    assert!(text.contains("RGSX"), "index içermeli");
+    assert!(!text.contains("__CSS_VERSION__"), "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)");
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_spa_downloads_serves_index() {
+    let dir = static_app("spa_downloads");
+    let (status, _, text) = call_get(app_with_static(&dir), "/downloads").await;
+    assert_eq!(status, StatusCode::OK);
+    let text = match text {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    assert!(text.contains("RGSX"));
+    assert!(!text.contains("__CSS_VERSION__"), "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)");
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_spa_platform_serves_index() {
+    let dir = static_app("spa_platform");
+    let (status, _, text) = call_get(app_with_static(&dir), "/platform/NES").await;
+    assert_eq!(status, StatusCode::OK);
+    let text = match text {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    assert!(!text.contains("__CSS_VERSION__"), "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)");
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_spa_unknown_non_api_404() {
+    let (status, _, _) = call_get(empty_app(), "/bogus/whatever").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

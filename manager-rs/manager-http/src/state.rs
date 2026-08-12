@@ -89,6 +89,8 @@ pub struct AppState {
     /// Python `qbittorrent_backend.py --bridge` subprocess'i (spawn edilmediyse None).
     /// manager-bin başlatır; handler'lar buradan `call` yapar.
     pub bridge: Option<Arc<Bridge>>,
+    /// WebUI statik dosyalarının kökü (`.../static/`). None ise statik servis kapalı.
+    pub static_root: Option<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -98,6 +100,7 @@ impl AppState {
             data: Arc::new(RwLock::new(StateData::empty())),
             events: sse::channel(),
             bridge: None,
+            static_root: None,
         }
     }
 
@@ -107,6 +110,7 @@ impl AppState {
             data: Arc::new(RwLock::new(data)),
             events,
             bridge: None,
+            static_root: None,
         }
     }
 

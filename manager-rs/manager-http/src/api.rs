@@ -51,11 +51,86 @@ fn web_task_id() -> String {
 // GET
 // ---------------------------------------------------------------------------
 
-/// GET `/` — index sayfası (minimal placeholder, `text/html`, içinde "RGSX").
-pub async fn index() -> Response {
+/// GET `/` — index sayfası (`static_root/index.html`; yoksa minimal placeholder).
+pub async fn index(State(state): State<AppState>) -> Response {
+    let root = match &state.static_root {
+        Some(r) => r.clone(),
+        None => return placeholder_index(),
+    };
+    let index_path = root.join("index.html");
+    if let Ok(html) = std::fs::read_to_string(&index_path) {
+        let html = hydrate_index(&html, &root);
+        return (StatusCode::OK, [("Content-Type", "text/html; charset=utf-8")], html).into_response();
+    }
+    placeholder_index()
+}
+
+/// Placeholder index — static_root yoksa veya index.html okunamazsa.
+fn placeholder_index() -> Response {
     let html = "<!doctype html><html><head><title>RGSX Manager</title></head>\
                 <body><h1>RGSX Manager</h1></body></html>";
     (StatusCode::OK, [("Content-Type", "text/html; charset=utf-8")], html).into_response()
+}
+
+/// `__CSS_VERSION__`/`__JS_VERSION__` placeholder'larını asset mtime'larına,
+/// `{version}`'u uygulama versiyonuna göre doldurur.
+fn hydrate_index(html: &str, static_root: &std::path::Path) -> String {
+    let css_version = asset_version(static_root, "css/app.css");
+    let js_version = asset_version(static_root, "js/app.js");
+    let version = std::env::var("RGSX_MANAGER_VERSION").unwrap_or_else(|_| "0.1.0".to_string());
+    html.replace("__CSS_VERSION__", &css_version)
+        .replace("__JS_VERSION__", &js_version)
+        .replace("{version}", &version)
+}
+
+/// Asset dosyasının mtime'unu saniye olarak döndürür; hata durumunda boş string.
+fn asset_version(static_root: &std::path::Path, relative: &str) -> String {
+    std::fs::metadata(static_root.join(relative))
+        .and_then(|m| m.modified())
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0).to_string())
+        .unwrap_or_default()
+}
+
+/// GET `/static/{*path}` — WebUI statik dosyaları (path traversal korumalı).
+pub async fn static_file(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response {
+    let root = match &state.static_root {
+        Some(r) => r.clone(),
+        None => return (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
+    };
+    // Normalleştir; `..` geçişini reddet.
+    let safe: std::path::PathBuf = path.split('/').collect();
+    if safe.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
+        return (StatusCode::NOT_FOUND, "404 Not Found").into_response();
+    }
+    let file_path = root.join(&safe);
+    match std::fs::read(&file_path) {
+        Ok(bytes) => {
+            let mime = mime_for(&file_path);
+            (StatusCode::OK, [("Content-Type", mime), ("Cache-Control", "public, max-age=3600")], bytes).into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
+    }
+}
+
+/// Basit MIME tespiti (genişletilebilir).
+fn mime_for(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "js" => "application/javascript",
+        "css" => "text/css",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "woff" | "woff2" => "font/woff2",
+        "html" => "text/html; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 /// GET `/api/platforms` — boş liste placeholder.
@@ -451,8 +526,12 @@ pub async fn qb_password_status(State(state): State<AppState>) -> Response {
 // Fallback
 // ---------------------------------------------------------------------------
 
-/// 404 — `/api/*`'de JSON `Route non trouvée` + path; diğer yollarda düz 404.
-pub async fn fallback(req: axum::extract::Request) -> Response {
+/// 404 — `/api/*`'de JSON `Route non trouvée` + path; SPA yollarında index;
+/// diğer yollarda düz 404.
+///
+/// Not: `Request` body tüketen tail extractor olduğundan son parametre olmalı;
+/// `State` `FromRequestParts` olduğundan önce gelir.
+pub async fn fallback(State(state): State<AppState>, req: axum::extract::Request) -> Response {
     let path = req.uri().path().to_string();
     if path.starts_with("/api/") {
         let mut body = contract::error("Route non trouvée");
@@ -461,7 +540,23 @@ pub async fn fallback(req: axum::extract::Request) -> Response {
         }
         return cors_response(StatusCode::NOT_FOUND, body);
     }
+    // SPA yolları — Python handlers.py:111 (`/settings`, `/downloads`, ...)
+    // tarayıcıda index'ten tab'ı açar; index servis edilir.
+    if is_spa_path(&path) {
+        return index(State(state)).await;
+    }
     (StatusCode::NOT_FOUND, [("Access-Control-Allow-Origin", "*")], "404 Not Found").into_response()
+}
+
+/// Tepsi/Açma navigasyon yolları (`/`, `/index.html`, `/platform/`, `/settings`,
+/// `/downloads`, `/history`).
+fn is_spa_path(path: &str) -> bool {
+    path == "/"
+        || path == "/index.html"
+        || path == "/downloads"
+        || path == "/history"
+        || path == "/settings"
+        || path.starts_with("/platform/")
 }
 
 // ---------------------------------------------------------------------------

@@ -153,10 +153,16 @@ async fn main() {
 
     let mut data = StateData::empty();
     data.manager_state = ManagerState::Running;
+    // WebUI statik kökü: bridge script'inin yanındaki `static/` klasörü.
+    let static_root = std::path::Path::new(&script)
+        .parent()
+        .map(|p| p.join("static"))
+        .filter(|p| p.is_dir());
     let app = router(AppState {
         data: Arc::new(std::sync::RwLock::new(data)),
         events: manager_http::sse::channel(),
         bridge: bridge.clone(),
+        static_root,
     });
 
     let addr = format!("127.0.0.1:{port}");

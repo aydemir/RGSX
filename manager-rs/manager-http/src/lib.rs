@@ -29,6 +29,7 @@ pub use state::{AppState, StateData};
 pub fn router(app: AppState) -> Router {
     Router::new()
         .route("/", get(api::index))
+        .route("/static/*path", get(api::static_file))
         .route("/api/platforms", get(api::platforms))
         .route("/api/search", get(api::search))
         .route("/api/translations", get(api::translations))
