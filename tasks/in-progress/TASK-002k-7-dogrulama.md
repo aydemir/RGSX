@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-7
 - **title:** 364 Python + 68 Rust contract + canlı smoke; Python Web UI köprüsünü kapat
-- **status:** todo
+- **status:** in-progress
 - **priority:** P2
 - **created:** 2026-08-12
 - **environment:** both
@@ -29,3 +29,12 @@ Tüm 10c/3 alt görevleri sonrası bütünleşik doğrulama:
 ## İlerleme
 
 - 2026-08-12 — Tanımlandı (planın parçası).
+- 2026-08-12 — Sandbox doğrulaması:
+  - `cargo test -p manager-http`: **98/98 yeşil** (68 orijinal + 30 yeni proxy/bridge/static/qb testi).
+    Not: görev "68 Rust" diyor; proxy/bridge eklemeleriyle 98'e çıktı. workspace geneli henüz
+    çalıştırılmadı (sadece manager-http).
+  - Python `rgsx_manager.py` `py_compile` ile derlendi (OK). `RGSX_RUST_WEBUI` değişikliği
+    **flag kapalı varsayılanı birebir korur** (sadece flag=1 dalı yeni davranış).
+  - **KISIT:** bu sandbox'ta `pip`/`pytest` YOK → 364 Python testi + canlı TV smoke ÇALIŞTIRILAMADI.
+    Gerçek ortamda: `python -m pytest tests/ --noconftest` (pygame ortamı) ve `RGSX_RUST_WEBUI=1`
+    ile canlı smoke gerekli. Bu adımlar kullanıcı tarafından yapılmalı.
