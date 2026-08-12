@@ -2,7 +2,7 @@
 
 - **id:** TASK-002
 - **title:** Faz 10 — Rust kısmi refaktör (EN SON)
-- **status:** in-progress
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-11
 - **tags:** rust, rgsx-manager, qbittorrent-backend, network, concurrency
@@ -64,8 +64,9 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 - **TASK-002a** — manager-core state machine tasarımı → ✅ done (`tasks/done/`)
 - **TASK-002b** — HTTP köprüsü: axum `/api/*` + SSE sözleşmesi → ✅ done (`tasks/done/`)
 - **TASK-002c** — qbittorrent_backend subprocess köprüsü + manager-bin entegrasyonu → ✅ done (`tasks/done/`)
-- **TASK-002d** — manager-windows: tray / autostart / firewall → `tasks/todo/TASK-002d-manager-windows.md`
-- **Faz 10b (`librqbit`)** — Linux/ARM test imkânı şart olduğundan **askıda**
+- **TASK-002d** — manager-windows: tray / autostart / firewall → ✅ done (`tasks/done/`)
+- **Faz 10b (`librqbit`)** — 🔶 **ASKIDA:** Linux/ARM test imkânı şart olduğundan başlanmadı; Windows kapsamı
+  (Faz 10a) tamamlandığı için parent görev done. Linux/ARM ortamı hazır olduğunda devam edilir.
 
 ## İlerleme
 
@@ -76,5 +77,6 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 - 2026-08-12 — TASK-002a done; alt-görevler b/c/d tanımlandı; Windows kapsamına alındı
   (tray/autostart/firewall dahil; yalnızca 10b askıda). Sıradaki: TASK-002b.
 - 2026-08-12 — TASK-002b done: contract (52 Rust testi) + canlı smoke OK. Sıradaki: TASK-002c.
-- 2026-08-12 — TASK-002c done: stdio JSON-RPC bridge (Python `--bridge` ucu + manager-bridge crate +
-  AppState/manager-bin entegrasyonu), 88 Rust testi + canlı smoke OK. Sıradaki: TASK-002d.
+- 2026-08-12 — TASK-002d done: tray/autostart/firewall + get_app_paths bridge + 0xC0000139 fix;
+  canlı smoke + 96 Rust testi OK. **TASK-002 (Windows/Faz 10a) tamamlandı → done.** Faz 10b
+  (librqbit) Linux/ARM test imkânı olmadan askıda.
