@@ -28,6 +28,9 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 - Varsayılan → `Bridge::spawn("qbittorrent_backend.py --bridge")` stdio JSON-RPC subprocess.
 - Handler'lar `AppState.bridge: Option<Arc<dyn TorrentBackend>>` üzerinden统一 çalışır; contract değişmez.
 
+### Rust sidecar süpervizörü (Faz 10c/1, TASK-002i)
+- `ports/RGSX/rust_daemon.py` (YENİ): `rgsx_manager.main()` içinden flag-gated başlatılır. `RGSX_RUST_DAEMON=1` (ve binary mevcutsa) `manager-bin`'i subprocess sidecar olarak spawn eder (port 5010 / `RGSX_MANAGER_BIN_PORT`, engine default `librqbit`); ayrı bir daemon thread'te `/api/health` poll edip `watchdog.RestartLimiter` ile sınırlı yeniden başlatır. Durum `config.rust_daemon_available` üzerinden yansıtılır (flag kapalıysa veya binary yoksa no-op → Python-only akış korunur). Test: `tests/test_rust_daemon.py`.
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`

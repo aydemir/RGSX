@@ -34,6 +34,10 @@ app_version = "2.6.5.7"
 manager_port = 5000
 manager_available = False
 
+# Rust `manager-bin` sidecar torrent daemon (Faz 10c/1): True si sağlıklı çalışıyor.
+# `rust_daemon.py` tarafından güncellenir; Web UI/monitor buradan okuyabilir.
+rust_daemon_available = False
+
 # Nombre de jours avant de proposer la mise à jour de la liste des jeux
 GAMELIST_UPDATE_DAYS = 1
 

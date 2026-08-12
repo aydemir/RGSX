@@ -1022,6 +1022,18 @@ def main():
     if not args.no_tray:
         _setup_tray(icon_path, args.port, no_tray=False)
 
+    # Faz 10c/1: Rust `manager-bin` sidecar torrent daemon (RGSX_RUST_DAEMON flag'iyle;
+    # binary yoksa Python-only devam eder). Sağlık süpervizörü ayrı thread'te izler.
+    try:
+        from rust_daemon import start as _rust_start, supervisor as _rust_supervisor
+        _rust_proc = _rust_start()
+        if _rust_proc is not None:
+            threading.Thread(
+                target=_rust_supervisor, daemon=True, name="rust-daemon-supervisor"
+            ).start()
+    except Exception as e:
+        logger.debug(f"[MANAGER] rust daemon başlatma atlandı: {e}")
+
     try:
         rgsx_web.run_server(host=args.host, port=args.port, handler_class=ManagerHandler,
                             kill_conflicts=False)
