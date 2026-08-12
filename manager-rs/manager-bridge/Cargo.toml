@@ -9,4 +9,5 @@ description = "Python subprocess JSON-RPC/HTTP köprüsü (qbittorrent_backend.p
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
 manager-core.workspace = true

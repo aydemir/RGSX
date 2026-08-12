@@ -91,6 +91,7 @@ impl Default for BridgeConfig {
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, BridgeError>>>>>;
 
 /// Python bridge süreci üzerinde JSON-RPC istemcisi.
+#[derive(Debug)]
 pub struct Bridge {
     child: Child,
     stdin: Option<AsyncMutex<ChildStdin>>,
@@ -254,6 +255,97 @@ impl Bridge {
 pub struct BridgeStatus {
     pub state: String,
     pub available: bool,
+}
+
+/// JSON-RPC köprü sözleşmesi — hem Python subprocess (`Bridge`) hem in-process
+/// engine'ler (librqbit) aynı metod adlarını ve yanıt şekillerini sunar.
+///
+/// Faz 10b: manager-http, Python `Bridge`'e sabit bağlı değildir; `TorrentBackend`
+/// import eden her engine (ör. librqbit) aynı sözleşmeyi bağlar.
+#[async_trait::async_trait]
+pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
+    /// Motorun adı (`python`/`librqbit`) — log/health için.
+    fn engine(&self) -> &'static str;
+
+    /// JSON-RPC metod çağrısı — Python bridge ile aynı isim uzayı.
+    async fn call(&self, method: &str, params: Value) -> Result<Value, BridgeError>;
+
+    /// Kapanış bildirimi (best effort).
+    async fn shutdown(&self);
+
+    /// `ping` → `"pong"`.
+    async fn ping(&self) -> Result<String, BridgeError> {
+        let v = self.call("ping", json!({})).await?;
+        Ok(v.as_str().unwrap_or_default().to_string())
+    }
+
+    /// `status` → `{state, available}`.
+    async fn status(&self) -> Result<BridgeStatus, BridgeError> {
+        let v = self.call("status", json!({})).await?;
+        Ok(BridgeStatus {
+            state: v.get("state").and_then(Value::as_str).unwrap_or_default().to_string(),
+            available: v.get("available").and_then(Value::as_bool).unwrap_or(false),
+        })
+    }
+
+    /// `is_available` → fallback qBittorrent kullanılabilir mi.
+    async fn is_available(&self) -> Result<bool, BridgeError> {
+        Ok(self.call("is_available", json!({})).await?.as_bool().unwrap_or(false))
+    }
+
+    /// `ensure_running` → torrent engine başlatıldı.
+    async fn ensure_running(&self, timeout_secs: f64) -> Result<bool, BridgeError> {
+        Ok(self
+            .call("ensure_running", json!({ "timeout": timeout_secs }))
+            .await?
+            .as_bool()
+            .unwrap_or(false))
+    }
+
+    /// `get_webui_url` → WebUI adresi (librqbit'te boş/kendi adresi).
+    async fn get_webui_url(&self) -> Result<String, BridgeError> {
+        Ok(self.call("get_webui_url", json!({})).await?.as_str().unwrap_or_default().to_string())
+    }
+
+    /// `get_password_status` → şifre durumu dict'i.
+    async fn get_password_status(&self) -> Result<Value, BridgeError> {
+        self.call("get_password_status", json!({})).await
+    }
+
+    /// `change_webui_password` → `(ok, message)`.
+    async fn change_webui_password(&self, password: &str) -> Result<(bool, String), BridgeError> {
+        let v = self.call("change_webui_password", json!({ "password": password })).await?;
+        let arr = v.as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+        let ok = arr.first().and_then(Value::as_bool).unwrap_or(false);
+        let msg = arr.get(1).and_then(Value::as_str).unwrap_or_default().to_string();
+        Ok((ok, msg))
+    }
+
+    /// `get_app_paths` → tray menüsü için indirme/log klasör yolları.
+    async fn get_app_paths(&self) -> Result<(String, String), BridgeError> {
+        let v = self.call("get_app_paths", json!({})).await?;
+        let downloads = v.get("downloads_folder").and_then(Value::as_str).unwrap_or_default().to_string();
+        let logs = v.get("logs_folder").and_then(Value::as_str).unwrap_or_default().to_string();
+        Ok((downloads, logs))
+    }
+}
+
+/// `Bridge`'i `TorrentBackend` sözleşmesine bağlar (Python subprocess motoru).
+///
+/// Mevcut davranış birebir korunur — yalnızca trait arayüzü üzerinden genelleşir.
+#[async_trait::async_trait]
+impl TorrentBackend for Bridge {
+    fn engine(&self) -> &'static str {
+        "python"
+    }
+
+    async fn call(&self, method: &str, params: Value) -> Result<Value, BridgeError> {
+        Bridge::call(self, method, params).await
+    }
+
+    async fn shutdown(&self) {
+        Bridge::shutdown(self).await;
+    }
 }
 
 async fn drain_stderr(stderr: tokio::process::ChildStderr) {

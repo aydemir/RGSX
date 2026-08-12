@@ -7,7 +7,7 @@
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 
-use manager_bridge::Bridge;
+use manager_bridge::TorrentBackend;
 use manager_core::state::ManagerState;
 
 use crate::sse;
@@ -86,9 +86,9 @@ impl StateData {
 pub struct AppState {
     pub data: Arc<RwLock<StateData>>,
     pub events: Sender<String>,
-    /// Python `qbittorrent_backend.py --bridge` subprocess'i (spawn edilmediyse None).
-    /// manager-bin başlatır; handler'lar buradan `call` yapar.
-    pub bridge: Option<Arc<Bridge>>,
+    /// Torrent backend (Python bridge subprocess veya in-process librqbit engine).
+    /// manager-bin kurar; handler'lar buradan `call` yapar.
+    pub bridge: Option<Arc<dyn TorrentBackend>>,
     /// WebUI statik dosyalarının kökü (`.../static/`). None ise statik servis kapalı.
     pub static_root: Option<std::path::PathBuf>,
 }

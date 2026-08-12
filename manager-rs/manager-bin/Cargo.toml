@@ -15,6 +15,7 @@ tracing-subscriber.workspace = true
 manager-core.workspace = true
 manager-http.workspace = true
 manager-bridge.workspace = true
+manager-torrent.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 manager-windows = { path = "../manager-windows" }

@@ -31,6 +31,8 @@ pyrightconfig.json
 
 # Rust workspace
 manager-rs/target/
+rust-target-sandbox/
+manager-rs/C:/
 ports/RGSX/languages/__pycache__/
 ports/RGSX/display/__pycache__/
 ports/RGSX/utils/__pycache__/

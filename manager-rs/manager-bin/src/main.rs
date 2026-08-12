@@ -1,8 +1,12 @@
-//! manager-bin: Python bridge + HTTP+SSE sunucusu.
+//! manager-bin: torrent engine + HTTP+SSE sunucusu.
 //!
-//! TASK-002c: `qbittorrent_backend.py --bridge` subprocess'i başlatılır ve
-//! `AppState`'e verilir; qbittorrent `/api/*` handler'ları gerçek Python
-//! mantığına proxy eder.
+//! TASK-002c (Python engine): `qbittorrent_backend.py --bridge` subprocess'i
+//! başlatılır ve `AppState`'e verilir; qbittorrent `/api/*` handler'ları gerçek
+//! Python mantığına proxy eder.
+//!
+//! TASK-002f (librqbit engine): `RGSX_TORRENT_ENGINE=librqbit` set edilirse
+//! Python bridge yerine in-process librqbit engine (`manager-torrent`) kurulur;
+//! aynı `TorrentBackend` sözleşmesini konuştuğundan handler'lar değişmez.
 //!
 //! TASK-002d: Windows'ta (`cfg(windows)`) sistem tepsisi + auto-start (registry)
 //! + firewall kuralı bağlanır.
@@ -16,7 +20,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use manager_bridge::{Bridge, BridgeConfig};
+use manager_bridge::{Bridge, BridgeConfig, TorrentBackend};
 use manager_core::state::ManagerState;
 use manager_http::{router, AppState, StateData};
 
@@ -33,6 +37,45 @@ fn resolve_script() -> String {
         .canonicalize()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| fallback.to_string_lossy().to_string())
+}
+
+/// Torrent engine'ini `RGSX_TORRENT_ENGINE` env'ine göre kurar.
+///
+/// - `librqbit` → in-process librqbit (manager-torrent). TASK-002f.
+/// - diğeri/boş → Python bridge subprocess (varsayılan; script yoksa None).
+fn resolve_engine() -> Option<Arc<dyn TorrentBackend>> {
+    match std::env::var("RGSX_TORRENT_ENGINE").as_deref() {
+        Ok("librqbit") => {
+            let downloads = std::env::var("RGSX_DOWNLOADS_FOLDER")
+                .unwrap_or_else(|_| std::env::temp_dir().join("rgsx_torrents").to_string_lossy().to_string());
+            let logs = std::env::var("RGSX_LOGS_FOLDER")
+                .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
+            let engine = manager_torrent::LibrqbitEngine::new(
+                std::path::PathBuf::from(&downloads),
+                downloads,
+                logs,
+            );
+            tracing::info!("torrent engine: librqbit (embedded)");
+            Some(Arc::new(engine))
+        }
+        _ => {
+            let script = resolve_script();
+            match Bridge::spawn(BridgeConfig {
+                script: script.clone(),
+                timeout_secs: 90,
+                ..BridgeConfig::default()
+            }) {
+                Ok(b) => {
+                    tracing::info!("torrent engine: python bridge ({script})");
+                    Some(Arc::new(b))
+                }
+                Err(e) => {
+                    tracing::warn!("bridge başlatılamadı ({script}): {e}");
+                    None
+                }
+            }
+        }
+    }
 }
 
 /// İkon dosyasını bridge script'inin yanından bulur (`assets/images/favicon_rgsx.ico`).
@@ -148,21 +191,7 @@ async fn main() {
 
     // Python bridge'i başlat (script yoksa None — placeholder davranışı).
     let script = resolve_script();
-    let bridge = Bridge::spawn(BridgeConfig {
-        script: script.clone(),
-        timeout_secs: 90,
-        ..BridgeConfig::default()
-    });
-    let bridge = match bridge {
-        Ok(b) => {
-            tracing::info!("bridge başlatıldı: {script}");
-            Some(Arc::new(b))
-        }
-        Err(e) => {
-            tracing::warn!("bridge başlatılamadı (placeholder davranışı): {e}");
-            None
-        }
-    };
+    let bridge = resolve_engine();
 
     let mut data = StateData::empty();
     data.manager_state = ManagerState::Running;
@@ -197,7 +226,7 @@ async fn main() {
 async fn run_with_tray(
     tray: manager_windows_tray::Tray,
     port: u16,
-    bridge: Option<Arc<Bridge>>,
+    bridge: Option<Arc<dyn TorrentBackend>>,
     app: axum::Router,
     listener: tokio::net::TcpListener,
 ) {
