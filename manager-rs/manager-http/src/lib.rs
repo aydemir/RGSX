@@ -15,6 +15,7 @@
 //! ```
 
 pub mod api;
+pub mod catalog;
 pub mod sse;
 pub mod state;
 

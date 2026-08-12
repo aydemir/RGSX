@@ -14,6 +14,9 @@ futures-util.workspace = true
 tracing.workspace = true
 manager-core.workspace = true
 manager-bridge.workspace = true
+reqwest.workspace = true
+percent-encoding.workspace = true
+async-trait.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

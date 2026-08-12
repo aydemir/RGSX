@@ -133,30 +133,52 @@ fn mime_for(path: &std::path::Path) -> &'static str {
     }
 }
 
-/// GET `/api/platforms` — boş liste placeholder.
-pub async fn platforms() -> Response {
+/// GET `/api/platforms` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn platforms(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/platforms").await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({ "count": 0, "platforms": [] })))
 }
 
-/// GET `/api/search?q=...` — boş sonuç, search_term yansıtılır.
-pub async fn search(Query(params): Query<std::collections::HashMap<String, String>>) -> Response {
+/// GET `/api/search?q=...` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn search(State(state): State<AppState>, Query(params): Query<std::collections::HashMap<String, String>>) -> Response {
     let term = params.get("q").cloned().unwrap_or_default();
+    if let Some(c) = &state.catalog {
+        let route = format!("/api/search?q={}", percent_encoding::utf8_percent_encode(&term, percent_encoding::NON_ALPHANUMERIC));
+        if let Ok(v) = c.get_json(&route).await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({
         "search_term": term,
         "results": { "platforms": [], "games": [] },
     })))
 }
 
-/// GET `/api/translations` — placeholder: `language` + `translations._language`.
-pub async fn translations() -> Response {
+/// GET `/api/translations` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn translations(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/translations").await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({
         "language": "tr",
         "translations": { "_language": "tr" },
     })))
 }
 
-/// GET `/api/games/{platform}` — boş liste placeholder.
-pub async fn games(AxumPath(platform): AxumPath<String>) -> Response {
+/// GET `/api/games/{platform}` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn games(State(state): State<AppState>, AxumPath(platform): AxumPath<String>) -> Response {
+    if let Some(c) = &state.catalog {
+        let route = format!("/api/games/{}", percent_encoding::utf8_percent_encode(&platform, percent_encoding::NON_ALPHANUMERIC));
+        if let Ok(v) = c.get_json(&route).await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({
         "platform": platform,
         "count": 0,
@@ -228,8 +250,17 @@ pub async fn browse_directories(
     ok(contract::ok(json!({ "current_path": current, "directories": dirs })))
 }
 
-/// GET `/api/image/{platform}` — 404 `image/png` + PNG başlığı (placeholder).
-pub async fn image() -> Response {
+/// GET `/api/image/{platform}` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa 404 placeholder.
+pub async fn image(State(state): State<AppState>, AxumPath(platform): AxumPath<String>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok((bytes, ct)) = c.get_image(&platform).await {
+            return (
+                [("Content-Type", ct), ("Access-Control-Allow-Origin", "*".to_string())],
+                bytes,
+            )
+                .into_response();
+        }
+    }
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
     (
         StatusCode::NOT_FOUND,

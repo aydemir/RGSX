@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-2
 - **title:** `platforms`/`search`/`games`/`image`/`translations` handler'larını Rust'e taşı
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-12
 - **environment:** both
@@ -35,3 +35,9 @@ Her route için `manager-http/tests/contract.rs`'a assertion ekle.
 ## İlerleme
 
 - 2026-08-12 — Tanımlandı (planın parçası).
+- 2026-08-12 — **TAMAMLANDI (proxy stratejisi):** Onaylanan strangler/proxy yaklaşımıyla
+  uygulandı. `manager-http/src/catalog.rs`: `CatalogSource` trait + `PythonCatalog` (reqwest,
+  rustls-tls; `RGSX_PYTHON_MANAGER_URL`). `platforms`/`search`/`games`/`translations`/`image`
+  handler'ları `state.catalog` varsa Python'a proxy'ler, yoksa placeholder (geriye uyumlu).
+  `AppState.catalog` alanı + `main.rs` bağlama eklendi. `cargo test -p manager-http`: 74/74
+  yeşil (6 yeni proxy testi). Native Rust logic portu ileride ayrı alt faz (bkz. FAZ10C3_CONTRACT_MAP.md).

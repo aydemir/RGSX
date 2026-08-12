@@ -19,10 +19,10 @@
 |---|---|---|---|---|
 | `/` | `index` / `placeholder_index` | ⚠️ | `handlers.py::_get_index_html` | test_api_contract (index) |
 | `/static/*path` | `static_file` | ✅ | `handlers.py::_send_static` (DRIFT) | contract static testleri |
-| `/api/platforms` | `platforms` | ⚠️ | `handlers.py::_api_platforms` | test_api_contract |
-| `/api/search` | `search` | ⚠️ | `handlers.py::_api_search` → `controls/search.py::search_games` | test_api_contract |
-| `/api/translations` | `translations` | ⚠️ | `handlers.py::_api_translations` → `language.py` | test_api_contract |
-| `/api/games/:platform` | `games` | ⚠️ | `handlers.py::_api_games` → `rgsx_web/cache.py::get_cached_games` | test_api_contract |
+| `/api/platforms` | `platforms` | 🔗 proxy | `handlers.py::_api_platforms` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
+| `/api/search` | `search` | 🔗 proxy | `handlers.py::_api_search` → `controls/search.py::search_games` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
+| `/api/translations` | `translations` | 🔗 proxy | `handlers.py::_api_translations` → `language.py` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
+| `/api/games/:platform` | `games` | 🔗 proxy | `handlers.py::_api_games` → `rgsx_web/cache.py::get_cached_games` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/progress` | `progress` | ✅ | `handlers.py::_api_progress` | test_api_contract |
 | `/api/game-status` | `game_status` | ⚠️ | `handlers.py::_api_game_status` | test_api_contract |
 | `/api/history` | `history` | ✅ | `handlers.py::_api_history` | test_api_contract |
@@ -30,7 +30,7 @@
 | `/api/settings` | `settings_get` | ⚠️ | `handlers.py::_api_settings_get` → `rgsx_settings.py` | test_api_contract |
 | `/api/system_info` | `system_info` | ⚠️ | `handlers.py::_api_system_info` (DRIFT) / `rgsx_manager.py` system_info | **test_api_contract (birebir eşitlik — KRİTİK)** |
 | `/api/browse-directories` | `browse_directories` | ⚠️ | `handlers.py::_list_directories` | test_api_contract |
-| `/api/image/:platform` | `image` | ⚠️ | `handlers.py::_serve_platform_image` | test_api_contract |
+| `/api/image/:platform` | `image` | 🔗 proxy | `handlers.py::_serve_platform_image` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/favicon` | `favicon` | ⚠️ | `handlers.py::_serve_favicon` | test_api_contract |
 | `/api/update-cache` | `update_cache` | ⚠️ | `handlers.py::_api_update_cache` (DRIFT) | test_api_contract |
 | `/api/health` | `health` | ✅ | `rgsx_manager.py` (RGSXHandler) + `handlers.py` | contract/health |

@@ -36,6 +36,11 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 - Rust tarafı: `manager-http/src/api.rs::download` artık isteğe bağlı `dest_path` kabul eder (geriye uyumlu; yoksa `dest_path_for` ile türetir). `start()` `RGSX_DOWNLOADS_FOLDER`'ı `config.ROMS_FOLDER`'a çeker.
 - Yardımcı: `rust_daemon.download_torrent(...)` + `RustDaemonError`. Test: `tests/test_rust_daemon.py` (delege bayrağı + devir/mirror/fallback/missing-source).
 
+### Rust katalog proxy (Faz 10c/3/2, TASK-002k-2) — strangler/proxy
+- `manager-http/src/catalog.rs`: `CatalogSource` trait + `PythonCatalog` (reqwest/rustls-tls; `RGSX_PYTHON_MANAGER_URL`). `AppState.catalog` alanı eklendi.
+- `platforms`/`search`/`games`/`translations`/`image` handler'ları `state.catalog` varsa Python'a proxy'ler (yanıt birebir iletilir), yoksa mevcut placeholder'a düşer (geriye uyumlu). Native Rust logic portu ileride ayrı alt faz.
+- `cargo test -p manager-http`: 74/74 yeşil (6 yeni proxy testi, `FakeCatalog` ile).
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`

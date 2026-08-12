@@ -501,6 +501,7 @@ fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
         events: manager_http::sse::channel(),
         bridge: Some(bridge),
         static_root: None,
+        catalog: None,
     })
 }
 
@@ -917,4 +918,92 @@ async fn test_spa_platform_serves_index() {
 async fn test_spa_unknown_non_api_404() {
     let (status, _, _) = call_get(empty_app(), "/bogus/whatever").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+// ---------------------------------------------------------------------------
+// Faz 10c/3/2 — katalog proxy (CatalogSource)
+// ---------------------------------------------------------------------------
+
+use manager_http::catalog::{CatalogError, CatalogSource};
+
+struct FakeCatalog;
+
+#[async_trait::async_trait]
+impl CatalogSource for FakeCatalog {
+    async fn get_json(&self, route: &str) -> Result<Value, CatalogError> {
+        Ok(json!({
+            "success": true,
+            "route": route,
+            "platforms": ["NES", "SNES"],
+            "count": 2,
+        }))
+    }
+    async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
+        Ok((format!("IMG:{platform}").into_bytes(), "image/png".to_string()))
+    }
+}
+
+fn app_with_catalog() -> Router {
+    let mut state = AppState::empty();
+    state.catalog = Some(Arc::new(FakeCatalog) as Arc<dyn CatalogSource>);
+    router(state)
+}
+
+#[tokio::test]
+async fn test_platforms_proxied_birebir() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/platforms").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["route"], json!("/api/platforms"));
+    assert_eq!(body["platforms"], json!(["NES", "SNES"]));
+}
+
+#[tokio::test]
+async fn test_search_proxied_birebir() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/search?q=zelda").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["route"], json!("/api/search?q=zelda"));
+}
+
+#[tokio::test]
+async fn test_games_proxied_birebir() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/games/Super%20Nintendo").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/games/Super%20Nintendo"));
+}
+
+#[tokio::test]
+async fn test_translations_proxied_birebir() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/translations").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/translations"));
+}
+
+#[tokio::test]
+async fn test_image_proxied_birebir() {
+    let (status, headers, body) = call_get(app_with_catalog(), "/api/image/NES").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(has_header(&headers, "content-type"), Some("image/png"));
+    let bytes = match body {
+        Value::String(s) => s.into_bytes(),
+        other => other.to_string().into_bytes(),
+    };
+    assert_eq!(bytes, b"IMG:NES");
+}
+
+#[tokio::test]
+async fn test_catalog_placeholder_when_no_source() {
+    // catalog None -> eski placeholder davranışı korunur.
+    let (status, _, body) = call_get(empty_app(), "/api/platforms").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["count"], json!(0));
+    assert_eq!(body["platforms"], json!([]));
+
+    let (status, _, body) = call_get(empty_app(), "/api/search?q=zelda").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["search_term"], json!("zelda"));
+
+    let (status, _, body) = call_get(empty_app(), "/api/games/snes").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["count"], json!(0));
 }

@@ -203,11 +203,19 @@ async fn main() {
         .parent()
         .map(|p| p.join("static"))
         .filter(|p| p.is_dir());
+    // Faz 10c/3/2: katalog proxy kaynağı — `RGSX_PYTHON_MANAGER_URL` set ise Python'a
+    // bağlanır (devre dışıysa handler'lar placeholder'a düşer, geriye uyumlu).
+    let catalog = std::env::var("RGSX_PYTHON_MANAGER_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .map(|base| Arc::new(manager_http::catalog::PythonCatalog::new(base)) as Arc<dyn manager_http::catalog::CatalogSource>);
+
     let app = router(AppState {
         data: Arc::new(std::sync::RwLock::new(data)),
         events: manager_http::sse::channel(),
         bridge: bridge.clone(),
         static_root,
+        catalog,
     });
 
     let addr = format!("127.0.0.1:{port}");

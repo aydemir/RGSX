@@ -23,6 +23,8 @@ futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+percent-encoding = "2"
 manager-core = { path = "manager-core" }
 manager-http = { path = "manager-http" }
 manager-bridge = { path = "manager-bridge" }

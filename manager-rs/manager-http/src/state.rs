@@ -9,6 +9,7 @@ use tokio::sync::broadcast::Sender;
 
 use manager_bridge::TorrentBackend;
 use manager_core::state::ManagerState;
+use crate::catalog::CatalogSource;
 
 use crate::sse;
 use serde_json::json;
@@ -91,6 +92,9 @@ pub struct AppState {
     pub bridge: Option<Arc<dyn TorrentBackend>>,
     /// WebUI statik dosyalarının kökü (`.../static/`). None ise statik servis kapalı.
     pub static_root: Option<std::path::PathBuf>,
+    /// Faz 10c/3/2 — katalog proxy kaynağı (`CatalogSource`). None ise handler'lar
+    /// placeholder'a düşer (geriye uyumlu).
+    pub catalog: Option<Arc<dyn CatalogSource>>,
 }
 
 impl AppState {
@@ -101,6 +105,7 @@ impl AppState {
             events: sse::channel(),
             bridge: None,
             static_root: None,
+            catalog: None,
         }
     }
 
@@ -111,6 +116,7 @@ impl AppState {
             events,
             bridge: None,
             static_root: None,
+            catalog: None,
         }
     }
 
