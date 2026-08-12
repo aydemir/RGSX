@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = tokio::time::timeout(
         Duration::from_secs(900),
-        engine.download_torrent(librqbit::AddTorrent::from_url(TORRENT_URL.to_string()), dest_path.as_ref()),
+        engine.download_torrent(TORRENT_URL, dest_path.as_ref()),
     )
     .await;
 

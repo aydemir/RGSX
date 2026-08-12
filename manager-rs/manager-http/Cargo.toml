@@ -11,9 +11,11 @@ axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
+tracing.workspace = true
 manager-core.workspace = true
 manager-bridge.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+async-trait.workspace = true

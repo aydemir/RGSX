@@ -259,7 +259,15 @@ pub async fn update_cache() -> Response {
 // ---------------------------------------------------------------------------
 
 /// POST `/api/download` — doğrulama sırası Python `_handle_download_worker`
-/// (rgsx_manager.py:337) ile birebir; başarı placeholder queue push.
+/// (rgsx_manager.py:337) ile birebir; başarı `Queued` + arka plan indirme.
+///
+/// Bridge (librqbit engine) varsa url+game_name gerçekten indirmeye başlar:
+/// `downloads_folder` + türetilmiş dosya adıyla `download_torrent` arka plan
+/// task'ında koşar, bitince history/downloaded/progress + SSE sonuçlanır.
+/// Bridge yoksa (pure placeholder) eski davranış korunur — yalnız kuyruklanır.
+///
+/// Not: tüm `.await`'ler `state.write()` kilidinden ÖNCE — write guard sonrası
+/// await handler future'ını Send yapmaz (bkz. change_password deseni).
 pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     let platform = body.get("platform").and_then(Value::as_str);
     let game_index = body.get("game_index");
@@ -273,7 +281,6 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         );
     }
 
-    let game_url;
     if let Some(direct) = direct_url {
         let Some(gname) = game_name else {
             return json_err(
@@ -281,35 +288,81 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                 StatusCode::BAD_REQUEST,
             );
         };
-        game_url = direct.to_string();
+        let platform = platform.unwrap().to_string();
+        let game_url = direct.to_string();
+        let gname = gname.to_string();
         let task_id = web_task_id();
-        let entry = json!({
+
+        // Bridge varsa indirmeyi başlat (arka plan task; yanıt beklemez).
+        // Await'ler kilit öncesi — spawn closure'u `'static` olduğundan değerler klonlanır.
+        if let Some(bridge) = state.bridge.clone() {
+            let downloads = bridge
+                .get_app_paths()
+                .await
+                .map(|(d, _)| d)
+                .unwrap_or_default();
+            let dest_path = dest_path_for(&downloads, &game_url, &gname);
+            let state2 = state.clone();
+            let u = game_url.clone();
+            let n = gname.clone();
+            let p = platform.clone();
+            let t = task_id.clone();
+            tokio::spawn(async move {
+                match bridge.download_torrent(&u, &dest_path).await {
+                    Ok(src) => {
+                        tracing::info!(src = %src.display(), dest = %dest_path.display(), "torrent indirme tamamlandı");
+                        finalize_download_in_state(
+                            &state2, &t, &u, &n, &p, true, src.to_string_lossy().as_ref(),
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        tracing::error!("torrent indirme hatası ({u}): {e}");
+                        finalize_download_in_state(&state2, &t, &u, &n, &p, false, &e.to_string())
+                            .await;
+                    }
+                }
+            });
+        }
+
+        // Kuyruğa `Queued` girişi + history (Python `_handle_download_worker` 1:1).
+        let mut data = state.write();
+        data.progress[&game_url] = json!({ "status": "Downloading", "progress": 0 });
+        data.queue.push(json!({
             "url": game_url,
-            "platform": platform.unwrap(),
+            "platform": platform,
             "game_name": gname,
             "task_id": task_id,
             "status": "Queued",
-        });
-        let mut data = state.write();
-        data.queue.push(entry.clone());
+        }));
+        let queue_position = data.queue.len();
         data.history.push(json!({
             "game_name": gname,
-            "platform": platform.unwrap(),
+            "platform": platform,
             "url": game_url,
             "status": "Queued",
+            "progress": 0,
+            "message": "Ajouté à la file d'attente",
             "timestamp": "",
+            "downloaded_size": 0,
+            "total_size": 0,
+            "task_id": task_id,
         }));
         sse::publish(
             &state.events,
             "queue",
             &json!({ "queue": data.queue, "active": data.active }),
         );
+        sse::publish(&state.events, "progress", &json!(data.progress));
         drop(data);
+
         return ok(contract::ok(json!({
             "queued": true,
             "game_name": gname,
-            "platform": platform.unwrap(),
+            "platform": platform,
             "task_id": task_id,
+            "message": format!("{gname} ajouté à la file d'attente"),
+            "queue_position": queue_position,
         })));
     }
 
@@ -582,4 +635,104 @@ pub fn set_pid(state: &AppState, pid: u32) {
 #[allow(dead_code)]
 pub fn data_arc(state: &AppState) -> Arc<std::sync::RwLock<crate::state::StateData>> {
     Arc::clone(&state.data)
+}
+
+// ---------------------------------------------------------------------------
+// İndirme sonuçlandırma yardımcıları (TASK-002f)
+// ---------------------------------------------------------------------------
+
+/// Arka plan indirme tamamlanınca state'i sonuçlandırır: history status'unu
+/// `Download_OK`/`Erreur` yapar, kuyruktan çeker, başarılıysa `downloaded[platform]`
+/// listesine ekler ve `queue`/`history`/`progress`(+`downloaded`) SSE yayınlar.
+pub async fn finalize_download_in_state(
+    state: &AppState,
+    task_id: &str,
+    game_url: &str,
+    game_name: &str,
+    platform: &str,
+    ok: bool,
+    message: &str,
+) {
+    let status = if ok { "Download_OK" } else { "Erreur" };
+    let mut data = state.write();
+    if let Some(entry) = data
+        .history
+        .iter_mut()
+        .find(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id))
+    {
+        entry["status"] = json!(status);
+        entry["message"] = json!(message);
+        if ok {
+            entry["progress"] = json!(100);
+        }
+    }
+    if let Some(pos) = data
+        .queue
+        .iter()
+        .position(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id))
+    {
+        data.queue.remove(pos);
+    }
+    if ok {
+        if let Value::Object(map) = &mut data.downloaded {
+            let list = map.entry(platform.to_string()).or_insert_with(|| json!([]));
+            if let Some(arr) = list.as_array_mut() {
+                if !arr.iter().any(|g| g.as_str() == Some(game_name)) {
+                    arr.push(json!(game_name));
+                }
+            }
+        }
+    }
+    if let Value::Object(prog) = &mut data.progress {
+        if ok {
+            prog.insert(game_url.to_string(), json!({ "status": "Download_OK", "progress": 100 }));
+        } else {
+            prog.insert(game_url.to_string(), json!({ "status": "Erreur", "message": message }));
+        }
+    }
+    sse::publish(&state.events, "queue", &json!({ "queue": data.queue, "active": data.active }));
+    sse::publish(&state.events, "history", &json!(data.history));
+    if ok {
+        sse::publish(&state.events, "downloaded", &json!(data.downloaded));
+    }
+    sse::publish(&state.events, "progress", &json!(data.progress));
+}
+
+/// `get_app_paths` downloads klasörü + URL/oyun adından hedef dosya yolunu kurar.
+/// URL'nin sondaki parçası bilinen bir ROM/.torrent uzantısıyla bitiyorsa onu,
+/// değilse temizlenmiş `game_name`'i dosya adı yapar (Python
+/// `check_extension_before_download` + `_build_download_path` niyeti).
+pub fn dest_path_for(downloads_folder: &str, url: &str, game_name: &str) -> std::path::PathBuf {
+    let base = std::path::PathBuf::from(downloads_folder);
+    let fallback = sanitize_file_name(game_name);
+    let from_url = url
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .next_back()
+        .filter(|seg| known_torrent_extension(seg))
+        .map(|s| s.to_string())
+        .unwrap_or(fallback);
+    base.join(from_url)
+}
+
+/// Bilinen ROM / torrent dosya uzantısı (Python `check_extension_before_download`).
+fn known_torrent_extension(seg: &str) -> bool {
+    match std::path::Path::new(seg).extension().and_then(|e| e.to_str()) {
+        Some(ext) => {
+            let ext = ext.to_ascii_lowercase();
+            matches!(
+                ext.as_str(),
+                "torrent" | "zip" | "7z" | "rar" | "iso" | "chd" | "cue" | "bin"
+                    | "gdi" | "nes" | "snes" | "smc" | "gb" | "gbc" | "gba" | "nds"
+                    | "n64" | "z64" | "v64" | "psp" | "pbp" | "cso" | "img" | "ccd"
+                    | "m3u" | "sv" | "wbfs" | "wad" | "xci" | "nsp"
+            )
+        }
+        None => false,
+    }
+}
+
+/// Dosya adı olarak kullanılacak metni temizler (path ayracı yasak).
+fn sanitize_file_name(name: &str) -> String {
+    name.replace(['/', '\\', ':'], "_")
 }

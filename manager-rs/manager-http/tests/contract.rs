@@ -4,6 +4,8 @@
 //! birebir eşleşmesi. `tower::ServiceExt::oneshot` ile gerçek axum router'ı
 //! çağrılır (soket yok, Python mock handler yaklaşımı gibi).
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -449,6 +451,186 @@ async fn test_download_direct_url_missing_game_name() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["success"], json!(false));
     assert_eq!(body["error"], json!("Paramètre manquant: game_name requis avec url"));
+}
+
+// ---------------------------------------------------------------------------
+// TASK-002f — /api/download bridge (librqbit engine) proxy
+// ---------------------------------------------------------------------------
+
+/// Torrent engine mock'u — `download_torrent` çağrısını kaydeder, anında döner.
+#[derive(Debug)]
+struct FakeEngine {
+    calls: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl manager_bridge::TorrentBackend for FakeEngine {
+    fn engine(&self) -> &'static str {
+        "fake"
+    }
+
+    async fn call(&self, method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+        Err(manager_bridge::BridgeError::Rpc {
+            code: -32601,
+            message: format!("Method not found: {method}"),
+        })
+    }
+
+    async fn shutdown(&self) {}
+
+    async fn get_app_paths(&self) -> Result<(String, String), manager_bridge::BridgeError> {
+        Ok(("/tmp/fake_downloads".to_string(), "/tmp/fake_logs".to_string()))
+    }
+
+    async fn download_torrent(
+        &self,
+        source_url: &str,
+        dest_path: &std::path::Path,
+    ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((source_url.to_string(), dest_path.display().to_string()));
+        Ok(dest_path.to_path_buf())
+    }
+}
+
+fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
+    router(AppState {
+        data: Arc::new(std::sync::RwLock::new(StateData::empty())),
+        events: manager_http::sse::channel(),
+        bridge: Some(bridge),
+        static_root: None,
+    })
+}
+
+#[tokio::test]
+async fn test_download_with_bridge_forwards_to_engine() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> =
+        Arc::new(FakeEngine { calls: calls.clone() });
+    let app = app_with_bridge(bridge);
+
+    let (status, _, body) = call_post(
+        app,
+        "/api/download",
+        json!({"url": "https://exemple.invalid/rom.zip", "game_name": "Rom", "platform": "NES"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["queued"], json!(true));
+    assert_eq!(body["game_name"], json!("Rom"));
+    assert_eq!(body["platform"], json!("NES"));
+    assert!(body["task_id"].as_str().unwrap().starts_with("web_"));
+
+    // Arka plan task'ı engine'i çağırır — kaydı timeout ile bekle.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let recorded = calls.lock().unwrap().clone();
+        if !recorded.is_empty() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "engine download_torrent çağrılmadı"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let recorded = calls.lock().unwrap().clone();
+    let (url, dest) = recorded.first().expect("en az bir kayıt");
+    assert_eq!(url, "https://exemple.invalid/rom.zip");
+    // URL basename known ext → engine downloads klasörü altında.
+    assert_eq!(dest, "/tmp/fake_downloads/rom.zip");
+}
+
+#[tokio::test]
+async fn test_download_bridge_none_keeps_placeholder() {
+    let (status, _, body) =
+        call_post(empty_app(), "/api/download", json!({"url": "https://exemple.invalid/rom.zip", "game_name": "Rom", "platform": "NES"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["queued"], json!(true));
+    assert_eq!(body["message"], json!("Rom ajouté à la file d'attente"));
+    assert_eq!(body["queue_position"], json!(1));
+}
+
+#[tokio::test]
+async fn test_finalize_download_updates_state() {
+    let state = AppState::empty();
+    {
+        let mut data = state.write();
+        data.history.push(json!({
+            "task_id": "web_123", "game_name": "Rom", "platform": "NES",
+            "status": "Queued", "progress": 0,
+        }));
+        data.queue.push(json!({ "task_id": "web_123", "status": "Queued" }));
+    }
+    manager_http::api::finalize_download_in_state(
+        &state,
+        "web_123",
+        "https://exemple.invalid/rom.zip",
+        "Rom",
+        "NES",
+        true,
+        "/tmp/fake_downloads/rom.zip",
+    )
+    .await;
+
+    {
+        let data = state.read();
+        assert_eq!(data.history[0]["status"], json!("Download_OK"));
+        assert_eq!(data.history[0]["progress"], json!(100));
+        assert!(data.queue.is_empty(), "kuyruk temizlenmeli");
+        assert_eq!(data.downloaded["NES"], json!(["Rom"]));
+        assert_eq!(data.progress["https://exemple.invalid/rom.zip"]["status"], json!("Download_OK"));
+    }
+
+    // Err sonucu status Erreur + downloaded'a eklenmez.
+    manager_http::api::finalize_download_in_state(
+        &state,
+        "web_999",
+        "https://exemple.invalid/other.zip",
+        "Other",
+        "SNES",
+        false,
+        "Opération impossible",
+    )
+    .await;
+    {
+        let data = state.read();
+        assert_eq!(data.history[0]["status"], json!("Download_OK"));
+        assert!(data.downloaded.get("SNES").is_none(), "hata SNES'e eklenmemeli");
+    }
+}
+
+#[test]
+fn test_dest_path_for_uses_url_basename_when_known_ext() {
+    let root = "/tmp/dl";
+    assert_eq!(
+        manager_http::api::dest_path_for(root, "https://exemple.invalid/rom.zip", "Rom"),
+        std::path::PathBuf::from("/tmp/dl/rom.zip")
+    );
+    assert_eq!(
+        manager_http::api::dest_path_for(root, "https://exemple.invalid/console/pack.torrent", "Pack"),
+        std::path::PathBuf::from("/tmp/dl/pack.torrent")
+    );
+}
+
+#[test]
+fn test_dest_path_for_falls_back_to_game_name() {
+    let root = "/tmp/dl";
+    // Magnet URI'nin URL basename'i uzantı taşımaz → game_name.
+    let magnet = "magnet:?xt=urn:btih:deadbeef&dn=Some+Game";
+    assert_eq!(
+        manager_http::api::dest_path_for(root, magnet, "Some Game"),
+        std::path::PathBuf::from("/tmp/dl/Some Game")
+    );
+    // Path ayracı taşıyan oyun adı temizlenir.
+    assert_eq!(
+        manager_http::api::dest_path_for(root, "https://exemple.invalid/dl", "a/b/c.iso"),
+        std::path::PathBuf::from("/tmp/dl/a_b_c.iso")
+    );
 }
 
 #[tokio::test]

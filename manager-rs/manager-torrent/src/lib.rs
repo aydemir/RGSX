@@ -99,13 +99,13 @@ impl LibrqbitEngine {
 
     /// Üst seviye indirme akışı — Python `download_torrent_via_qbittorrent`'in
     /// librqbit karşılığı (bridge-qup tarafı: `source` magnet veya `.torrent`
-    /// URL'si; session'a ekler, tamamlanıncaya kadar bekler, indirilen dosyayı
+    /// URI'si; session'a ekler, tamamlanıncaya kadar bekler, indirilen dosyayı
     /// `output_folder` altında çözer ve `dest_path`'e hard-link/kopya yapar).
     ///
     /// Not: kapsamlı progres/seçim/seed takibi (`tag`, `temp_dir`,
     /// file-selection, `_seed_status_worker`) TASK-002f dışında kaldı — bu cep
     /// senkron "indir → çıkar" işlemini sunar.
-    pub async fn download_torrent(
+    pub async fn download_torrent_source(
         &self,
         source: AddTorrent<'_>,
         dest_path: &std::path::Path,
@@ -216,6 +216,16 @@ impl TorrentBackend for LibrqbitEngine {
                 "downloads_folder": self.downloads_folder,
                 "logs_folder": self.logs_folder,
             })),
+            "download_torrent" => {
+                // JSON-RPC kontraktı (Python `_BRIDGE_METHODS` simetrisi) — trait
+                // method'una aynı parametrelerle proxy eder.
+                let source = params.get("source_url").and_then(Value::as_str).unwrap_or_default();
+                let dest = params.get("dest_path").and_then(Value::as_str).unwrap_or_default();
+                match self.download_torrent(source, std::path::Path::new(dest)).await {
+                    Ok(p) => Ok(json!(p.to_string_lossy().to_string())),
+                    Err(e) => Err(e),
+                }
+            }
             "shutdown" => {
                 if let Some(session) = self.session.write().await.take() {
                     session.stop().await;
@@ -233,5 +243,17 @@ impl TorrentBackend for LibrqbitEngine {
         if let Some(session) = self.session.write().await.take() {
             session.stop().await;
         }
+    }
+
+    /// `download_torrent` → `source_url`'yi (magnet veya `.torrent` adresi)
+    /// `AddTorrent::from_url` ile kurup senkron indirir, sonucu `dest_path`'e
+    /// link/kopyalar (Python `download_torrent_via_qbittorrent` karşılığı).
+    async fn download_torrent(
+        &self,
+        source_url: &str,
+        dest_path: &std::path::Path,
+    ) -> Result<std::path::PathBuf, BridgeError> {
+        self.download_torrent_source(AddTorrent::from_url(source_url.to_string()), dest_path)
+            .await
     }
 }

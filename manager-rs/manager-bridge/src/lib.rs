@@ -328,6 +328,34 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
         let logs = v.get("logs_folder").and_then(Value::as_str).unwrap_or_default().to_string();
         Ok((downloads, logs))
     }
+
+    /// `download_torrent` → `source_url` (magnet veya `.torrent` adresi) indirilir,
+    /// sonuç `dest_path`'e hard-link/kopya ile sonlandırılır. Dönen yol indirilen
+    /// kaynak dosyadır (engine içinde çözülen).
+    ///
+    /// Default: `call("download_torrent", {source_url, dest_path})` JSON-RPC'sine
+    /// proxy eder — Python bridge'de aynı isimli `_BRIDGE_METHODS`'a karşılık gelir;
+    /// librqbit engine yerel implementasyonla override eder.
+    async fn download_torrent(
+        &self,
+        source_url: &str,
+        dest_path: &std::path::Path,
+    ) -> Result<std::path::PathBuf, BridgeError> {
+        let v = self
+            .call(
+                "download_torrent",
+                json!({
+                    "source_url": source_url,
+                    "dest_path": dest_path.to_string_lossy().to_string(),
+                }),
+            )
+            .await?;
+        let path = v.as_str().ok_or_else(|| BridgeError::Rpc {
+            code: -32601,
+            message: "download_torrent sonucu string yol değil".to_string(),
+        })?;
+        Ok(std::path::PathBuf::from(path))
+    }
 }
 
 /// `Bridge`'i `TorrentBackend` sözleşmesine bağlar (Python subprocess motoru).

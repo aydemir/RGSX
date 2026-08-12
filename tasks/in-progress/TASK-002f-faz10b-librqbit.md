@@ -66,5 +66,15 @@ tek Rust paketi Windows+Linux/Batocera'yı kapsar; Batocera Python yolu korunur.
   `download_torrent_via_qbittorrent` karşılığı) — session'a ekle → tamamlan → en büyük
   içerik dosyasını çöz (`.` rqbitpart atlanır) → `dest_path`'e hard-link/copy.
   Canlı doğrulama: sintel~129MB, ~7 sn'de indi, `sintel.mp4` hedefe çıktı. Test: 109/109.
-  Kod-tarafı indirme API'si Rust'ta hâlâ yok — akış Python `queue.py`'da doğrudan
-  çağrılıyor; librqbit path'i şimdilik engine'de senkron (progres/seçim/seed takibi hariç).
+- 2026-08-12 — **Rust-HTTP indirme endpoint'i** ✅: `TorrentBackend::download_torrent`
+  trait methodu eklendi (default `call("download_torrent", ...)`; librqbit native override;
+  `call` dispatch'inde de `"download_torrent"` kolu). `manager-http /api/download` bridge
+  varken artık gerçekten indirir: `get_app_paths().downloads_folder` + türetilmiş dosya
+  adıyla `tokio::spawn` background `bridge.download_torrent`, bitince
+  `finalize_download_in_state` (history `Download_OK`/`Erreur` + `downloaded[platform]` +
+  `progress` + SSE). Bridge yoksa eski placeholder queue-push korunur. Python
+  `_BRIDGE_METHODS`'a `download_torrent` EKLENMEDİ (subprocess'te senkron download RPC
+  loop'unu bloke ederdi; Python fallback kendi in-process akışını kullanır). Not:
+  `state.write()` kilidi sonrası await axum handler future'ını Send yapmıyor → tüm
+  await'ler kilit öncesi. Test: workspace 114/114 (contract +5: mock engine forward,
+  placeholder koruması, finalize, dest_path_for x2).
