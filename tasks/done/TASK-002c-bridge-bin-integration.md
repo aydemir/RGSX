@@ -5,6 +5,7 @@
 - **status:** done
 - **priority:** P2
 - **created:** 2026-08-12
+- **environment:** windows
 - **tags:** rust, bridge, subprocess, tokio, manager-bin
 - **parent:** TASK-002
 

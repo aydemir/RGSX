@@ -5,6 +5,7 @@
 - **status:** done
 - **priority:** P2
 - **created:** 2026-08-11
+- **environment:** windows
 - **tags:** rust, rgsx-manager, qbittorrent-backend, network, concurrency
 
 ## Kaynak

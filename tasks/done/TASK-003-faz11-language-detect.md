@@ -5,6 +5,7 @@
 - **status:** done
 - **priority:** P2
 - **created:** 2026-08-11
+- **environment:** linux
 - **tags:** language, i18n, rgsx-settings, tvui, rgsx-web
 
 ## Kaynak

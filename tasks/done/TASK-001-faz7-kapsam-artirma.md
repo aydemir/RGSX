@@ -6,6 +6,7 @@
 - **updated:** 2026-08-11
 - **priority:** P2
 - **created:** 2026-08-11
+- **environment:** linux
 - **tags:** tests, coverage, rgsx-settings, rgsx-manager, qbittorrent-backend
 
 ## Kaynak

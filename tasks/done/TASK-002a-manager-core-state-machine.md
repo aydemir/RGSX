@@ -4,6 +4,7 @@ title: manager-core state machine tasarımı (Faz 10a ilk adım)
 status: done
 priority: P2
 created: 2026-08-11
+environment: windows
 tags: [rust, manager-core, state-machine]
 parent: TASK-002
 ---

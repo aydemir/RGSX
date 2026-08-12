@@ -5,6 +5,7 @@
 - **status:** todo | in-progress | documented-only
 - **priority:** P0 | P1 | P2
 - **created:** YYYY-MM-DD
+- **environment:** linux | windows | both
 - **tags:** modul1, modul2
 
 ## Kaynak
