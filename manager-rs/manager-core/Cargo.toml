@@ -7,3 +7,4 @@ description = "Platform-bağımsız state machine: enum + match, contract tipler
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true

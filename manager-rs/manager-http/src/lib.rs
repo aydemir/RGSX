@@ -1,3 +1,64 @@
 //! manager-http: HTTP + SSE route'ları (tokio + axum).
 //!
-//! İskelet sürüm — route implementasyonu Faz 10'a bırakıldı.
+//! TASK-002b — Python `ManagerHandler`/`RGSXHandler` sözleşmesi 1:1:
+//! `/api/*` GET/POST + `/api/events` (SSE). Yanıt şablonları
+//! `tests/test_api_contract.py` ile birebir (bkz. `api.rs` docstring).
+//!
+//! Kullanım:
+//! ```no_run
+//! use manager_http::{router, AppState};
+//! # async fn scaffold() {
+//! let app = router(AppState::empty());
+//! let listener = tokio::net::TcpListener::bind("127.0.0.1:5010").await.unwrap();
+//! axum::serve(listener, app).await.unwrap();
+//! # }
+//! ```
+
+pub mod api;
+pub mod sse;
+pub mod state;
+
+use axum::routing::{get, post};
+use axum::Router;
+
+pub use state::{AppState, StateData};
+
+/// İş mantığı SaaS'ı — router + yanıt şablonları.
+///
+/// Route yolu 1:1 Python `do_GET`/`do_POST` dispatch'i; `/api/events` SSE.
+pub fn router(app: AppState) -> Router {
+    Router::new()
+        .route("/", get(api::index))
+        .route("/api/platforms", get(api::platforms))
+        .route("/api/search", get(api::search))
+        .route("/api/translations", get(api::translations))
+        .route("/api/games/:platform", get(api::games))
+        .route("/api/progress", get(api::progress))
+        .route("/api/game-status", get(api::game_status))
+        .route("/api/history", get(api::history))
+        .route("/api/queue", get(api::queue).post(api::queue_post))
+        .route("/api/settings", get(api::settings_get).post(api::settings_post))
+        .route("/api/system_info", get(api::system_info))
+        .route("/api/browse-directories", get(api::browse_directories))
+        .route("/api/image/:platform", get(api::image))
+        .route("/api/favicon", get(api::favicon))
+        .route("/api/update-cache", get(api::update_cache))
+        .route("/api/download", post(api::download))
+        .route("/api/cancel", post(api::cancel))
+        .route("/api/queue/clear", post(api::queue_clear))
+        .route("/api/queue/remove", post(api::queue_remove))
+        .route("/api/save_filters", post(api::save_filters))
+        .route("/api/clear-history", post(api::clear_history))
+        .route("/api/restart", post(api::restart))
+        .route("/api/support", post(api::support))
+        .route("/api/health", get(api::health))
+        .route("/api/shutdown", post(api::shutdown))
+        .route("/api/pause", post(api::pause))
+        .route("/api/resume", post(api::resume))
+        .route("/api/qbittorrent/change-password", post(api::change_password))
+        .route("/api/qbittorrent/start", post(api::qb_start))
+        .route("/api/qbittorrent/password-status", get(api::qb_password_status))
+        .route("/api/events", get(sse::events))
+        .fallback(api::fallback)
+        .with_state(app)
+}
