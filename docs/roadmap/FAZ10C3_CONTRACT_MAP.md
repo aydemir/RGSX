@@ -24,12 +24,12 @@
 | `/api/translations` | `translations` | 🔗 proxy | `handlers.py::_api_translations` → `language.py` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/games/:platform` | `games` | 🔗 proxy | `handlers.py::_api_games` → `rgsx_web/cache.py::get_cached_games` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/progress` | `progress` | ✅ | `handlers.py::_api_progress` | test_api_contract |
-| `/api/game-status` | `game_status` | ⚠️ | `handlers.py::_api_game_status` | test_api_contract |
+| `/api/game-status` | `game_status` | 🔗 proxy | `handlers.py::_api_game_status` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
 | `/api/history` | `history` | ✅ | `handlers.py::_api_history` | test_api_contract |
 | `/api/queue` | `queue` | ✅ | `handlers.py::_api_queue_get` | test_api_contract |
-| `/api/settings` | `settings_get` | ⚠️ | `handlers.py::_api_settings_get` → `rgsx_settings.py` | test_api_contract |
-| `/api/system_info` | `system_info` | ⚠️ | `handlers.py::_api_system_info` (DRIFT) / `rgsx_manager.py` system_info | **test_api_contract (birebir eşitlik — KRİTİK)** |
-| `/api/browse-directories` | `browse_directories` | ⚠️ | `handlers.py::_list_directories` | test_api_contract |
+| `/api/settings` | `settings_get` | 🔗 proxy | `handlers.py::_api_settings_get` → `rgsx_settings.py` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
+| `/api/system_info` | `system_info` | 🔗 proxy | `handlers.py::_api_system_info` / `rgsx_manager.py` system_info | **test_api_contract (birebir eşitlik — KRİTİK) (TASK-002k-3 proxy'lendi)** |
+| `/api/browse-directories` | `browse_directories` | 🔗 proxy | `handlers.py::_list_directories` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
 | `/api/image/:platform` | `image` | 🔗 proxy | `handlers.py::_serve_platform_image` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/favicon` | `favicon` | ⚠️ | `handlers.py::_serve_favicon` | test_api_contract |
 | `/api/update-cache` | `update_cache` | ⚠️ | `handlers.py::_api_update_cache` (DRIFT) | test_api_contract |
@@ -46,8 +46,8 @@
 | `/api/queue` | `queue_post` | ⚠️ | `handlers.py::_api_queue_post` | test_api_contract |
 | `/api/queue/clear` | `queue_clear` | ⚠️ | `handlers.py::_api_queue_clear` | test_api_contract |
 | `/api/queue/remove` | `queue_remove` | ⚠️ | `handlers.py::_api_queue_remove` | test_api_contract |
-| `/api/settings` | `settings_post` | ⚠️ | `handlers.py::_api_settings_post` → `rgsx_settings.py` | test_api_contract |
-| `/api/save_filters` | `save_filters` | ⚠️ | `handlers.py::_api_save_filters` | test_api_contract |
+| `/api/settings` | `settings_post` | 🔗 proxy | `handlers.py::_api_settings_post` → `rgsx_settings.py` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
+| `/api/save_filters` | `save_filters` | 🔗 proxy | `handlers.py::_api_save_filters` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
 | `/api/clear-history` | `clear_history` | ⚠️ | `handlers.py::_api_clear_history` → `history.py` | test_api_contract |
 | `/api/restart` | `restart` | ⚠️ | `handlers.py::_api_restart` / `rgsx_manager.py` | test_api_contract |
 | `/api/support` | `support` | ⚠️ | `handlers.py::_api_support` → `utils.generate_support_zip` | test_support_zip |

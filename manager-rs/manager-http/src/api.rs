@@ -192,11 +192,6 @@ pub async fn progress(State(state): State<AppState>) -> Response {
     ok(contract::ok(json!({ "downloads": downloads })))
 }
 
-/// GET `/api/game-status` — boş `statuses` placeholder.
-pub async fn game_status() -> Response {
-    ok(contract::ok(json!({ "statuses": {} })))
-}
-
 /// GET `/api/history` — history + message noise stripping.
 pub async fn history(State(state): State<AppState>) -> Response {
     let history = state.read().history.clone();
@@ -222,23 +217,57 @@ pub async fn queue(State(state): State<AppState>) -> Response {
     })))
 }
 
-/// GET `/api/settings` — placeholder ayar (iş mantığı TASK-002c).
+/// GET `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
 pub async fn settings_get(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/settings").await {
+            return ok(v);
+        }
+    }
     let settings = state.read().settings.clone();
     ok(contract::ok(json!({ "settings": settings })))
 }
 
-/// GET `/api/system_info` — placeholder.
+/// GET `/api/system_info` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
 pub async fn system_info(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/system_info").await {
+            return ok(v);
+        }
+    }
     let info = state.read().system_info.clone();
     ok(contract::ok(json!({ "system_info": info })))
 }
 
-/// GET `/api/browse-directories?path=...` — path yoksa 400 (Python birebir).
+/// GET `/api/game-status` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn game_status(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/game-status").await {
+            return ok(v);
+        }
+    }
+    ok(contract::ok(json!({ "statuses": {} })))
+}
+
+/// GET `/api/browse-directories?path=...` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa yerel placeholder.
 pub async fn browse_directories(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    if let Some(c) = &state.catalog {
+        let route = match params.get("path") {
+            Some(p) => format!(
+                "/api/browse-directories?path={}",
+                percent_encoding::utf8_percent_encode(p, percent_encoding::NON_ALPHANUMERIC)
+                    .to_string()
+                    .replace("%2F", "/")
+            ),
+            None => "/api/browse-directories".to_string(),
+        };
+        if let Ok(v) = c.get_json(&route).await {
+            return ok(v);
+        }
+    }
     let requested = params.get("path");
     if let Some(path) = requested {
         if !std::path::Path::new(path).exists() {
@@ -467,8 +496,13 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
     json_err(format!("Élément non trouvé: {task_id}"), StatusCode::NOT_FOUND)
 }
 
-/// POST `/api/settings` — "settings" anahtarı zorunlu; placeholder.
+/// POST `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
 pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/settings", &body).await {
+            return ok(v);
+        }
+    }
     let Some(settings) = body.get("settings") else {
         return json_err("Paramètre \"settings\" manquant", StatusCode::BAD_REQUEST);
     };
@@ -476,8 +510,13 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
     ok(contract::ok(Value::Null))
 }
 
-/// POST `/api/save_filters` — placeholder.
-pub async fn save_filters() -> Response {
+/// POST `/api/save_filters` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn save_filters(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/save_filters", &body).await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({ "message": "Filtres sauvegardés" })))
 }
 

@@ -41,6 +41,13 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 - `platforms`/`search`/`games`/`translations`/`image` handler'ları `state.catalog` varsa Python'a proxy'ler (yanıt birebir iletilir), yoksa mevcut placeholder'a düşer (geriye uyumlu). Native Rust logic portu ileride ayrı alt faz.
 - `cargo test -p manager-http`: 74/74 yeşil (6 yeni proxy testi, `FakeCatalog` ile).
 
+### Rust durum/settings proxy (Faz 10c/3/3, TASK-002k-3) — strangler/proxy
+- `settings_get`/`settings_post`/`save_filters`/`system_info`/`game_status`/`browse-directories`
+  handler'ları `state.catalog` varsa Python'a proxy'lenir (GET `get_json`, POST `post_json`);
+  yoksa placeholder (geriye uyumlu). `CatalogSource` trait'ine `post_json` eklendi.
+- `cargo test -p manager-http`: 81/81 yeşil (7 yeni proxy testi). `system_info` birebir contract
+  korunur (catalog=None → placeholder; contract testi yeşil).
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`

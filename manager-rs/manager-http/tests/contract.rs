@@ -937,6 +937,13 @@ impl CatalogSource for FakeCatalog {
             "count": 2,
         }))
     }
+    async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError> {
+        Ok(json!({
+            "success": true,
+            "route": route,
+            "echo": body,
+        }))
+    }
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
         Ok((format!("IMG:{platform}").into_bytes(), "image/png".to_string()))
     }
@@ -1006,4 +1013,65 @@ async fn test_catalog_placeholder_when_no_source() {
     let (status, _, body) = call_get(empty_app(), "/api/games/snes").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["count"], json!(0));
+}
+
+// ---------------------------------------------------------------------------
+// Faz 10c/3/3 — durum/settings proxy
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_settings_get_proxied() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/settings"));
+}
+
+#[tokio::test]
+async fn test_system_info_proxied() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/system_info").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/system_info"));
+}
+
+#[tokio::test]
+async fn test_game_status_proxied() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/game-status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/game-status"));
+}
+
+#[tokio::test]
+async fn test_browse_directories_proxied() {
+    let (status, _, body) = call_get(app_with_catalog(), "/api/browse-directories?path=/roms").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/browse-directories?path=/roms"));
+}
+
+#[tokio::test]
+async fn test_settings_post_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/settings", json!({"settings": {"x": 1}})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/settings"));
+    assert_eq!(body["echo"]["settings"]["x"], json!(1));
+}
+
+#[tokio::test]
+async fn test_save_filters_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/save_filters", json!({"a": 1})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/save_filters"));
+}
+
+#[tokio::test]
+async fn test_status_placeholder_when_no_source() {
+    let (status, _, body) = call_get(empty_app(), "/api/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["success"].as_bool().unwrap_or(false));
+    let (status, _, body) = call_get(empty_app(), "/api/system_info").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, body) = call_get(empty_app(), "/api/game-status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["statuses"], json!({}));
+    let (status, _, body) = call_get(empty_app(), "/api/browse-directories?path=/nope").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

@@ -17,8 +17,10 @@ pub struct CatalogError(pub String);
 /// Katalog veri kaynağı — test'te `FakeCatalog` ile enjekte edilebilir.
 #[async_trait]
 pub trait CatalogSource: Send + Sync {
-    /// JSON dönen route'u proxy'ler (ör. `/api/platforms`, `/api/search?q=zelda`).
+    /// JSON dönen GET route'u proxy'ler (ör. `/api/platforms`, `/api/search?q=zelda`).
     async fn get_json(&self, route: &str) -> Result<Value, CatalogError>;
+    /// JSON dönen POST route'u proxy'ler (gövde iletilir).
+    async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError>;
     /// Box-art görselini (ham bayt + content-type) proxy'ler.
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError>;
 }
@@ -78,5 +80,21 @@ impl CatalogSource for PythonCatalog {
             .await
             .map_err(|e| CatalogError(e.to_string()))?;
         Ok((bytes.to_vec(), ct))
+    }
+
+    async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError> {
+        let url = format!("{}{}", self.base, route);
+        let resp = self
+            .client
+            .post(&url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CatalogError(e.to_string()))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| CatalogError(e.to_string()))?;
+        Ok(v)
     }
 }

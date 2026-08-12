@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-3
 - **title:** `settings_get`/`settings_post`/`save_filters`/`system_info`/`browse_directories`/`game_status` Rust'e
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-12
 - **environment:** both
