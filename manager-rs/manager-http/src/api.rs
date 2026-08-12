@@ -293,15 +293,20 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         let gname = gname.to_string();
         let task_id = web_task_id();
 
-        // Bridge varsa indirmeyi başlat (arka plan task; yanıt beklemez).
-        // Await'ler kilit öncesi — spawn closure'u `'static` olduğundan değerler klonlanır.
-        if let Some(bridge) = state.bridge.clone() {
-            let downloads = bridge
-                .get_app_paths()
-                .await
-                .map(|(d, _)| d)
-                .unwrap_or_default();
-            let dest_path = dest_path_for(&downloads, &game_url, &gname);
+    // Bridge varsa indirmeyi başlat (arka plan task; yanıt beklemez).
+    // Await'ler kilit öncesi — spawn closure'u `'static' olduğundan değerler klonlanır.
+    if let Some(bridge) = state.bridge.clone() {
+        let downloads = bridge
+            .get_app_paths()
+            .await
+            .map(|(d, _)| d)
+            .unwrap_or_default();
+        // Faz 10c/2: Python, kendi hedef yolunu (`dest_path`) verebilir; yoksa
+        // eski davranış — `downloads_folder` + türetilen dosya adı (geriye uyumlu).
+        let dest_path = match body.get("dest_path").and_then(Value::as_str) {
+            Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
+            _ => dest_path_for(&downloads, &game_url, &gname),
+        };
             let state2 = state.clone();
             let u = game_url.clone();
             let n = gname.clone();

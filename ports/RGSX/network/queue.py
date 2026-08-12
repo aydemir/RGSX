@@ -834,6 +834,41 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                 if not _should_prefer_qbittorrent_backend():
                     raise qbittorrent_backend.BackendUnavailableError("qBittorrent introuvable, non démarré ou non disponible")
 
+                # Faz 10c/2: Rust daemon sağlıklı + opt-in -> torrent'i Rust'a devret.
+                # Hata/timeout -> mevcut qBittorrent yoluna fallback (risk sıfır).
+                if getattr(config, "rust_daemon_available", False):
+                    try:
+                        import rust_daemon
+
+                        if rust_daemon.torrent_delegate_enabled() and rust_daemon.healthy():
+                            logger.info("Téléchargement torrent via Rust daemon (Faz 10c/2)")
+                            success, message = rust_daemon.download_torrent(
+                                torrent_meta,
+                                dest_dir,
+                                dest_path,
+                                task_id,
+                                cancel_ev,
+                                game_name,
+                                platform,
+                                original_history_url,
+                            )
+                            result[0] = success
+                            result[1] = message
+                            if success and os.path.exists(dest_path):
+                                os.chmod(dest_path, 0o644)
+                            logger.debug(f"[RUST-DAEMON] torrent terminé: {dest_path}")
+                            with urls_lock:
+                                urls_in_progress.discard(original_history_url)
+                            try:
+                                notify_download_finished()
+                            except Exception:
+                                pass
+                            return result[0], result[1]
+                    except Exception as e:
+                        logger.warning(
+                            f"[RUST-DAEMON] délégation torrent échouée, fallback qBittorrent: {e}"
+                        )
+
                 logger.info("Téléchargement torrent via qBittorrent")
                 success, message = qbittorrent_backend.download_torrent_via_qbittorrent(
                     torrent_meta,

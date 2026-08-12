@@ -31,6 +31,11 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 ### Rust sidecar süpervizörü (Faz 10c/1, TASK-002i)
 - `ports/RGSX/rust_daemon.py` (YENİ): `rgsx_manager.main()` içinden flag-gated başlatılır. `RGSX_RUST_DAEMON=1` (ve binary mevcutsa) `manager-bin`'i subprocess sidecar olarak spawn eder (port 5010 / `RGSX_MANAGER_BIN_PORT`, engine default `librqbit`); ayrı bir daemon thread'te `/api/health` poll edip `watchdog.RestartLimiter` ile sınırlı yeniden başlatır. Durum `config.rust_daemon_available` üzerinden yansıtılır (flag kapalıysa veya binary yoksa no-op → Python-only akış korunur). Test: `tests/test_rust_daemon.py`.
 
+### Rust torrent devri (Faz 10c/2, TASK-002j)
+- `RGSX_RUST_TORRENT=1` (ayrı opt-in) + `config.rust_daemon_available` (healthy) → `network/queue.py::download_rom` torrent dalı (`torrent_meta is not None`), torrent indirmeyi `http://127.0.0.1:5010/api/download`'a devreder (gövdede `dest_path` verilir → postprocess bozulmaz). İlerleme `/api/progress` poll edilip `config.download_progress`/`config.history`'ye yansıtılır; `cancel_ev` ile iptal. Hata/timeout/`RGSX_RUST_TORRENT` kapalı → mevcut `qbittorrent_backend` yoluna **fallback** (risk sıfır, varsayılan kapalı).
+- Rust tarafı: `manager-http/src/api.rs::download` artık isteğe bağlı `dest_path` kabul eder (geriye uyumlu; yoksa `dest_path_for` ile türetir). `start()` `RGSX_DOWNLOADS_FOLDER`'ı `config.ROMS_FOLDER`'a çeker.
+- Yardımcı: `rust_daemon.download_torrent(...)` + `RustDaemonError`. Test: `tests/test_rust_daemon.py` (delege bayrağı + devir/mirror/fallback/missing-source).
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`

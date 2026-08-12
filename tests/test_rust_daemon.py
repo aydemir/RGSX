@@ -133,3 +133,102 @@ def test_healthy(monkeypatch):
     assert rust_daemon.healthy() is False
     monkeypatch.setattr(rust_daemon.urllib.request, "urlopen", _raise)
     assert rust_daemon.healthy() is False
+
+
+def test_torrent_delegate_flag(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.delenv("RGSX_RUST_TORRENT", raising=False)
+    assert rust_daemon.torrent_delegate_enabled() is False
+    monkeypatch.setenv("RGSX_RUST_TORRENT", "1")
+    assert rust_daemon.torrent_delegate_enabled() is True
+    monkeypatch.setenv("RGSX_RUST_TORRENT", "off")
+    assert rust_daemon.torrent_delegate_enabled() is False
+
+
+class _FakeCancel:
+    def __init__(self):
+        self._set = False
+
+    def is_set(self):
+        return self._set
+
+
+def test_download_torrent_delegates(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "_DAEMON_PORT", 5010)
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    posted = {}
+
+    def _post(port, path, body):
+        posted[(path, port)] = body
+        return {}
+
+    monkeypatch.setattr(rust_daemon, "_post_json", _post)
+    # İlk poll Downloading, ikinci poll tamamlandı.
+    states = [{"status": "Downloading", "progress": 40}, {"status": "Download_OK", "progress": 100}]
+    monkeypatch.setattr(rust_daemon, "_poll_progress", lambda port, url: states.pop(0))
+
+    meta = {"source_url": "magnet:?xt=foo", "size_bytes": 123}
+    ok, msg = rust_daemon.download_torrent(
+        meta, "/roms/snes", "/roms/snes/foo.zip", "t1", _FakeCancel(),
+        "Foo", "snes", "rgsx+torrent://x?source=magnet:?xt=foo",
+    )
+    assert ok is True
+    body = posted[("/api/download", 5010)]
+    assert body["url"] == "magnet:?xt=foo"
+    assert body["dest_path"] == "/roms/snes/foo.zip"
+    assert body["game_name"] == "Foo"
+
+
+def test_download_torrent_falls_back_when_unhealthy(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: False)
+    meta = {"source_url": "magnet:?xt=foo"}
+    try:
+        rust_daemon.download_torrent(
+            meta, "/d", "/d/foo", "t1", _FakeCancel(), "Foo", "snes", "u"
+        )
+        assert False, "RustDaemonError bekleniyordu"
+    except rust_daemon.RustDaemonError:
+        pass
+
+
+def test_download_torrent_missing_source(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    try:
+        rust_daemon.download_torrent(
+            {}, "/d", "/d/foo", "t1", _FakeCancel(), "Foo", "snes", "u"
+        )
+        assert False, "RustDaemonError bekleniyordu"
+    except rust_daemon.RustDaemonError:
+        pass
+
+
+def test_download_torrent_mirrors_progress(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    monkeypatch.setattr(rust_daemon, "_post_json", lambda port, path, body: {})
+    states = [
+        {"status": "Downloading", "progress": 50, "downloaded_size": 500, "total_size": 1000},
+        {"status": "Download_OK", "progress": 100},
+    ]
+    monkeypatch.setattr(rust_daemon, "_poll_progress", lambda port, url: states.pop(0))
+    import history as _history
+
+    monkeypatch.setattr(_history, "save_history", lambda h: None)
+    import config as _cfg
+
+    _cfg.download_progress = {}
+    _cfg.history = [{"url": "orig", "status": "Downloading", "progress": 0}]
+
+    rust_daemon.download_torrent(
+        {"source_url": "magnet:?xt=foo"}, "/d", "/d/foo", "t1", _FakeCancel(),
+        "Foo", "snes", "orig",
+    )
+    assert _cfg.download_progress["orig"]["progress_percent"] == 100
+    assert _cfg.history[0]["status"] == "Download_OK"
