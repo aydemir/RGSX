@@ -490,7 +490,7 @@ tamamlandıktan sonra — özellikle Faz 7 (characterization tests) olmadan baş
 | Bileşen | Platform kapsamı | Rust'a geçiş |
 |---|---|---|
 | `rgsx_manager.py` (daemon, tray, autostart, port resolve, SSE, watchdog) | Windows-only | ✅ Faz 10a — risk düşük |
-| `qbittorrent_backend.py` (embedded torrent, `librqbit` adayı) | Windows **+** Linux/Batocera | ⏸ Faz 10b — Linux/ARM test imkânı şart |
+| `qbittorrent_backend.py` (embedded torrent, `librqbit` adayı) | Windows **+** Linux/Batocera | ✅ Faz 10b — `TorrentBackend` trait + `LibrqbitEngine` (RGSX_TORRENT_ENGINE=librqbit), Python fallback korunur |
 
 **Ara mimari:** Rust manager binary, mevcut `qbittorrent_backend.py`'yi subprocess olarak
 çağırmaya devam eder (JSON-RPC veya local HTTP köprüsü). Windows tarafı kademeli Rust'a geçerken
@@ -527,7 +527,7 @@ Faz 8 (Download state modeli)   ← Faz 9'un önkoşulu
    ↓
 Faz 9 (Toplu indirme) ✅
    ↓
-Faz 10 (Rust refaktör)          ← ancak Faz 1-9 sonrası
+Faz 10 (Rust refaktör) ✅       ← Faz 1-9 + 10a (Windows) + 10b (librqbit engine) tamamlandı
    ↓
 Faz 11 (İlk açılışta dil algılama)
 ```
