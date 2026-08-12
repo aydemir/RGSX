@@ -64,7 +64,7 @@ aynı obje kimliğiyle tutulur.
 |---|---|---|
 | Şablon | `tasks/_template.md` | `environment: linux\|windows\|both` zorunlu (AGENTS.md kuralı) |
 | Tamamlanan görevler | `tasks/done/*.md` | TASK-001 (Faz 7), TASK-002 + 002a–002g (Faz 10 Rust), TASK-003 (Faz 11). Hepsi `done/` |
-| Aktif / bekleyen | `tasks/in-progress/`, `tasks/todo/` | (şu an boş — tüm iş `done/`) |
+| Aktif / bekleyen | `tasks/in-progress/`, `tasks/todo/` | 10c/2 `in-progress/TASK-002j`; 10c/3 planı + 7 alt görev `todo/TASK-002k*` |
 
 ---
 
