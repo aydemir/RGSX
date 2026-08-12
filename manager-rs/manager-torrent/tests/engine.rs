@@ -72,3 +72,42 @@ async fn engine_name_is_librqbit() {
     let e = engine().await;
     assert_eq!(e.engine(), "librqbit");
 }
+
+#[tokio::test]
+async fn resolve_downloaded_file_skips_parts_and_finds_largest_content() {
+    let root = std::env::temp_dir().join(format!("rgsx_torrent_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("Sintel")).unwrap();
+    std::fs::write(root.join("Sintel/Sintel.de.srt.rqbitpart"), "part").unwrap();
+    std::fs::write(root.join("Sintel/Sintel.de.srt"), "small sub").unwrap();
+    std::fs::write(root.join("Sintel/Sintel.mp4"), "x".repeat(4096).as_bytes()).unwrap();
+    // Sondaki .part artığı: atlanmalı.
+    std::fs::write(root.join("Sintel/Sintel.tmp.part"), "partial").unwrap();
+    let e = LibrqbitEngine::new(
+        root.clone(),
+        "/tmp/unit_downloads".to_string(),
+        "/tmp/unit_logs".to_string(),
+    );
+    let found = e.resolve_downloaded_file().await.unwrap();
+    assert_eq!(found.file_name().unwrap().to_string_lossy(), "Sintel.mp4");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn link_or_copy_creates_dest_linked_to_src() {
+    let root = std::env::temp_dir().join(format!("rgsx_link_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let src = root.join("src.iso");
+    let dst = root.join("dst.iso");
+    std::fs::write(&src, b"data").unwrap();
+    manager_torrent::link_or_copy(&src, &dst).unwrap();
+    assert!(dst.exists());
+    assert_eq!(std::fs::read(&dst).unwrap(), b"data");
+    // Hedef zaten varsa üzerine yaz masrafı (önce sil, tekrar bağla).
+    std::fs::remove_file(&dst).unwrap();
+    std::fs::write(&dst, b"other").unwrap();
+    manager_torrent::link_or_copy(&src, &dst).unwrap();
+    assert_eq!(std::fs::read(&dst).unwrap(), b"data");
+    let _ = std::fs::remove_dir_all(&root);
+}

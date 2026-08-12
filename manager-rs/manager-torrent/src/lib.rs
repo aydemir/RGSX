@@ -96,6 +96,90 @@ impl LibrqbitEngine {
                 message: "torrent list-only modda eklendi, handle yok".to_string(),
             })
     }
+
+    /// Üst seviye indirme akışı — Python `download_torrent_via_qbittorrent`'in
+    /// librqbit karşılığı (bridge-qup tarafı: `source` magnet veya `.torrent`
+    /// URL'si; session'a ekler, tamamlanıncaya kadar bekler, indirilen dosyayı
+    /// `output_folder` altında çözer ve `dest_path`'e hard-link/kopya yapar).
+    ///
+    /// Not: kapsamlı progres/seçim/seed takibi (`tag`, `temp_dir`,
+    /// file-selection, `_seed_status_worker`) TASK-002f dışında kaldı — bu cep
+    /// senkron "indir → çıkar" işlemini sunar.
+    pub async fn download_torrent(
+        &self,
+        source: AddTorrent<'_>,
+        dest_path: &std::path::Path,
+    ) -> Result<std::path::PathBuf, BridgeError> {
+        let handle = self.add_torrent(source).await?;
+        handle
+            .wait_until_completed()
+            .await
+            .map_err(|e| BridgeError::Rpc {
+                code: -32000,
+                message: format!("indirme tamamlanamadı: {e}"),
+            })?;
+
+        // İnen root'u çöz: bazı torrent'lerin kök klasörü olabilir.
+        let found = self.resolve_downloaded_file().await?;
+        link_or_copy(&found, dest_path).map_err(|e| BridgeError::Rpc {
+            code: -32000,
+            message: format!("dosya sonlandırılamadı ({found:?} → {dest_path:?}): {e}"),
+        })?;
+        tracing::info!(src = %found.display(), dst = %dest_path.display(), "torrent indirildi");
+        Ok(found)
+    }
+
+    /// `output_folder` içinde tamamlanmış torrent dosyasını bulur (Python
+    /// `_resolve_downloaded_file` karşılığı). Torrent'teki ana içerik en büyük
+    /// ve en anlamlı dosya olduğundan (`Sintel.mp4` vs `Sintel.de.srt` gibi)
+    /// en büyük bağımsız içerik dosyası seçilir; `.rqbitpart` atlanır.
+    pub async fn resolve_downloaded_file(&self) -> Result<std::path::PathBuf, BridgeError> {
+        let root = self.output_folder.clone();
+        let mut largest: Option<(u64, std::path::PathBuf)> = None;
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir).map_err(|e| BridgeError::Rpc {
+                code: -32000,
+                message: format!("output klasörü okunamadı ({dir:?}): {e}"),
+            })?;
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.is_file() {
+                    let is_rqbit_part = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().ends_with(".rqbitpart"))
+                        .unwrap_or(false);
+                    if is_rqbit_part {
+                        continue;
+                    }
+                    let len = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                    if largest.as_ref().map(|(l, _)| len > *l).unwrap_or(true) {
+                        largest = Some((len, p));
+                    }
+                }
+            }
+        }
+        largest
+            .map(|(_, p)| p)
+            .ok_or_else(|| BridgeError::Rpc {
+                code: -32000,
+                message: "indirilen dosya bulunamadı".to_string(),
+            })
+    }
+}
+
+/// `src` dosyasına `dst`'ye hard-link dener; aynı dizin/yetki kısıtı olursa
+/// `copy2`'e düşer (Python `os.link`/`shutil.copy2` karşılığı).
+pub fn link_or_copy(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if dst.exists() {
+        std::fs::remove_file(dst)?;
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::hard_link(src, dst).or_else(|_| std::fs::copy(src, dst).map(|_| ()))
 }
 
 #[async_trait::async_trait]

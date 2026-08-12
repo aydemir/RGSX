@@ -62,3 +62,9 @@ tek Rust paketi Windows+Linux/Batocera'yı kapsar; Batocera Python yolu korunur.
   edip librqbit Session'ı lazy spawn ediyor. manager-bin `RGSX_TORRENT_ENGINE=librqbit`
   seçimini destekliyor (varsayılan Python bridge korunur). Test: 107/107 geçti
   (30 core + 5 bridge + 63 contract + 2 doctest + 7 manager-torrent).
+- 2026-08-12 — İndirme akışı: `LibrqbitEngine::download_torrent` (Python
+  `download_torrent_via_qbittorrent` karşılığı) — session'a ekle → tamamlan → en büyük
+  içerik dosyasını çöz (`.` rqbitpart atlanır) → `dest_path`'e hard-link/copy.
+  Canlı doğrulama: sintel~129MB, ~7 sn'de indi, `sintel.mp4` hedefe çıktı. Test: 109/109.
+  Kod-tarafı indirme API'si Rust'ta hâlâ yok — akış Python `queue.py`'da doğrudan
+  çağrılıyor; librqbit path'i şimdilik engine'de senkron (progres/seçim/seed takibi hariç).

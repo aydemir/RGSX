@@ -1,86 +1,52 @@
-//! Faz 10b spike — librqbit canlı indirme doğrulaması.
+//! Faz 10b — librqbit `LibrqbitEngine::download_torrent` canlı doğrulaması.
 //!
-//! Gerçek bir public torrent indirir.
-//! Kullanım: `cargo run --release -p manager-torrent --example live_torrent <output_dir>`
+//! Küçük bir public torrent (`<engine>` üzerinden) indirir, dosyayı çözer ve
+//! hedef yola link/kopyalar. Python `download_torrent_via_qbittorrent` akışının
+//! librqbit karşılığı — `output_dir` içine iner, `dest_path`'e sonuç yazılır.
+//! Kullanım: `cargo run --release -p manager-torrent --example live_torrent <output_dir> <dest_path>`
 //!
-//! Bu örnek Faz 10b'nin fizibilite kanıtıdır.
+//! Bu örnek Faz 10b'nin engine-seviyesindeki fizibilite kanıtıdır.
 
 use std::time::Duration;
 
-use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
+use manager_bridge::TorrentBackend;
+use manager_torrent::LibrqbitEngine;
 
-const MAGNET_LINK: &str = "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862";
+/// Sintel (public domain film) — küçük, güvenilir, iyi seed'li.
+const TORRENT_URL: &str = "https://webtorrent.io/torrents/sintel.torrent";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
-        )
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
         .init();
 
     let output_dir = std::env::args()
         .nth(1)
         .expect("ilk argüman çıktı dizini olmalı");
+    let dest_path = std::env::args()
+        .nth(2)
+        .expect("ikinci argüman hedef dosya yolu olmalı");
 
-    let session = Session::new(output_dir.into()).await?;
-    tracing::info!("librqbit session oluşturuldu (aarch64 Linux)");
+    let engine = LibrqbitEngine::new(
+        output_dir.into(),
+        String::new(),
+        String::new(),
+    );
+    tracing::info!("librqbit engine kuruldu (aarch64 Linux), torrent: {TORRENT_URL}");
 
-    let handle = match session
-        .add_torrent(
-            AddTorrent::from_url(MAGNET_LINK.to_string()),
-            Some(AddTorrentOptions {
-                overwrite: true,
-                ..Default::default()
-            }),
-        )
-        .await?
-    {
-        AddTorrentResponse::Added(_, handle) => handle,
-        _ => return Err("beklenmeyen AddTorrentResponse".into()),
-    };
+    let result = tokio::time::timeout(
+        Duration::from_secs(900),
+        engine.download_torrent(librqbit::AddTorrent::from_url(TORRENT_URL.to_string()), dest_path.as_ref()),
+    )
+    .await;
 
-    handle.with_metadata(|r| {
-        tracing::info!("torrent adı bytes: {:?}", r.info.name.as_ref());
-    })?;
-
-    // İstatistik task'i — 2 sn'de bir durum bas.
-    tokio::spawn({
-        let h = handle.clone();
-        async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                let s = h.stats();
-                match &s.live {
-                    Some(live) => {
-                        tracing::info!(
-                            "durum: {}/{} byte, down={:?}, up={:?}, finished={}",
-                            s.progress_bytes,
-                            s.total_bytes,
-                            live.download_speed,
-                            live.upload_speed,
-                            s.finished
-                        );
-                    }
-                    None => {
-                        tracing::info!(
-                            "durum: {}/{} byte, finished={}",
-                            s.progress_bytes,
-                            s.total_bytes,
-                            s.finished
-                        );
-                    }
-                }
-            }
-        }
-    });
-
-    // Tamamlanana kadar bekle (timeout: 15 dk).
-    let timeout = tokio::time::timeout(Duration::from_secs(900), handle.wait_until_completed()).await;
-    match timeout {
-        Ok(_) => tracing::info!("TORRENT İNDİRİLDİ ✅"),
+    match result {
+        Ok(Ok(src)) => tracing::info!("TORRENT İNDİRİLDİ ✅ kaynak={}", src.display()),
+        Ok(Err(e)) => tracing::error!("indirme hatası: {e}"),
         Err(_) => tracing::warn!("zaman aşımı — indirme tamamlanamadı"),
     }
 
+    engine.shutdown().await;
     Ok(())
 }
