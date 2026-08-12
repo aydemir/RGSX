@@ -2,7 +2,7 @@
 
 - **id:** TASK-002
 - **title:** Faz 10 — Rust kısmi refaktör (EN SON)
-- **status:** todo
+- **status:** in-progress
 - **priority:** P2
 - **created:** 2026-08-11
 - **tags:** rust, rgsx-manager, qbittorrent-backend, network, concurrency
@@ -61,8 +61,11 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 
 ## Alt-görevler
 
-- **TASK-002a** — manager-core state machine tasarımı (state.rs) → `tasks/todo/TASK-002a-manager-core-state-machine.md`
-- TASK-002b/c/d — HTTP köprüsü, tray/autostart/firewall, characterization doğrulama (tanımlanacak)
+- **TASK-002a** — manager-core state machine tasarımı → ✅ done (`tasks/done/`)
+- **TASK-002b** — HTTP köprüsü: axum `/api/*` + SSE sözleşmesi → ✅ done (`tasks/done/`)
+- **TASK-002c** — qbittorrent_backend subprocess köprüsü + manager-bin entegrasyonu → `tasks/todo/TASK-002c-bridge-bin-integration.md`
+- **TASK-002d** — manager-windows: tray / autostart / firewall → `tasks/todo/TASK-002d-manager-windows.md`
+- **Faz 10b (`librqbit`)** — Linux/ARM test imkânı şart olduğundan **askıda**
 
 ## İlerleme
 
@@ -70,3 +73,6 @@ Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
   `Cargo.toml` bulunmuyor).
 - 2026-08-11 — Workspace iskeleti kuruldu (5 crate, scaffold commit `dc3aa21`);
   TASK-002a (state machine) alt-görevine bölündü.
+- 2026-08-12 — TASK-002a done; alt-görevler b/c/d tanımlandı; Windows kapsamına alındı
+  (tray/autostart/firewall dahil; yalnızca 10b askıda). Sıradaki: TASK-002b.
+- 2026-08-12 — TASK-002b done: contract (52 Rust testi) + canlı smoke OK. Sıradaki: TASK-002c.
