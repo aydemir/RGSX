@@ -1779,6 +1779,10 @@ _BRIDGE_METHODS = {
     "change_webui_password": lambda params: change_webui_password(
         str((params or {}).get("password", ""))
     ),
+    "get_app_paths": lambda params: {
+        "downloads_folder": getattr(config, "ROMS_FOLDER", ""),
+        "logs_folder": getattr(config, "log_dir", ""),
+    },
     "shutdown": lambda params: shutdown(),
 }
 

@@ -1,4 +1,13 @@
-//! manager-windows: firewall COM, autostart registry, tray.
+//! manager-windows: Windows-only bileşenler.
 //!
-//! Windows-only; Linux/Termux'ta derlenmez, yalnız `cfg(windows)` hedeflerde
-//! bağlanır. İskelet sürüm — implementasyon Faz 10'a bırakıldı.
+//! - `autostart` — HKCU Run registry kaydı (`RGSXManager`)
+//! - `firewall` — netsh ile uygulama kuralı yönetimi
+//! - `tray` — tray-icon + muda tabanlı sistem tepsisi ikonu + menü
+//!
+//! Tümü `cfg(windows)`; diğer platformlarda crate boş derlenir.
+
+#![cfg(windows)]
+
+pub mod autostart;
+pub mod firewall;
+pub mod tray;

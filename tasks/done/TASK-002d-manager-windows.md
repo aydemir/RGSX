@@ -2,7 +2,7 @@
 
 - **id:** TASK-002d
 - **title:** Windows entegrasyonu — tray ikonu, autostart registry, firewall
-- **status:** todo
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-12
 - **tags:** rust, windows-rs, tray, registry, firewall
@@ -39,3 +39,16 @@ Windows test imkânı mevcut olduğundan bu alt-görev aktif kapsamdadır.
 ## İlerleme
 
 - 2026-08-12 — Alt-görev tanımlandı (Windows ortamı kapsamında aktif)
+- 2026-08-12 — manager-windows: tray.rs (tray-icon + muda menu, ayrı thread + GetMessageW pump),
+  autostart.rs (HKCU Run registry), firewall.rs (netsh advfirewall) eklendi; manager-bin main.rs'ye
+  cfg(windows) setup + tray eylem döngüsü bağlandı.
+- 2026-08-12 — **0xC0000139 fix:** `common-controls-v6` feature'ı muda'da boştur (manifest gömmez),
+  yalnızca comctl32 v6-sadece `TaskDialogIndirect` import'unu açar → manifest'siz comctl32 v5.82
+  yüklenince loader STATUS_ENTRYPOINT_NOT_FOUND verir. Feature kaldırıldı (muda MessageBoxW fallback).
+  Canlı smoke: bridge + HTTP 5010 health + tray ikonu OK; autostart mevcut kaydı doğru tespit etti;
+  firewall admin eksikliğini warn'a indirdi.
+- 2026-08-12 — Tray OpenDownloads/OpenLogs: `get_app_paths` bridge method'u (qbittorrent_backend.py)
+  üzerinden klasör yolları alınıp `explorer <path>` ile açılıyor. Rust workspace 96/96 test, Python
+  baseline 9 pre-existing hata (Linux-only + pystray Windows ortamı) — regresyon yok.
+- 2026-08-12 — **Tamamlandı.** Doğrulama: canlı smoke (tray + autostart + firewall + HTTP), cargo test
+  --workspace, Python suite baseline.

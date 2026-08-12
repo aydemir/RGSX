@@ -229,6 +229,14 @@ impl Bridge {
         Ok((ok, msg))
     }
 
+    /// `get_app_paths` → tray menüsü için indirme/log klasör yolları.
+    pub async fn get_app_paths(&self) -> Result<(String, String), BridgeError> {
+        let v = self.call("get_app_paths", json!({})).await?;
+        let downloads = v.get("downloads_folder").and_then(Value::as_str).unwrap_or_default().to_string();
+        let logs = v.get("logs_folder").and_then(Value::as_str).unwrap_or_default().to_string();
+        Ok((downloads, logs))
+    }
+
     /// `shutdown` bildirimi — süreci kapatır (id'siz; yanıt yok).
     pub async fn shutdown(&self) {
         let payload = json!({ "jsonrpc": "2.0", "method": "shutdown" });
