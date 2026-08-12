@@ -41,24 +41,14 @@ fn resolve_script() -> String {
 
 /// Torrent engine'ini `RGSX_TORRENT_ENGINE` env'ine göre kurar.
 ///
-/// - `librqbit` → in-process librqbit (manager-torrent). TASK-002f.
-/// - diğeri/boş → Python bridge subprocess (varsayılan; script yoksa None).
+/// - `python` → legacy Python bridge subprocess (qbittorrent_backend.py; WebUI/
+///   port-fallback/şifre migration korunur). TASK-002f öncesi davranış — opt-in.
+/// - `librqbit` / boş / diğer → **varsayılan**: in-process librqbit (manager-torrent).
+///   TASK-002g ertelenmiş kararı (2026-08-12): librqbit Windows'ta da derlendiği
+///   (`cargo check --target x86_64-pc-windows-gnu`) doğrulanınca varsayılan yapıldı.
 fn resolve_engine() -> Option<Arc<dyn TorrentBackend>> {
     match std::env::var("RGSX_TORRENT_ENGINE").as_deref() {
-        Ok("librqbit") => {
-            let downloads = std::env::var("RGSX_DOWNLOADS_FOLDER")
-                .unwrap_or_else(|_| std::env::temp_dir().join("rgsx_torrents").to_string_lossy().to_string());
-            let logs = std::env::var("RGSX_LOGS_FOLDER")
-                .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
-            let engine = manager_torrent::LibrqbitEngine::new(
-                std::path::PathBuf::from(&downloads),
-                downloads,
-                logs,
-            );
-            tracing::info!("torrent engine: librqbit (embedded)");
-            Some(Arc::new(engine))
-        }
-        _ => {
+        Ok("python") => {
             let script = resolve_script();
             match Bridge::spawn(BridgeConfig {
                 script: script.clone(),
@@ -74,6 +64,19 @@ fn resolve_engine() -> Option<Arc<dyn TorrentBackend>> {
                     None
                 }
             }
+        }
+        _ => {
+            let downloads = std::env::var("RGSX_DOWNLOADS_FOLDER")
+                .unwrap_or_else(|_| std::env::temp_dir().join("rgsx_torrents").to_string_lossy().to_string());
+            let logs = std::env::var("RGSX_LOGS_FOLDER")
+                .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
+            let engine = manager_torrent::LibrqbitEngine::new(
+                std::path::PathBuf::from(&downloads),
+                downloads,
+                logs,
+            );
+            tracing::info!("torrent engine: librqbit (embedded, varsayılan)");
+            Some(Arc::new(engine))
         }
     }
 }

@@ -65,3 +65,7 @@ Varsayılan değişikliği davranışı etkilediğinden kullanıcı onayıyla uy
 
 - 2026-08-12 — **KARAR UYGULANDI:** Python bridge varsayılan; librqbit opt-in + belgelendi;
   "Windows'ta derlendiğinde varsayılan yapılsın" notu roadmap + FEATURES.md'ye işlendi. TASK done.
+
+- 2026-08-12 — **ERTELENMİŞ KARAR TETİKLENDİ (TASK-002h):** librqbit Windows'ta derlendiği
+  (`cargo check --target x86_64-pc-windows-gnu`, tüm workspace) doğrulandı → varsayılan motor
+  yapıldı. Python bridge `RGSX_TORRENT_ENGINE=python` ile opt-in. Detay: tasks/done/TASK-002h.

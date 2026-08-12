@@ -502,24 +502,26 @@ characterization tests bunun garantisidir.
 **Stack:** `tokio` + `axum` (HTTP/SSE), `windows-rs` (registry + firewall COM), `serde` (JSON).
 Cross-platform genişlerse `cross-rs`/musl toolchain ile ARM cross-compile.
 
-**librqbit embedded engine — opt-in kullanım (Faz 10b):**
+**librqbit embedded engine — kullanım (Faz 10b):**
 
-- `manager-bin` varsayılan olarak **Python bridge** (qbittorrent_backend.py subprocess) kullanır.
-- librqbit (in-process, `manager-torrent::LibrqbitEngine`) şu env ile etkinleşir:
-  - `RGSX_TORRENT_ENGINE=librqbit` → embedded engine (aksi halde Python bridge).
+- `manager-bin` varsayılan olarak **librqbit** (in-process, `manager-torrent::LibrqbitEngine`)
+  kullanır (TASK-002h, 2026-08-12 — Windows derlemesi `cargo check --target x86_64-pc-windows-gnu`
+  ile doğrulandı, ertelenmiş karar tetiklendi).
+- **Python bridge opt-in:** `RGSX_TORRENT_ENGINE=python` → legacy qbittorrent_backend.py
+  subprocess (WebUI / port-fallback / şifre migration korunur).
+- Diğer env'ler:
   - `RGSX_DOWNLOADS_FOLDER=<dir>` → indirme hedefi (öntanımlı `%TEMP%/rgsx_torrents`).
   - `RGSX_LOGS_FOLDER=<dir>` → log hedefi (öntanımlı `%TEMP%`).
   - `RGSX_MANAGER_BIN_PORT=<port>` → HTTP portu (öntanımlı 5010).
 - Doğrulama (2026-08-12, aarch64 Linux): `manager-bin` gerçek bir `.torrent` ile uçtan uca
   indirdi → `POST /api/download` → `finalize_download_in_state` → history `Download_OK`,
-  dosya `downloads_folder`'a hard-link ile çıktı. Wrapper'da unix'e özgü API yok; librqbit
-  cross-platform olduğundan Windows'ta da derlenmesi beklenir (sandbox'ta henüz derlenmedi).
+  dosya `downloads_folder`'a hard-link ile çıktı. Windows cross-compile (tüm workspace,
+  tray/autostart/firewall dahil) `x86_64-pc-windows-gnu` hedefinde hatasız derlendi.
 
-**ERTELENMİŞ KARAR — varsayılan motor:** librqbit, **Windows'ta da derlendiği doğrulanınca**
-(`cargo check --target x86_64-pc-windows-gnu` veya dev makinesi) **varsayılan motor** yapılacak.
-Şu an opt-in kalır; gerekçe: qBittorrent WebUI / port-fallback / şifre migration / seeding
-durumu `embedded_mode`'da mevcut değil — bu özellikler kaybolmadan önce Windows derlemesi
-teyit edilmeli. (Karar: `mem` — TASK-002g, 2026-08-12.)
+**KARAR GERÇEKLEŞTİ (2026-08-12, TASK-002h):** librqbit **varsayılan torrent motoru** yapıldı;
+Python bridge `RGSX_TORRENT_ENGINE=python` ile opt-in. Gerekçe: Windows derlemesi teyit
+edildi. Bilinen kayıp: qBittorrent WebUI / port-fallback / şifre migration / seeding durumu
+`embedded_mode`'da mevcut değil — bu yüzden Python yolu bilinçli olarak korundu (opt-in).
 
 **Sıralama:** önce state machine (`enum`), sonra downloader mantığı.
 

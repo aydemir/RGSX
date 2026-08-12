@@ -3,10 +3,14 @@
 ## librqbit Embedded Engine — Faz 10b (2026.08.12)
 
 `manager-torrent::LibrqbitEngine` (librqbit 8.1.1) in-process embedded torrent motoru
-`TorrentBackend` sözleşmesini uygular; `manager-bin` `RGSX_TORRENT_ENGINE=librqbit` ile etkinleşir.
-Aarch64 Linux'ta uçtan uca doğrulandı (`/api/download` → gerçek `.torrent` indi → `Download_OK`).
-**Opt-in**: varsayılan hâlâ Python bridge (qBittorrent WebUI/port-fallback/şifre migration korunur).
-ERTELENMİŞ KARAR: Windows'ta derlendiği doğrulanınca varsayılan yapılacak.
+`TorrentBackend` sözleşmesini uygular. Aarch64 Linux'ta uçtan uca doğrulandı
+(`/api/download` → gerçek `.torrent` indi → `Download_OK`). Windows cross-compile
+(`cargo check --target x86_64-pc-windows-gnu`, tüm workspace tray/autostart/firewall dahil)
+hatasız derlendi (TASK-002h).
+
+**Varsayılan motor:** librqbit (TASK-002h, 2026-08-12 — ertelenmiş karar tetiklendi).
+Python bridge `RGSX_TORRENT_ENGINE=python` ile opt-in (qBittorrent WebUI/port-fallback/
+şifre migration korunur). Runtime: Windows henüz canlı test edilmedi (yalnız derleme doğrulandı).
 
 ## Rust Manager Köprüsü — Faz 10 (2026.08.12)
 
