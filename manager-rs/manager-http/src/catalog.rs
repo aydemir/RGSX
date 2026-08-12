@@ -21,6 +21,8 @@ pub trait CatalogSource: Send + Sync {
     async fn get_json(&self, route: &str) -> Result<Value, CatalogError>;
     /// JSON dönen POST route'u proxy'ler (gövde iletilir).
     async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError>;
+    /// İkili (zip) POST route'u proxy'ler (ham bayt + content-type).
+    async fn post_binary(&self, route: &str, body: &Value) -> Result<(Vec<u8>, String), CatalogError>;
     /// Box-art görselini (ham bayt + content-type) proxy'ler.
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError>;
 }
@@ -96,5 +98,27 @@ impl CatalogSource for PythonCatalog {
             .await
             .map_err(|e| CatalogError(e.to_string()))?;
         Ok(v)
+    }
+
+    async fn post_binary(&self, route: &str, body: &Value) -> Result<(Vec<u8>, String), CatalogError> {
+        let url = format!("{}{}", self.base, route);
+        let resp = self
+            .client
+            .post(&url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CatalogError(e.to_string()))?;
+        let ct = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| CatalogError(e.to_string()))?;
+        Ok((bytes.to_vec(), ct))
     }
 }

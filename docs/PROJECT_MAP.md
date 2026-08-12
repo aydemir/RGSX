@@ -48,6 +48,13 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 - `cargo test -p manager-http`: 81/81 yeşil (7 yeni proxy testi). `system_info` birebir contract
   korunur (catalog=None → placeholder; contract testi yeşil).
 
+### Rust destek/queue proxy (Faz 10c/3/4, TASK-002k-4) — strangler/proxy
+- `cancel`/`queue`(post)/`queue/clear`/`queue/remove`/`clear-history`/`restart`/`shutdown`/
+  `pause`/`resume`/`support`(zip binary)/`download/batch` handler'ları `state.catalog` varsa
+  Python'a proxy'lenir (GET `get_json`, POST `post_json`/`post_binary`); yoksa placeholder/yerel.
+  `CatalogSource` trait'ine `post_binary` eklendi. `/api/download/batch` route'u Rust'e eklendi.
+- `cargo test -p manager-http`: 94/94 yeşil (13 yeni proxy testi).
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`

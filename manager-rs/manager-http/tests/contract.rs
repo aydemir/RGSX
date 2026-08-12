@@ -944,6 +944,9 @@ impl CatalogSource for FakeCatalog {
             "echo": body,
         }))
     }
+    async fn post_binary(&self, _route: &str, _body: &Value) -> Result<(Vec<u8>, String), CatalogError> {
+        Ok((b"ZIPDATA".to_vec(), "application/zip".to_string()))
+    }
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
         Ok((format!("IMG:{platform}").into_bytes(), "image/png".to_string()))
     }
@@ -1074,4 +1077,106 @@ async fn test_status_placeholder_when_no_source() {
     assert_eq!(body["statuses"], json!({}));
     let (status, _, body) = call_get(empty_app(), "/api/browse-directories?path=/nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ---------------------------------------------------------------------------
+// Faz 10c/3/4 — destek/queue yönetimi proxy
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_cancel_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/cancel", json!({"url": "x"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/cancel"));
+}
+
+#[tokio::test]
+async fn test_queue_post_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/queue", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/queue"));
+}
+
+#[tokio::test]
+async fn test_queue_clear_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/queue/clear", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/queue/clear"));
+}
+
+#[tokio::test]
+async fn test_queue_remove_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/queue/remove", json!({"task_id": "t1"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/queue/remove"));
+}
+
+#[tokio::test]
+async fn test_clear_history_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/clear-history", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/clear-history"));
+}
+
+#[tokio::test]
+async fn test_restart_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/restart", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/restart"));
+}
+
+#[tokio::test]
+async fn test_shutdown_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/shutdown", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/shutdown"));
+}
+
+#[tokio::test]
+async fn test_pause_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/pause", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/pause"));
+}
+
+#[tokio::test]
+async fn test_resume_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/resume", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/resume"));
+}
+
+#[tokio::test]
+async fn test_support_proxied_binary() {
+    let (status, headers, body) = call_post(app_with_catalog(), "/api/support", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(has_header(&headers, "content-type"), Some("application/zip"));
+    let bytes = match body {
+        Value::String(s) => s.into_bytes(),
+        other => other.to_string().into_bytes(),
+    };
+    assert_eq!(bytes, b"ZIPDATA");
+}
+
+#[tokio::test]
+async fn test_download_batch_proxied() {
+    let (status, _, body) = call_post(app_with_catalog(), "/api/download/batch", json!({"games": []})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["route"], json!("/api/download/batch"));
+}
+
+#[tokio::test]
+async fn test_download_batch_disabled_without_catalog() {
+    let (status, _, _) = call_post(empty_app(), "/api/download/batch", json!({"games": []})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_mgmt_placeholder_when_no_source() {
+    let (status, _, body) = call_post(empty_app(), "/api/pause", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["paused"].is_number());
+    let (status, _, body) = call_post(empty_app(), "/api/resume", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["resumed"], json!(0));
 }

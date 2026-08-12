@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-4
 - **title:** `support`/`queue_*`/`clear_history`/`restart`/`pause`/`resume`/`cancel`/`shutdown` Rust'e
-- **status:** todo
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-12
 - **environment:** both

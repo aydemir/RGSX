@@ -41,19 +41,19 @@
 | Route | Rust handler | Durum | Python impl | Contract test |
 |---|---|---|---|---|
 | `/api/download` | `download` | ✅ (torrent) | `handlers.py::_api_download` (HTTP) + `network/queue.py::download_rom` | contract download |
-| `/api/download/batch` | — | ⚠️ yok | `handlers.py::_api_download_batch` (Faz 9) | test_download_batch |
-| `/api/cancel` | `cancel` | ⚠️ placeholder | `handlers.py::_api_cancel` / `rgsx_manager.py::_handle_cancel_worker` | test_api_contract |
-| `/api/queue` | `queue_post` | ⚠️ | `handlers.py::_api_queue_post` | test_api_contract |
-| `/api/queue/clear` | `queue_clear` | ⚠️ | `handlers.py::_api_queue_clear` | test_api_contract |
-| `/api/queue/remove` | `queue_remove` | ⚠️ | `handlers.py::_api_queue_remove` | test_api_contract |
+| `/api/download/batch` | `download_batch` | 🔗 proxy | `handlers.py::_api_download_batch` (Faz 9) | test_download_batch (**TASK-002k-4 eklendi+proxy**) |
+| `/api/cancel` | `cancel` | 🔗 proxy | `handlers.py::_api_cancel` / `rgsx_manager.py::_handle_cancel_worker` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
+| `/api/queue` | `queue_post` | 🔗 proxy | `handlers.py::_api_queue_post` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
+| `/api/queue/clear` | `queue_clear` | 🔗 proxy | `handlers.py::_api_queue_clear` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
+| `/api/queue/remove` | `queue_remove` | 🔗 proxy | `handlers.py::_api_queue_remove` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
 | `/api/settings` | `settings_post` | 🔗 proxy | `handlers.py::_api_settings_post` → `rgsx_settings.py` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
 | `/api/save_filters` | `save_filters` | 🔗 proxy | `handlers.py::_api_save_filters` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
-| `/api/clear-history` | `clear_history` | ⚠️ | `handlers.py::_api_clear_history` → `history.py` | test_api_contract |
-| `/api/restart` | `restart` | ⚠️ | `handlers.py::_api_restart` / `rgsx_manager.py` | test_api_contract |
-| `/api/support` | `support` | ⚠️ | `handlers.py::_api_support` → `utils.generate_support_zip` | test_support_zip |
-| `/api/shutdown` | `shutdown` | ⚠️ | `rgsx_manager.py::_trigger_shutdown` | test_rgsx_manager |
-| `/api/pause` | `pause` | ⚠️ | `rgsx_manager.py::pause_all_downloads` | test_rgsx_manager |
-| `/api/resume` | `resume` | ⚠️ | `rgsx_manager.py::resume_all_downloads` | test_rgsx_manager |
+| `/api/clear-history` | `clear_history` | 🔗 proxy | `handlers.py::_api_clear_history` → `history.py` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
+| `/api/restart` | `restart` | 🔗 proxy | `handlers.py::_api_restart` / `rgsx_manager.py` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
+| `/api/support` | `support` | 🔗 proxy | `handlers.py::_api_support` → `utils.generate_support_zip` | test_support_zip (**TASK-002k-4 proxy'lendi**) |
+| `/api/shutdown` | `shutdown` | 🔗 proxy | `rgsx_manager.py::_trigger_shutdown` | test_rgsx_manager (**TASK-002k-4 proxy'lendi**) |
+| `/api/pause` | `pause` | 🔗 proxy | `rgsx_manager.py::pause_all_downloads` | test_rgsx_manager (**TASK-002k-4 proxy'lendi**) |
+| `/api/resume` | `resume` | 🔗 proxy | `rgsx_manager.py::resume_all_downloads` | test_rgsx_manager (**TASK-002k-4 proxy'lendi**) |
 | `/api/qbittorrent/change-password` | `change_password` | ⚠️ (uzunluk kontrolü) | `rgsx_manager.py` → `qbittorrent_backend.change_webui_password` | test_password_migration |
 | `/api/qbittorrent/regenerate-password` | — | ⚠️ yok | `rgsx_manager.py` → `qbittorrent_backend.regenerate_qbittorrent_password` | test_password_migration |
 | `/api/qbittorrent/start` | `qb_start` | ⚠️ | `rgsx_manager.py` → `qbittorrent_backend.ensure_running/get_webui_url` | test_qbittorrent_*.py |

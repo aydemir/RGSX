@@ -46,6 +46,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/favicon", get(api::favicon))
         .route("/api/update-cache", get(api::update_cache))
         .route("/api/download", post(api::download))
+        .route("/api/download/batch", post(api::download_batch))
         .route("/api/cancel", post(api::cancel))
         .route("/api/queue/clear", post(api::queue_clear))
         .route("/api/queue/remove", post(api::queue_remove))

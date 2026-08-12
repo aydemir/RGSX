@@ -439,8 +439,23 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     json_err(format!("Index de jeu invalide: {idx}"), StatusCode::BAD_REQUEST)
 }
 
-/// POST `/api/cancel` — 400 `url` eksikse; yoksa placeholder 200 (task_id: null).
-pub async fn cancel(Json(body): Json<Value>) -> Response {
+/// POST `/api/download/batch` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa 400.
+pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/download/batch", &body).await {
+            return ok(v);
+        }
+    }
+    json_err("Batch indirme devre dışı (RGSX_PYTHON_MANAGER_URL gerekli)", StatusCode::BAD_REQUEST)
+}
+
+/// POST `/api/cancel` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn cancel(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/cancel", &body).await {
+            return ok(v);
+        }
+    }
     let Some(url) = body.get("url").and_then(Value::as_str) else {
         return json_err("Paramètre manquant: url requis", StatusCode::BAD_REQUEST);
     };
@@ -451,14 +466,24 @@ pub async fn cancel(Json(body): Json<Value>) -> Response {
     })))
 }
 
-/// POST `/api/queue` — `queue_size` döner.
+/// POST `/api/queue` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa `queue_size`.
 pub async fn queue_post(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/queue", &Value::Null).await {
+            return ok(v);
+        }
+    }
     let size = state.read().queue_size();
     ok(contract::ok(json!({ "queue_size": size })))
 }
 
-/// POST `/api/queue/clear` — kuyruğu boşaltır.
+/// POST `/api/queue/clear` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa yerel.
 pub async fn queue_clear(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/queue/clear", &Value::Null).await {
+            return ok(v);
+        }
+    }
     let mut data = state.write();
     let cleared = data.queue.len();
     data.queue.clear();
@@ -473,8 +498,13 @@ pub async fn queue_clear(State(state): State<AppState>) -> Response {
     })))
 }
 
-/// POST `/api/queue/remove` — task_id eksikse 400, yoksa 404, varsa 200 + kaldır.
+/// POST `/api/queue/remove` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa yerel.
 pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/queue/remove", &body).await {
+            return ok(v);
+        }
+    }
     let Some(task_id) = body.get("task_id").and_then(Value::as_str) else {
         return json_err("Paramètre manquant: task_id requis", StatusCode::BAD_REQUEST);
     };
@@ -520,25 +550,48 @@ pub async fn save_filters(State(state): State<AppState>, Json(body): Json<Value>
     ok(contract::ok(json!({ "message": "Filtres sauvegardés" })))
 }
 
-/// POST `/api/clear-history` — geçmişi temizler.
+/// POST `/api/clear-history` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa yerel.
 pub async fn clear_history(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/clear-history", &Value::Null).await {
+            return ok(v);
+        }
+    }
     state.write().history.clear();
     ok(contract::ok(Value::Null))
 }
 
-/// POST `/api/restart` — placeholder mesaj.
-pub async fn restart() -> Response {
+/// POST `/api/restart` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn restart(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/restart", &Value::Null).await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({ "message": "Redémarrage en cours..." })))
 }
 
-/// POST `/api/support` — placeholder zip (iş mantığı TASK-002c).
-pub async fn support() -> Response {
+/// POST `/api/support` — Faz 10c/3/4: `catalog` varsa Python'a proxy (zip), yoksa boş placeholder.
+pub async fn support(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok((bytes, ct)) = c.post_binary("/api/support", &body).await {
+            return (
+                [
+                    ("Content-Type", ct),
+                    ("Access-Control-Allow-Origin", "*".to_string()),
+                    ("Content-Disposition", "attachment; filename=rgsx_support.zip".to_string()),
+                ],
+                bytes,
+            )
+                .into_response();
+        }
+    }
     (
         StatusCode::OK,
         [
-            ("Content-Type", "application/zip"),
-            ("Access-Control-Allow-Origin", "*"),
-            ("Content-Disposition", "attachment; filename=rgsx_support.zip"),
+            ("Content-Type", "application/zip".to_string()),
+            ("Access-Control-Allow-Origin", "*".to_string()),
+            ("Content-Disposition", "attachment; filename=rgsx_support.zip".to_string()),
         ],
         b"".as_slice(),
     )
@@ -560,19 +613,34 @@ pub async fn health(State(state): State<AppState>) -> Response {
     })))
 }
 
-/// POST `/api/shutdown` — placeholder.
-pub async fn shutdown() -> Response {
+/// POST `/api/shutdown` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder.
+pub async fn shutdown(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/shutdown", &Value::Null).await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(Value::Null))
 }
 
-/// POST `/api/pause` — aktif kuyruk elemanı sayısı (placeholder).
+/// POST `/api/pause` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder.
 pub async fn pause(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/pause", &Value::Null).await {
+            return ok(v);
+        }
+    }
     let paused = state.read().queue_size();
     ok(contract::ok(json!({ "paused": paused })))
 }
 
-/// POST `/api/resume` — placeholder (0).
-pub async fn resume() -> Response {
+/// POST `/api/resume` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder (0).
+pub async fn resume(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/resume", &Value::Null).await {
+            return ok(v);
+        }
+    }
     ok(contract::ok(json!({ "resumed": 0 })))
 }
 
