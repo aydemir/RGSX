@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k-5
 - **title:** `change_password`/`qb_start`/`qb_password_status` → `TorrentBackend` trait metotları
-- **status:** todo
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-12
 - **environment:** both

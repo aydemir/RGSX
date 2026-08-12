@@ -1180,3 +1180,42 @@ async fn test_mgmt_placeholder_when_no_source() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["resumed"], json!(0));
 }
+
+// ---------------------------------------------------------------------------
+// Faz 10c/3/5 — qBittorrent bridge (TorrentBackend) handler'ları
+// Not: bu handler'lar zaten `state.bridge_call` ile TorrentBackend trait'ine
+// bağlı; köprü (bridge) yoksa placeholder'a düşer (geriye uyumlu).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_qb_change_password_short_fails() {
+    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/change-password", json!({"password": "x"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body["success"].as_bool().unwrap_or(true));
+    assert_eq!(body["message"], json!("password_too_short"));
+}
+
+#[tokio::test]
+async fn test_qb_change_password_ok_placeholder() {
+    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/change-password", json!({"password": "longenough"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["message"], json!("ok"));
+}
+
+#[tokio::test]
+async fn test_qb_start_placeholder() {
+    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/start", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(false));
+    assert_eq!(body["ready"], json!(false));
+    assert_eq!(body["url"], json!(""));
+}
+
+#[tokio::test]
+async fn test_qb_password_status_placeholder() {
+    let (status, _, body) = call_get(empty_app(), "/api/qbittorrent/password-status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["available"], json!(false));
+    assert_eq!(body["using_default"], json!(true));
+    assert_eq!(body["webui_url"], json!(""));
+}

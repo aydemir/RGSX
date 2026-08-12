@@ -55,6 +55,12 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   `CatalogSource` trait'ine `post_binary` eklendi. `/api/download/batch` route'u Rust'e eklendi.
 - `cargo test -p manager-http`: 94/94 yeşil (13 yeni proxy testi).
 
+### Rust qBittorrent bridge (Faz 10c/3/5, TASK-002k-5) — köprü trait
+- `change_password`/`qb_start`/`qb_password_status` handler'ları zaten `state.bridge_call` ile
+  `TorrentBackend` trait'ine bağlı (Python bridge veya librqbit); köprü yoksa placeholder.
+  (Kod önceden hazırdı; 4 yeni kontrat testi eklendi — 98/98 yeşil.)
+- `regenerate-password` route'u Rust'te henüz YOK (Python tarafında kalan gap).
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`
