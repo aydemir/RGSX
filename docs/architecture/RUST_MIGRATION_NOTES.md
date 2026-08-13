@@ -237,6 +237,30 @@ otomatik sağlanır.
 
 ---
 
+## 11. Hata: librqbit indirme yolu canlıda hiç çalışmıyordu (proxy bypass)
+
+**Belirti:** `RGSX_TORRENT_ENGINE=librqbit` (varsayılan) olsa bile canlı RetroBat
+kurulumunda `POST /api/download` gerçekten librqbit'e uğramıyor; indirme hep
+Python'a düşüyordu.
+
+**Kök neden:** `manager-http/src/api.rs` `download()` handler'ı en üstte
+`state.catalog.is_some()` kontrolüyle **tüm** isteği Python'a proxy edip erken
+dönüyordu. Canlıda `RGSX_PYTHON_MANAGER_URL` set olduğundan `catalog` daima
+`Some` → librqbit `download_torrent` **asla çağrılmıyordu**. Engine kendi başına
+sağlamdı (`examples/live_torrent.rs` ile kanıtlı) ama manager HTTP akışında
+bypass edilmişti. Katalog çözümü (game_index→url) ile indirme motoru seçimi
+(RGSX_TORRENT_ENGINE) kavramları birbirine bağlanmıştı — oysa ortogonal.
+
+**Çözüm (TASK-002l):** İstek **doğrudan çözülmüş torrent URL'i** taşıyorsa ve bir
+bridge (librqbit varsayılan) mevcutsa proxy **atlanır**, indirme engine'e
+yönlendirilir — `catalog` var olsa bile. Torrent şeması: `magnet:`,
+`rgsx+torrent:`, `.torrent`. Torrent OLMAYAN düz http URL'ler ve çözülmemiş
+`game_index`/`game_name` istekleri eskisi gibi Python'a proxy edilir.
+Doğrulama: `manager-http/tests/contract.rs` (offline, catalog+bridge senaryo) +
+`manager-http/tests/live_download.rs` (`#[ignore]`, gerçek Sintel torrent).
+
+---
+
 ## Karar tarihçesi
 
 | Tarih | Karar | Gerekçe |

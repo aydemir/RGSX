@@ -347,17 +347,25 @@ pub async fn update_cache() -> Response {
 /// Not: tüm `.await`'ler `state.write()` kilidinden ÖNCE — write guard sonrası
 /// await handler future'ını Send yapmaz (bkz. change_password deseni).
 pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
-    // Faz 10c/3/4: `catalog` varsa Python'a proxy (game_index/game_name çözümü Python'da).
-    // Placeholder'da WebUI yalnızca game_index gönderir — yerel `direct_url` yolu bridge/librqbit içindir.
-    if let Some(c) = &state.catalog {
-        if let Ok(v) = c.post_json("/api/download", &body).await {
-            return ok(v);
+    // TASK-002l: doğrudan çözülmüş torrent URL'i (magnet:/rgsx+torrent:/.torrent) ve
+    // bir bridge (librqbit varsayılan) mevcutsa, Python catalog'a proxy ETME — indirme
+    // engine'e yönlendirilir (canlıda catalog olsa bile). Aksi halde mevcut davranış:
+    // `catalog` varsa game_index/game_name çözümü için Python'a proxy edilir.
+    let direct_url = body.get("url").and_then(Value::as_str);
+    let intercept_locally = direct_url.map(is_torrent_url).unwrap_or(false) && state.bridge.is_some();
+
+    if !intercept_locally {
+        // Faz 10c/3/4: `catalog` varsa Python'a proxy (game_index/game_name çözümü Python'da).
+        // Placeholder'da WebUI yalnızca game_index gönderir — yerel `direct_url` yolu bridge/librqbit içindir.
+        if let Some(c) = &state.catalog {
+            if let Ok(v) = c.post_json("/api/download", &body).await {
+                return ok(v);
+            }
         }
     }
     let platform = body.get("platform").and_then(Value::as_str);
     let game_index = body.get("game_index");
     let game_name = body.get("game_name").and_then(Value::as_str);
-    let direct_url = body.get("url").and_then(Value::as_str);
 
     if platform.is_none() || (game_index.is_none() && game_name.is_none() && direct_url.is_none()) {
         return json_err(
@@ -911,6 +919,19 @@ pub fn dest_path_for(downloads_folder: &str, url: &str, game_name: &str) -> std:
         .map(|s| s.to_string())
         .unwrap_or(fallback);
     base.join(from_url)
+}
+
+/// TASK-002l: doğrudan çözülmüş bir URL'in torrent indirme şeması olup olmadığı.
+/// `magnet:`, `rgsx+torrent:` ve `.torrent` (sorgu dizesi sonrası) kabul edilir.
+/// Bu şemalar librqbit engine'ine yönlendirilir; diğer URL'ler (düz http dosya)
+/// çözüm/katalog için Python'a proxy edilir.
+fn is_torrent_url(url: &str) -> bool {
+    let u = url.trim().to_ascii_lowercase();
+    if u.starts_with("magnet:") || u.starts_with("rgsx+torrent:") {
+        return true;
+    }
+    // `.torrent` uzantısı — olası `?query` sonrasını çıkar.
+    u.split('?').next().unwrap_or("").ends_with(".torrent")
 }
 
 /// Bilinen ROM / torrent dosya uzantısı (Python `check_extension_before_download`).

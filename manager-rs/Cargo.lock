@@ -1581,6 +1581,7 @@ dependencies = [
  "http-body-util",
  "manager-bridge",
  "manager-core",
+ "manager-torrent",
  "percent-encoding",
  "reqwest",
  "serde",

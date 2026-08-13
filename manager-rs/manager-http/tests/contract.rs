@@ -546,6 +546,72 @@ async fn test_download_with_bridge_forwards_to_engine() {
     assert_eq!(dest, &expected.display().to_string());
 }
 
+/// Hem bridge (librqbit) hem catalog (Python) mevcutken torrent şemalı doğrudan
+/// URL'in Python'a proxy EDİLMEDEN engine'e yönlendirilmesi (TASK-002l). Canlıda
+/// `catalog` daima vardır; eski kod burada her şeyi Python'a proxy ediyordu.
+#[tokio::test]
+async fn test_download_torrent_scheme_intercepts_with_bridge_and_catalog() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> =
+        Arc::new(FakeEngine { calls: calls.clone() });
+
+    let mut state = AppState::empty();
+    state.bridge = Some(bridge);
+    state.catalog = Some(Arc::new(FakeCatalog) as Arc<dyn manager_http::catalog::CatalogSource>);
+    let app = router(state);
+
+    let (status, _, body) = call_post(
+        app,
+        "/api/download",
+        json!({"url": "magnet:?xt=urn:btih:abc123", "game_name": "Sintel", "platform": "PC"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["queued"], json!(true));
+
+    // Arka plan task'ı engine'i çağırmalı (yani Python catalog'a DÜŞMEMELİ).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if !calls.lock().unwrap().is_empty() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "torrent şemalı istek engine'e yönlenmedi (muhtemelen Python'a proxy edildi)"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let recorded = calls.lock().unwrap().clone();
+    assert_eq!(recorded.first().unwrap().0, "magnet:?xt=urn:btih:abc123");
+}
+
+/// Torrent OLMAYAN doğrudan URL (düz http dosya) ve catalog mevcutken hâlâ
+/// Python'a proxy edilmeli — engine'e DÜŞMEMELİ (TASK-002l davranış kuralı).
+#[tokio::test]
+async fn test_download_non_torrent_url_still_proxies_with_catalog() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> =
+        Arc::new(FakeEngine { calls: calls.clone() });
+
+    let mut state = AppState::empty();
+    state.bridge = Some(bridge);
+    state.catalog = Some(Arc::new(FakeCatalog) as Arc<dyn manager_http::catalog::CatalogSource>);
+    let app = router(state);
+
+    let (status, _, body) = call_post(
+        app,
+        "/api/download",
+        json!({"url": "https://exemple.invalid/rom.zip", "game_name": "Rom", "platform": "NES"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Proxy yanıtı: FakeCatalog echo döndürür (engine değil).
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["route"], json!("/api/download"));
+    assert!(calls.lock().unwrap().is_empty(), "düz http url engine'e düşmemeli");
+}
+
 #[tokio::test]
 async fn test_download_bridge_none_keeps_placeholder() {
     let (status, _, body) =
