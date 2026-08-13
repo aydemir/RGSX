@@ -261,6 +261,25 @@ Doğrulama: `manager-http/tests/contract.rs` (offline, catalog+bridge senaryo) +
 
 ---
 
+## 12. Hata: WebUI progress barı librqbit ile donuyordu (canlı akış yok)
+
+**Belirti:** `RGSX_TORRENT_ENGINE=librqbit` (varsayılan) ile indirirken WebUI progress
+barı 0%/"Downloading"de kalır, bitince aniden tamamlanır. qBittorrent kendi penceresinde
+gerçek akışı gösterdiğinden "ikisi farklı gösteriyor" izlenimi doğuyordu.
+
+**Kök neden:** `TorrentBackend::download_torrent` sözleşmesi yalnız sonuç yolunu döndürür;
+indirme **sırasında** ilerleme aktarmaz. Eski qBittorrent yolu `progress_queue` ile canlı
+akıtıyordu; librqbit engine'de eşdeğer akış yoktu (`download_torrent_source` sadece
+`add → wait_until_completed → resolve`).
+
+**Çözüm (TASK-002m):** `TorrentBackend`'e `download_torrent_progress(source, dest,
+on_progress)` eklendi (varsayılanı `on_progress`'u yok sayar). `LibrqbitEngine` override
+edip `handle.stats()` döngüsünden `ProgressEvent{downloaded,total,speed,finished}` yayar;
+`api.rs` `download()` callback'i `state.progress[game_url]` + SSE `progress` olayını
+günceller. Artık WebUI barı canlı akar.
+
+---
+
 ## Karar tarihçesi
 
 | Tarih | Karar | Gerekçe |

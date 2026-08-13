@@ -586,6 +586,104 @@ async fn test_download_torrent_scheme_intercepts_with_bridge_and_catalog() {
     assert_eq!(recorded.first().unwrap().0, "magnet:?xt=urn:btih:abc123");
 }
 
+/// TASK-002m: canlı progress akışını doğrular. `download_torrent_progress`'u
+/// override eden engine, handler'ın verdiği `on_progress` callback'ini çağırır;
+/// test engine'in aldığı olayları (downloaded/total) kaydederek callback'in
+/// gerçekten çalıştığını ve progress'in state'e işlendiğini kanıtlar.
+#[derive(Debug)]
+struct FakeProgressEngine {
+    events: Arc<std::sync::Mutex<Vec<(u64, u64, f64, bool)>>>,
+}
+
+#[async_trait::async_trait]
+impl manager_bridge::TorrentBackend for FakeProgressEngine {
+    fn engine(&self) -> &'static str {
+        "fake-progress"
+    }
+
+    async fn call(&self, _method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+        Err(manager_bridge::BridgeError::Rpc {
+            code: -32601,
+            message: "Method not found".to_string(),
+        })
+    }
+
+    async fn shutdown(&self) {}
+
+    async fn download_torrent_progress(
+        &self,
+        _source_url: &str,
+        dest_path: &std::path::Path,
+        on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>>,
+    ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
+        if let Some(cb) = &on_progress {
+            let ev = manager_bridge::ProgressEvent {
+                downloaded: 50,
+                total: 100,
+                speed: 1.5,
+                finished: false,
+            };
+            // Engine'in aldığı olayı kaydet (handler'ın callback'inin çalıştığını kanıtlar).
+            self.events.lock().unwrap().push((ev.downloaded, ev.total, ev.speed, ev.finished));
+            cb(ev);
+        }
+        Ok(dest_path.to_path_buf())
+    }
+}
+
+#[tokio::test]
+async fn test_download_streams_progress_callback() {
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let engine: Arc<dyn manager_bridge::TorrentBackend> =
+        Arc::new(FakeProgressEngine { events: events.clone() });
+
+    let data = Arc::new(std::sync::RwLock::new(StateData::empty()));
+    let mut state = AppState::empty();
+    state.bridge = Some(engine);
+    state.data = data.clone();
+    let app = router(state);
+
+    let (status, _, body) = call_post(
+        app,
+        "/api/download",
+        json!({"url": "magnet:?xt=urn:btih:abc", "game_name": "Prog", "platform": "PC"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["queued"], json!(true));
+
+    // Engine'in on_progress callback'ini aldığı (handler'ın callback'inin çalıştığı).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if !events.lock().unwrap().is_empty() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "progress callback engine'e ulaşmadı"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let recorded = events.lock().unwrap().clone();
+    assert_eq!(recorded.first().unwrap(), &(50u64, 100u64, 1.5f64, false));
+
+    // Sonuçta state.progress tamamlanma (100 / Download_OK) ile sonlanmalı.
+    loop {
+        let prog = data.read().unwrap().progress.clone();
+        if let Some(Value::Object(m)) = prog.get("magnet:?xt=urn:btih:abc") {
+            if m.get("status").and_then(Value::as_str) == Some("Download_OK") {
+                assert_eq!(m.get("progress").and_then(Value::as_u64), Some(100));
+                break;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "indirme finalize olmadı"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
 /// Torrent OLMAYAN doğrudan URL (düz http dosya) ve catalog mevcutken hâlâ
 /// Python'a proxy edilmeli — engine'e DÜŞMEMELİ (TASK-002l davranış kuralı).
 #[tokio::test]

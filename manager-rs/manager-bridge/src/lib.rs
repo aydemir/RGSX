@@ -31,6 +31,20 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
+/// İndirme ilerleme olayı — engine'den WebUI'ye canlı akış için.
+///
+/// `downloaded`/`total` bayt cinsinden; `speed` MiB/s; `finished` torrent'in
+/// tamamlandığını (ve `download_torrent` sonlanmak üzere olduğunu) belirtir.
+/// TASK-002m: librqbit engine'i `handle.stats()` döngüsünden bu olayı yayar;
+/// Python bridge varsayılan olarak yok sayar (kendi progress_queue akışını kullanır).
+#[derive(Debug, Clone, Copy)]
+pub struct ProgressEvent {
+    pub downloaded: u64,
+    pub total: u64,
+    pub speed: f64,
+    pub finished: bool,
+}
+
 /// Köprü hatası.
 #[derive(Debug)]
 pub enum BridgeError {
@@ -373,6 +387,23 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
             message: "download_torrent sonucu string yol değil".to_string(),
         })?;
         Ok(std::path::PathBuf::from(path))
+    }
+
+    /// `download_torrent` ile aynı akış, ama indirme **sırasında** `on_progress`
+    /// callback'ine canlı ilerleme olayları yayar (varsa). WebUI progress bar'ını
+    /// canlı beslemek için kullanılır.
+    ///
+    /// Default: `on_progress`'u yok sayar ve sıradan `download_torrent`'e düşer
+    /// (Python bridge kendi `progress_queue` akışını zaten kullanır). librqbit
+    /// engine override edip `handle.stats()` döngüsünden olay yayar.
+    async fn download_torrent_progress(
+        &self,
+        source_url: &str,
+        dest_path: &std::path::Path,
+        on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
+    ) -> Result<std::path::PathBuf, BridgeError> {
+        let _ = on_progress;
+        self.download_torrent(source_url, dest_path).await
     }
 }
 

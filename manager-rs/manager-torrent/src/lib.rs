@@ -19,8 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session};
-use manager_bridge::TorrentBackend;
-use manager_bridge::BridgeError;
+use manager_bridge::{BridgeError, ProgressEvent, TorrentBackend};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
@@ -98,19 +97,51 @@ impl LibrqbitEngine {
     }
 
     /// Üst seviye indirme akışı — Python `download_torrent_via_qbittorrent`'in
-    /// librqbit karşılığı (bridge-qup tarafı: `source` magnet veya `.torrent`
+    /// librqbit karşılığı (bridge-qup tarafı: `source` magnet veya `.torrent
     /// URI'si; session'a ekler, tamamlanıncaya kadar bekler, indirilen dosyayı
     /// `output_folder` altında çözer ve `dest_path`'e hard-link/kopya yapar).
     ///
     /// Not: kapsamlı progres/seçim/seed takibi (`tag`, `temp_dir`,
     /// file-selection, `_seed_status_worker`) TASK-002f dışında kaldı — bu cep
-    /// senkron "indir → çıkar" işlemini sunar.
+    /// senkron "indir → çıkar" işlemini sunar. Canlı progress için
+    /// `download_torrent_source_with_progress` kullanılır (TASK-002m).
     pub async fn download_torrent_source(
         &self,
         source: AddTorrent<'_>,
         dest_path: &std::path::Path,
     ) -> Result<std::path::PathBuf, BridgeError> {
+        self.download_torrent_source_with_progress(source, dest_path, None).await
+    }
+
+    /// `download_torrent_source`'un canlı progress yayınlayan hali (TASK-002m).
+    /// `on_progress` varsa indirme sırasında `handle.stats()` döngüsünden
+    /// `ProgressEvent` yayar; bitince `wait_until_completed` ile hash-check
+    /// tamamlanır ve son bir `finished: true` olayı gönderilir.
+    pub async fn download_torrent_source_with_progress(
+        &self,
+        source: AddTorrent<'_>,
+        dest_path: &std::path::Path,
+        on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
+    ) -> Result<std::path::PathBuf, BridgeError> {
         let handle = self.add_torrent(source).await?;
+        let mut finished = false;
+        let mut last_total = 0u64;
+        while !finished {
+            let s = handle.stats();
+            last_total = s.total_bytes;
+            if let Some(cb) = &on_progress {
+                cb(ProgressEvent {
+                    downloaded: s.progress_bytes,
+                    total: s.total_bytes,
+                    speed: s.live.as_ref().map(|l| l.download_speed.mbps).unwrap_or(0.0),
+                    finished: false,
+                });
+            }
+            finished = s.finished;
+            if !finished {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
         handle
             .wait_until_completed()
             .await
@@ -119,12 +150,20 @@ impl LibrqbitEngine {
                 message: format!("indirme tamamlanamadı: {e}"),
             })?;
 
-        // İnen root'u çöz: bazı torrent'lerin kök klasörü olabilir.
+        // İnen root'u çöz: bazı torrentlerin kök klasörü olabilir.
         let found = self.resolve_downloaded_file().await?;
         link_or_copy(&found, dest_path).map_err(|e| BridgeError::Rpc {
             code: -32000,
             message: format!("dosya sonlandırılamadı ({found:?} → {dest_path:?}): {e}"),
         })?;
+        if let Some(cb) = &on_progress {
+            cb(ProgressEvent {
+                downloaded: last_total,
+                total: last_total,
+                speed: 0.0,
+                finished: true,
+            });
+        }
         tracing::info!(src = %found.display(), dst = %dest_path.display(), "torrent indirildi");
         Ok(found)
     }
@@ -255,5 +294,21 @@ impl TorrentBackend for LibrqbitEngine {
     ) -> Result<std::path::PathBuf, BridgeError> {
         self.download_torrent_source(AddTorrent::from_url(source_url.to_string()), dest_path)
             .await
+    }
+
+    /// TASK-002m: canlı progress akışı — `download_torrent_source_with_progress`
+    /// üzerinden `handle.stats()` döngüsünden `ProgressEvent` yayar.
+    async fn download_torrent_progress(
+        &self,
+        source_url: &str,
+        dest_path: &std::path::Path,
+        on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
+    ) -> Result<std::path::PathBuf, BridgeError> {
+        self.download_torrent_source_with_progress(
+            AddTorrent::from_url(source_url.to_string()),
+            dest_path,
+            on_progress,
+        )
+        .await
     }
 }

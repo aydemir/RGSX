@@ -406,7 +406,33 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
             let p = platform.clone();
             let t = task_id.clone();
             tokio::spawn(async move {
-                match bridge.download_torrent(&u, &dest_path).await {
+                // TASK-002m: librqbit indirme sırasında canlı progress yayar.
+                // Closure, orijinal `state2`/`u`'yu tüketmemesi için klonlarını yakalar.
+                let cb_state = state2.clone();
+                let cb_url = u.clone();
+                let on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>> =
+                    Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
+                        let pct = if ev.total > 0 {
+                            ((ev.downloaded as f64 / ev.total as f64) * 100.0) as u64
+                        } else {
+                            0
+                        };
+                        let mut data = cb_state.write();
+                        if let Value::Object(map) = &mut data.progress {
+                            map.insert(
+                                cb_url.clone(),
+                                json!({
+                                    "status": if ev.finished { "Download_OK" } else { "Downloading" },
+                                    "progress": pct,
+                                    "downloaded": ev.downloaded,
+                                    "total": ev.total,
+                                    "speed": ev.speed,
+                                }),
+                            );
+                        }
+                        sse::publish(&cb_state.events, "progress", &json!(data.progress));
+                    }));
+                match bridge.download_torrent_progress(&u, &dest_path, on_progress).await {
                     Ok(src) => {
                         tracing::info!(src = %src.display(), dest = %dest_path.display(), "torrent indirme tamamlandı");
                         finalize_download_in_state(
