@@ -100,13 +100,16 @@ fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray
     use manager_windows::tray::{Tray, TrayConfig};
 
     // Auto-start: Python davranışı — pref varsayılan AÇIK; ilk çalıştırmada kur.
-    if !autostart::is_enabled() {
+    // `RGSX_NO_AUTOSTART=1` (ör. .bat launcher sidecar): Python manager aynı
+    // registry anahtarını (RGSXManager) yönettiğinden sidecar kayıt yapmaz.
+    let no_autostart = std::env::var("RGSX_NO_AUTOSTART").map(|v| v == "1").unwrap_or(false);
+    if !no_autostart && !autostart::is_enabled() {
         match autostart::install(&autostart::command_self()) {
             Ok(()) => tracing::info!("auto-start kuruldu (HKCU Run)"),
             Err(e) => tracing::warn!("auto-start kurulamadı: {e}"),
         }
     } else {
-        tracing::debug!("auto-start zaten kayıtlı");
+        tracing::debug!("auto-start kayıtlı değil/atlandı (RGSX_NO_AUTOSTART={no_autostart})");
     }
 
     // Firewall: yönetici yetkisi gerektirir; başarısızlık uyarı olarak yansır.

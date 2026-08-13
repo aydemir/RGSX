@@ -1,5 +1,34 @@
 # RGSX Özellikler ve Değişiklik Günlüğü
 
+## Rust WebUI Sidecar Canlıya Alındı + İndirme Proxy Düzeltmeleri (2026.08.13)
+
+Rust `manager-bin` (port 5010) RetroBat kopya kurulumunda `.bat` launcher ile birlikte
+çalışır hale getirildi; canlıya alış sırasında bulunan 4 hatanın tamamı düzeltildi.
+
+- **`.bat` launcher entegrasyonu:** `RGSX Retrobat.bat`'a Rust sidecar bloğu eklendi
+  (display/windowed seçimi ile `:: Log environnement` arası, satır ~578-607). Python
+  manager portu `rgsx_settings.json`'dan dinamik okunur (5001); `RGSX_WEBUI_DIR`,
+  `RGSX_MANAGER_SCRIPT`, `RGSX_TORRENT_ENGINE=python`, `RGSX_NO_AUTOSTART=1`,
+  `RGSX_PYTHON_MANAGER_URL` set edilir; eski instance `taskkill` ile temizlenir,
+  gizli başlatılır; binary yoksa sessizce atlanır.
+- **`RGSX_NO_AUTOSTART` desteği (`main.rs`):** Launcher sidecar'ı Python ile aynı
+  registry anahtarını (`Run\RGSXManager`) ezmemesi için autostart yazmaz. Python boot
+  autostart kaydı korunur.
+- **`/api/download` proxy (`api.rs`):** WebUI her zaman `{platform, game_index}` gönderir;
+  Rust handler yalnızca `direct_url` destekliyordu → "Index de jeu invalide". Artık `catalog`
+  varsa istek olduğu gibi Python'a iletilir (game_index/game_name çözümü Python'da).
+- **İndirme state GET'leri proxy (`api.rs`):** `/api/download` Python'a devredilince indirme
+  durumu Python'da yaşamaya başladı; GET `/api/progress`, `/api/history`, `/api/queue`
+  hâlâ Rust'ın boş state'ini okuyordu → "kuyruk/aktif/geçmiş boş". Üçü de `catalog`
+  varsa Python'a proxy'lenir (`game-status` zaten proxy'ydi).
+- **Windows test düzeltmesi (`tests/contract.rs:545`):** `dest_path` kıyası sabit Unix
+  yoluydu; `Path::join` üretip OS-bağımsız kıyas yapıldı (Windows'ta kırılan test düzeldi).
+- **Doğrulama:** Python 5001 + Rust 5010 → 148 platform, ~600 çeviri anahtarı, tam HTML;
+  indirme `queued:true`; kuyruk/geçmiş dolu; registry Python komutu korundu; **152 Rust
+  testi geçiyor**.
+- Tüm hata/çözüm günlüğü: `docs/architecture/RUST_MIGRATION_NOTES.md`; route durum
+  tablosu güncellendi: `FAZ10C3_CONTRACT_MAP.md`.
+
 ## librqbit Embedded Engine — Faz 10b (2026.08.12)
 
 `manager-torrent::LibrqbitEngine` (librqbit 8.1.1) in-process embedded torrent motoru

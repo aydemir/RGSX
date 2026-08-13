@@ -187,13 +187,25 @@ pub async fn games(State(state): State<AppState>, AxumPath(platform): AxumPath<S
 }
 
 /// GET `/api/progress` — `config.download_progress` eşleniği.
+/// Faz 10c/3/4: `catalog` varsa Python'a proxy (indirme durumu Python'da yaşar).
 pub async fn progress(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/progress").await {
+            return ok(v);
+        }
+    }
     let downloads = state.read().progress.clone();
     ok(contract::ok(json!({ "downloads": downloads })))
 }
 
 /// GET `/api/history` — history + message noise stripping.
+/// Faz 10c/3/4: `catalog` varsa Python'a proxy (geçmiş Python'da yaşar).
 pub async fn history(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/history").await {
+            return ok(v);
+        }
+    }
     let history = state.read().history.clone();
     let cleaned: Vec<Value> = history
         .into_iter()
@@ -208,7 +220,13 @@ pub async fn history(State(state): State<AppState>) -> Response {
 }
 
 /// GET `/api/queue` — kuyruk durumu.
+/// Faz 10c/3/4: `catalog` varsa Python'a proxy (kuyruk Python'da yaşar).
 pub async fn queue(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/queue").await {
+            return ok(v);
+        }
+    }
     let data = state.read();
     ok(contract::ok(json!({
         "active": data.active,
@@ -329,6 +347,13 @@ pub async fn update_cache() -> Response {
 /// Not: tüm `.await`'ler `state.write()` kilidinden ÖNCE — write guard sonrası
 /// await handler future'ını Send yapmaz (bkz. change_password deseni).
 pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    // Faz 10c/3/4: `catalog` varsa Python'a proxy (game_index/game_name çözümü Python'da).
+    // Placeholder'da WebUI yalnızca game_index gönderir — yerel `direct_url` yolu bridge/librqbit içindir.
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.post_json("/api/download", &body).await {
+            return ok(v);
+        }
+    }
     let platform = body.get("platform").and_then(Value::as_str);
     let game_index = body.get("game_index");
     let game_name = body.get("game_name").and_then(Value::as_str);

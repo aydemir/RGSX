@@ -16,7 +16,8 @@ docs/
 │   ├── WEBUI_API.md               # rgsx_web/ paketi + REST/SSE API kataloğu
 │   ├── CONTROLS_PACKAGE.md        # controls/ paketi mimarisi (handle_controls, kuyruk/batch)
 │   ├── UTILS_PACKAGE.md           # utils/ paketi mimarisi (13 modül, re-export disiplini)
-│   └── CONCURRENCY.md             # Eşzamanlılık: kilitler, supervisor, SSE senkronizasyonu
+│   ├── CONCURRENCY.md             # Eşzamanlılık: kilitler, supervisor, SSE senkronizasyonu
+│   └── RUST_MIGRATION_NOTES.md    # Rust geçişi: karşılaşılan hatalar + çözümleri (Faz 10c/3)
 ├── flows/                         # Kritik çalışma akışları (kod doğrulamalı)
 │   ├── STARTUP.md                 # Başlatma: ensure_manager + SSE yansıması + çift manager
 │   ├── DOWNLOAD_PIPELINE.md       # İndirme: HTTP resume + torrent + kuyruk worker
@@ -53,6 +54,7 @@ docs/
 | [CONTROLS_PACKAGE.md](architecture/CONTROLS_PACKAGE.md) | controls/ paketi: handle_controls, kuyruk/batch indirme |
 | [UTILS_PACKAGE.md](architecture/UTILS_PACKAGE.md) | utils/ paketi: modül haritası + kritik fonksiyonlar |
 | [CONCURRENCY.md](architecture/CONCURRENCY.md) | Kilitler, watchdog/supervisor, SSE senkronizasyonu |
+| [RUST_MIGRATION_NOTES.md](architecture/RUST_MIGRATION_NOTES.md) | Rust geçişi hata günlüğü: port uyuşmazlığı, placeholder WebUI, game_index, boş queue/history (Faz 10c/3) |
 | [TESTING.md](guides/TESTING.md) | pytest altyapısı ve kapsam gate'leri |
 | [FEATURES.md](features/FEATURES.md) | Tüm özellikler ve sürüm notları |
 | [ROADMAP.md](roadmap/ROADMAP.md) | Yol haritası (arşiv — ROADMAP_DOWNLOAD_MANAGER.md'ye yönlendirir) |

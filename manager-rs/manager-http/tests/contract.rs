@@ -541,8 +541,9 @@ async fn test_download_with_bridge_forwards_to_engine() {
     let recorded = calls.lock().unwrap().clone();
     let (url, dest) = recorded.first().expect("en az bir kayıt");
     assert_eq!(url, "https://exemple.invalid/rom.zip");
-    // URL basename known ext → engine downloads klasörü altında.
-    assert_eq!(dest, "/tmp/fake_downloads/rom.zip");
+    // URL basename known ext → engine downloads klasörü altında (path OS-agnostic).
+    let expected = std::path::Path::new("/tmp/fake_downloads").join("rom.zip");
+    assert_eq!(dest, &expected.display().to_string());
 }
 
 #[tokio::test]

@@ -10,8 +10,12 @@
 > `rgsx_manager.py` `RGSXHandler.do_GET`/`do_POST` 180-300) codegraph ile okundu.
 > Henüz okunmamış Python fonksiyon gövdeleri **DRIFT** işaretli — alt görev içinde teyit edilecek.
 >
+> **Canlıya alış hataları/çözümleri:** `docs/architecture/RUST_MIGRATION_NOTES.md`
+> (port uyuşmazlığı, placeholder WebUI, registry ezilmesi, game_index çözümü,
+> boş queue/history/progress — bölüm 1-10).
+>
 > **Durum kısaltmaları:** ✅ gerçek/fonksiyonel · ⚠️ placeholder (göç gerekir) ·
-> 🔗 bridge'e bağlı · DRIFT = teyit edilmemiş.
+> 🔗 bridge'e bağlı · 🔗 proxy = Python'a devreder · DRIFT = teyit edilmemiş.
 
 ## 1. GET route'ları
 
@@ -23,10 +27,10 @@
 | `/api/search` | `search` | 🔗 proxy | `handlers.py::_api_search` → `controls/search.py::search_games` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/translations` | `translations` | 🔗 proxy | `handlers.py::_api_translations` → `language.py` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
 | `/api/games/:platform` | `games` | 🔗 proxy | `handlers.py::_api_games` → `rgsx_web/cache.py::get_cached_games` | test_api_contract (**TASK-002k-2 proxy'lendi**) |
-| `/api/progress` | `progress` | ✅ | `handlers.py::_api_progress` | test_api_contract |
+| `/api/progress` | `progress` | 🔗 proxy | `handlers.py::_api_progress` | test_api_contract (**2026-08-13 indirme state'i Python'da → proxy'ye alındı**, bkz. RUST_MIGRATION_NOTES bölüm 5) |
 | `/api/game-status` | `game_status` | 🔗 proxy | `handlers.py::_api_game_status` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
-| `/api/history` | `history` | ✅ | `handlers.py::_api_history` | test_api_contract |
-| `/api/queue` | `queue` | ✅ | `handlers.py::_api_queue_get` | test_api_contract |
+| `/api/history` | `history` | 🔗 proxy | `handlers.py::_api_history` | test_api_contract (**2026-08-13 proxy'ye alındı**, bkz. RUST_MIGRATION_NOTES bölüm 5) |
+| `/api/queue` | `queue` | 🔗 proxy | `handlers.py::_api_queue_get` | test_api_contract (**2026-08-13 proxy'ye alındı**, bkz. RUST_MIGRATION_NOTES bölüm 5) |
 | `/api/settings` | `settings_get` | 🔗 proxy | `handlers.py::_api_settings_get` → `rgsx_settings.py` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
 | `/api/system_info` | `system_info` | 🔗 proxy | `handlers.py::_api_system_info` / `rgsx_manager.py` system_info | **test_api_contract (birebir eşitlik — KRİTİK) (TASK-002k-3 proxy'lendi)** |
 | `/api/browse-directories` | `browse_directories` | 🔗 proxy | `handlers.py::_list_directories` | test_api_contract (**TASK-002k-3 proxy'lendi**) |
@@ -40,7 +44,7 @@
 
 | Route | Rust handler | Durum | Python impl | Contract test |
 |---|---|---|---|---|
-| `/api/download` | `download` | ✅ (torrent) | `handlers.py::_api_download` (HTTP) + `network/queue.py::download_rom` | contract download |
+| `/api/download` | `download` | 🔗 proxy | `handlers.py::_api_download` (HTTP) + `network/queue.py::download_rom` | contract download (**2026-08-13 catalog varsa Python'a proxy — game_index çözümü Python'da**, bkz. RUST_MIGRATION_NOTES bölüm 4) |
 | `/api/download/batch` | `download_batch` | 🔗 proxy | `handlers.py::_api_download_batch` (Faz 9) | test_download_batch (**TASK-002k-4 eklendi+proxy**) |
 | `/api/cancel` | `cancel` | 🔗 proxy | `handlers.py::_api_cancel` / `rgsx_manager.py::_handle_cancel_worker` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
 | `/api/queue` | `queue_post` | 🔗 proxy | `handlers.py::_api_queue_post` | test_api_contract (**TASK-002k-4 proxy'lendi**) |
