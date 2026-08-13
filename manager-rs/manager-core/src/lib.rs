@@ -5,3 +5,4 @@
 pub mod contract;
 pub mod state;
 pub mod watchdog;
+pub mod settings;

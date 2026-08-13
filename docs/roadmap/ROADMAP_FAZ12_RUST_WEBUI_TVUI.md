@@ -120,7 +120,7 @@ Mevcut `CatalogSource` trait (`catalog.rs`) `PythonCatalog`'tan `NativeCatalog`'
 - UPnP (`network/upnp.py`) → `igd` krate.
 - i18n (`language.py`) → `fluent`.
 - OTA update (`check_for_updates`/`apply_pending_update`) → native veya Python'da tut.
-- Settings şeması (`rgsx_settings.py`/`config.py`) → Rust şema + validasyon (sözleşme).
+- Settings şeması (`rgsx_settings.py`/`config.py`) → Rust şema + validasyon (sözleşme). **TAMAM (Faz 12f, TASK-002s):** `manager-core/src/settings.rs` typed `Settings` + `load/save/validate`; `RGSX_NATIVE_SETTINGS=1`. Yan-etkili alanlar (auto_extract/api_keys/linux-toggle) sonraki faza bırakıldı (Option A).
 
 ---
 

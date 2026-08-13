@@ -16,7 +16,7 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 | Ne | Nerede | İlişkili/Bağımlı (codegraph-doğrulu) |
 |---|---|---|
 | Workspace kökü | `manager-rs/Cargo.toml` | 7 member crate; workspace dep: tokio, axum, serde, serde_json, tracing, windows-rs, librqbit |
-| `manager-core` (state machine + watchdog mantığı) | `manager-rs/manager-core/src/{state,watchdog,contract,lib}.rs` | Bağımlı: `manager-http` (AppState.manager_state), `manager-bridge`, `manager-windows`, `manager-torrent`. `ManagerState` (state.rs:23) çağıranlar: `watchdog.rs`, `manager-http/api.rs` |
+| `manager-core` (state machine + watchdog mantığı + settings) | `manager-rs/manager-core/src/{state,watchdog,contract,settings,lib}.rs` | Bağımlı: `manager-http` (AppState.manager_state), `manager-bridge`, `manager-windows`, `manager-torrent`. `ManagerState` (state.rs:23) çağıranlar: `watchdog.rs`, `manager-http/api.rs`. `Settings` (settings.rs) — Faz 12f native ayar şeması (`rgsx_settings.py` portu): `Default` (Python `default_settings`), `load()`/`save()` (`RGSX_SETTINGS_PATH`>`RGSX_DATA_DIR/rgsx_settings.json`), `validate()`, `system_info()`. |
 | `manager-bridge` (TorrentBackend trait + Python subprocess köprüsü) | `manager-rs/manager-bridge/src/lib.rs` | Bağımlı: `manager-core`. `Bridge::spawn` (lib.rs:108) → `python <script> --bridge` (qbittorrent_backend.py). Typed metodlar (ping/status/get_app_paths/change_webui_password…) JSON-RPC'ye proxy. `TorrentBackend` trait'ini tanımlar; `LibrqbitEngine` + `Bridge` implement eder |
 | `manager-http` (axum /api/* + SSE) | `manager-rs/manager-http/src/{api,state,sse,lib}.rs` | Bağımlı: `manager-core` (ManagerState), `manager-bridge` (TorrentBackend). `AppState` (state.rs:86) 32 çağıran: lib.rs, sse.rs, api.rs, manager-bin/main.rs. `finalize_download_in_state` (api.rs:647) → download handler'ı arka plan task'ında çağırır |
 | `manager-torrent` (librqbit embedded engine) | `manager-rs/manager-torrent/src/lib.rs` + `examples/live_torrent.rs` | Bağımlı: `librqbit 8.1.1`, `manager-bridge` (impl `TorrentBackend`), tokio/serde/tracing. `LibrqbitEngine::download_torrent` (lib.rs) → `download_torrent_source` (AddTorrent + wait_until_completed + resolve_downloaded_file + link_or_copy) |
@@ -92,6 +92,20 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   port default 5000, `rgsx_manager.py` run_server portu 5001 + env'ler set edilir.
 - Varsayılan (flag kapalı) davranış birebir korunur; launcher değişikliği gerekmedi.
 
+### Settings native port (Faz 12f, TASK-002s) — typed `Settings` şeması
+- `manager-core/src/settings.rs`: `Settings` struct (tüm `rgsx_settings.py` `default_settings`
+  alanları typed: `language: Option<String>` + `skip_serializing_if` → "key yok = seçim yok"
+  kuralı korunur), `Accessibility`/`Display`/`Symlink`/`Sources` alt şemaları, `flatten extra`
+  (round-trip için `game_filters` vb.), `Default` (Python birleşimi), `load()`/`save()`
+  (`RGSX_SETTINGS_PATH` > `RGSX_DATA_DIR/rgsx_settings.json`), `validate()` (invariant kontrolü),
+  `system_info()` (env tabanlı). `native_enabled()` = `RGSX_NATIVE_SETTINGS=1`.
+- `manager-http/src/api.rs` `settings_get`/`settings_post`: `RGSX_NATIVE_SETTINGS=1` ve
+  `catalog=None` → native `Settings::load()` + validasyon + `save()`; aksi → Python proxy /
+  placeholder (kesintisiz göç). Geçici alanlar (`auto_extract`/`api_keys`/`web_service_at_boot`/
+  `custom_dns_at_boot`) native save'de strip edilir (Option A: port sonraki faza bırakıldı).
+- `cargo test -p manager-core` (settings 6 test) + `manager-http` contract
+  `test_settings_native_roundtrip` yeşil; tam contract 103/103.
+
 ---
 
 ## 2. Python network paketi — `ports/RGSX/network/`
@@ -120,7 +134,7 @@ aynı obje kimliğiyle tutulur.
 |---|---|---|
 | Şablon | `tasks/_template.md` | `environment: linux\|windows\|both` zorunlu (AGENTS.md kuralı) |
 | Tamamlanan görevler | `tasks/done/*.md` | TASK-001 (Faz 7), TASK-002 + 002a–002g (Faz 10 Rust), TASK-003 (Faz 11). Hepsi `done/` |
-| Aktif / bekleyen | `tasks/in-progress/`, `tasks/todo/` | 10c/2 `in-progress/TASK-002j`; 10c/3 planı + 7 alt görev `todo/TASK-002k*` |
+| Aktif / bekleyen | `tasks/in-progress/`, `tasks/todo/` | Faz 12 çekirdeği (12a–12e + 12f) `done/`; kalan `in-progress`: 002i/002j/002k-7/002l/002m (commit'lendi, temizlenecek). `todo/TASK-002k-faz10c3-plan.md` (Faz 10c/3 planı, Faz 12 ile büyük ölçüde kapsandı) |
 
 ---
 

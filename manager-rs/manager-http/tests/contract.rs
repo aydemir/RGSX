@@ -382,6 +382,52 @@ async fn test_settings_post() {
     assert_eq!(body["success"], json!(true));
 }
 
+/// Faz 12f — `RGSX_NATIVE_SETTINGS=1` ile native ayar round-trip'i.
+#[tokio::test]
+async fn test_settings_native_roundtrip() {
+    let dir = std::env::temp_dir().join("rgsx_settings_native_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rgsx_settings.json");
+    let _ = std::fs::remove_file(&path);
+    std::env::set_var("RGSX_NATIVE_SETTINGS", "1");
+    std::env::set_var("RGSX_SETTINGS_PATH", &path);
+
+    let app = empty_app();
+
+    // GET → Python `default_settings` birleşimi.
+    let (_, _, body) = call_get(app.clone(), "/api/settings").await;
+    assert!(body["success"].as_bool().unwrap_or(false));
+    assert_eq!(body["settings"]["language"], json!("en"));
+    assert_eq!(body["settings"]["max_simultaneous_downloads"], json!(5));
+    assert!(body["system_info"]["system"].is_string());
+
+    // POST geçersiz (invariant ihlali) → 400.
+    let (bad_status, _, bad) =
+        call_post(app.clone(), "/api/settings", json!({"settings": {"max_simultaneous_downloads": 0}})).await;
+    assert_eq!(bad_status, StatusCode::BAD_REQUEST);
+    assert!(!bad["success"].as_bool().unwrap_or(true));
+
+    // POST geçerli (language=null → dosyaya yazılmaz).
+    let (_, _, ok_body) = call_post(
+        app.clone(),
+        "/api/settings",
+        json!({"settings": {"language": null, "music_enabled": false}}),
+    )
+    .await;
+    assert!(ok_body["success"].as_bool().unwrap_or(false));
+
+    // Kalıcı dosya: language YOK, music_enabled=false, geçici alanlar YOK.
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(v.get("language").is_none());
+    assert_eq!(v["music_enabled"], json!(false));
+    assert!(v.get("api_keys").is_none());
+
+    // Temizlik.
+    let _ = std::fs::remove_file(&path);
+    std::env::remove_var("RGSX_NATIVE_SETTINGS");
+    std::env::remove_var("RGSX_SETTINGS_PATH");
+}
+
 #[tokio::test]
 async fn test_save_filters() {
     let (status, _, body) = call_post(empty_app(), "/api/save_filters", json!({"region_filters": {}})).await;

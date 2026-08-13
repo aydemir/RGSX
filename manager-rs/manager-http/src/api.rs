@@ -235,12 +235,20 @@ pub async fn queue(State(state): State<AppState>) -> Response {
     })))
 }
 
-/// GET `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
+/// GET `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy; `RGSX_NATIVE_SETTINGS=1`
+/// ise native `Settings::load()` + `system_info`; yoksa placeholder.
 pub async fn settings_get(State(state): State<AppState>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.get_json("/api/settings").await {
             return ok(v);
         }
+    }
+    if manager_core::settings::native_enabled() {
+        let s = manager_core::settings::Settings::load();
+        return ok(contract::ok(json!({
+            "settings": serde_json::to_value(&s).unwrap_or(json!({})),
+            "system_info": manager_core::settings::system_info()
+        })));
     }
     let settings = state.read().settings.clone();
     ok(contract::ok(json!({ "settings": settings })))
@@ -639,7 +647,8 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
     json_err(format!("Élément non trouvé: {task_id}"), StatusCode::NOT_FOUND)
 }
 
-/// POST `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
+/// POST `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy; `RGSX_NATIVE_SETTINGS=1`
+/// ise native validasyon + `Settings::save()`; yoksa placeholder (in-memory).
 pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/settings", &body).await {
@@ -649,6 +658,33 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
     let Some(settings) = body.get("settings") else {
         return json_err("Paramètre \"settings\" manquant", StatusCode::BAD_REQUEST);
     };
+    if manager_core::settings::native_enabled() {
+        match serde_json::from_value::<manager_core::settings::Settings>(settings.clone()) {
+            Ok(s) => match s.validate() {
+                Ok(()) => match s.save() {
+                    Ok(()) => return ok(contract::ok(Value::Null)),
+                    Err(e) => {
+                        return json_err(
+                            format!("Sauvegarde des paramètres échouée: {e}"),
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                    }
+                },
+                Err(e) => {
+                    return json_err(
+                        format!("Paramètres invalides: {e}"),
+                        StatusCode::BAD_REQUEST,
+                    )
+                }
+            },
+            Err(e) => {
+                return json_err(
+                    format!("Paramètres invalides: {e}"),
+                    StatusCode::BAD_REQUEST,
+                )
+            }
+        }
+    }
     state.write().settings = settings.clone();
     ok(contract::ok(Value::Null))
 }
