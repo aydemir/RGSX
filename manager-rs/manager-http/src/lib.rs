@@ -19,18 +19,20 @@ pub mod catalog;
 pub mod sse;
 pub mod state;
 
-use axum::routing::{get, post};
+use axum::routing::{get, post, get_service};
 use axum::Router;
+use tower_http::services::ServeDir;
 
 pub use state::{AppState, StateData};
 
 /// İş mantığı SaaS'ı — router + yanıt şablonları.
 ///
 /// Route yolu 1:1 Python `do_GET`/`do_POST` dispatch'i; `/api/events` SSE.
+/// Statik katman (Faz 12a): `static_root` varsa `/static/*` `ServeDir` ile sunulur,
+/// `/` ve bilinmeyen SPA route'ları hydrate edilmiş `index.html` döndürür
+/// (client-side routing). `static_root` yoksa statik kapalı (404 fallback).
 pub fn router(app: AppState) -> Router {
-    Router::new()
-        .route("/", get(api::index))
-        .route("/static/*path", get(api::static_file))
+    let api = Router::new()
         .route("/api/platforms", get(api::platforms))
         .route("/api/search", get(api::search))
         .route("/api/translations", get(api::translations))
@@ -42,6 +44,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/settings", get(api::settings_get).post(api::settings_post))
         .route("/api/system_info", get(api::system_info))
         .route("/api/browse-directories", get(api::browse_directories))
+        .route("/api/scan", get(api::scan))
         .route("/api/image/:platform", get(api::image))
         .route("/api/favicon", get(api::favicon))
         .route("/api/update-cache", get(api::update_cache))
@@ -62,7 +65,21 @@ pub fn router(app: AppState) -> Router {
         .route("/api/qbittorrent/start", post(api::qb_start))
         .route("/api/qbittorrent/password-status", get(api::qb_password_status))
         .route("/api/qbittorrent/regenerate-password", post(api::qb_regenerate_password))
-        .route("/api/events", get(sse::events))
-        .fallback(api::fallback)
-        .with_state(app)
+        .route("/api/events", get(sse::events));
+
+    // Statik katman (Faz 12a): SPA sunumu. `static_root` yoksa statik kapalı.
+    let api = if let Some(root) = &app.static_root {
+        api.route("/", get(api::index))
+            .nest(
+                "/static",
+                Router::new().fallback(get_service(
+                    ServeDir::new(root.clone()).append_index_html_on_directories(false),
+                )),
+            )
+            .fallback(api::index)
+    } else {
+        api.route("/", get(api::index)).fallback(api::fallback)
+    };
+
+    api.with_state(app)
 }

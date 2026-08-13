@@ -297,6 +297,29 @@ pub async fn browse_directories(
     ok(contract::ok(json!({ "current_path": current, "directories": dirs })))
 }
 
+/// GET `/api/scan` — Faz 12d: `ROMS_FOLDER` (env `RGSX_ROMS_FOLDER`) HDD taraması.
+/// `manager-scan` ile platform klasörlerine göre ROM dosyalarını toplar, disk
+/// kullanımını ekler ve sonucu SSE `scan` olayı olarak yayar (canlı UI).
+pub async fn scan(State(state): State<AppState>) -> Response {
+    let root = std::env::var("RGSX_ROMS_FOLDER")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| ".".to_string());
+    let path = std::path::Path::new(&root);
+    let result = manager_scan::scan::scan_roms(path);
+    let du = manager_scan::disk::disk_usage(path);
+    let payload = serde_json::json!({
+        "success": true,
+        "root": result.root,
+        "platforms": result.platforms,
+        "total_bytes": result.total_bytes,
+        "total_files": result.total_files,
+        "disk": { "total": du.total, "used": du.used, "free": du.free },
+    });
+    crate::sse::publish(&state.events, "scan", &payload);
+    ok(payload)
+}
+
 /// GET `/api/image/{platform}` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa 404 placeholder.
 pub async fn image(State(state): State<AppState>, AxumPath(platform): AxumPath<String>) -> Response {
     if let Some(c) = &state.catalog {
@@ -353,6 +376,37 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     // `catalog` varsa game_index/game_name çözümü için Python'a proxy edilir.
     let direct_url = body.get("url").and_then(Value::as_str);
     let intercept_locally = direct_url.map(is_torrent_url).unwrap_or(false) && state.bridge.is_some();
+
+    // Faz 12e: native DDL çözümü + doğrudan HTTP indirme. Yalnız `RGSX_NATIVE_DOWNLOAD=1`
+    // ile; debrid yapılandırılmamışsa `DownloadManager` DirectResolver'a düşer ve düz
+    // HTTP kaynak doğrudan indirilir. Kapalıyken mevcut Python proxy korunur.
+    if std::env::var("RGSX_NATIVE_DOWNLOAD").map(|v| v == "1").unwrap_or(false) {
+        if let Some(direct) = direct_url {
+            if !is_torrent_url(direct) {
+                if let Ok(manager_download::DownloadSource::DirectHttp(resolved)) =
+                    manager_download::DownloadManager::new().resolve(direct)
+                {
+                    let platform = body
+                        .get("platform")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let game_name = body
+                        .get("game_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if platform.is_empty() || game_name.is_empty() {
+                        return json_err(
+                            "Paramètre manquant: platform et game_name requis (native DDL)",
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                    return native_ddl_download(state, direct.to_string(), resolved, platform, game_name).await;
+                }
+            }
+        }
+    }
 
     if !intercept_locally {
         // Faz 10c/3/4: `catalog` varsa Python'a proxy (game_index/game_name çözümü Python'da).
@@ -928,6 +982,142 @@ pub async fn finalize_download_in_state(
         sse::publish(&state.events, "downloaded", &json!(data.downloaded));
     }
     sse::publish(&state.events, "progress", &json!(data.progress));
+}
+
+/// Faz 12e — native DDL indirme: çözülmüş doğrudan HTTP kaynağını reqwest ile indirir,
+/// `downloaded`/history/progress + SSE ile sonuçlanır (Python `one_fichier.py` DDL akışının
+/// librqbit'siz karşılığı). Torrent kaynakları buraya gelmez (download() bunları bridge'e yönlendirir).
+async fn native_ddl_download(
+    state: AppState,
+    game_url: String,
+    resolved: String,
+    platform: String,
+    game_name: String,
+) -> Response {
+    let task_id = web_task_id();
+    let downloads = if let Some(b) = &state.bridge {
+        b.get_app_paths().await.map(|(d, _)| d).unwrap_or_default()
+    } else {
+        std::env::var("RGSX_DOWNLOADS_FOLDER").unwrap_or_else(|_| "downloads".to_string())
+    };
+    let dest = dest_path_for(&downloads, &game_url, &game_name);
+
+    {
+        let mut data = state.write();
+        data.progress[&game_url] = json!({ "status": "Downloading", "progress": 0 });
+        data.queue.push(json!({
+            "url": game_url,
+            "platform": platform,
+            "game_name": game_name,
+            "task_id": task_id,
+            "status": "Queued",
+        }));
+        data.history.push(json!({
+            "game_name": game_name,
+            "platform": platform,
+            "url": game_url,
+            "status": "Queued",
+            "progress": 0,
+            "message": "Ajouté à la file d'attente (native DDL)",
+            "timestamp": "",
+            "downloaded_size": 0,
+            "total_size": 0,
+            "task_id": task_id,
+        }));
+        sse::publish(
+            &state.events,
+            "queue",
+            &json!({ "queue": data.queue, "active": data.active }),
+        );
+        sse::publish(&state.events, "progress", &json!(data.progress));
+    }
+
+    // Closure'a taşınacak klonlar (yanıt `ok()` sahipleri kullanır).
+    let c_state = state.clone();
+    let c_url = game_url.clone();
+    let c_name = game_name.clone();
+    let c_plat = platform.clone();
+    let c_task = task_id.clone();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        match client.get(&resolved).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(bytes) => {
+                    if let Some(parent) = dest.parent() {
+                        let _ = tokio::fs::create_dir_all(parent).await;
+                    }
+                    if let Err(e) = tokio::fs::write(&dest, &bytes).await {
+                        finalize_download_in_state(
+                            &c_state,
+                            &c_task,
+                            &c_url,
+                            &c_name,
+                            &c_plat,
+                            false,
+                            &format!("yazma hatası: {e}"),
+                        )
+                        .await;
+                    } else {
+                        finalize_download_in_state(
+                            &c_state,
+                            &c_task,
+                            &c_url,
+                            &c_name,
+                            &c_plat,
+                            true,
+                            &dest.display().to_string(),
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    finalize_download_in_state(
+                        &c_state,
+                        &c_task,
+                        &c_url,
+                        &c_name,
+                        &c_plat,
+                        false,
+                        &format!("indirme hatası: {e}"),
+                    )
+                    .await;
+                }
+            },
+            Ok(resp) => {
+                finalize_download_in_state(
+                    &c_state,
+                    &c_task,
+                    &c_url,
+                    &c_name,
+                    &c_plat,
+                    false,
+                    &format!("HTTP {}", resp.status()),
+                )
+                .await;
+            }
+            Err(e) => {
+                finalize_download_in_state(
+                    &c_state,
+                    &c_task,
+                    &c_url,
+                    &c_name,
+                    &c_plat,
+                    false,
+                    &format!("istek hatası: {e}"),
+                )
+                .await;
+            }
+        }
+    });
+
+    ok(contract::ok(json!({
+        "queued": true,
+        "game_name": game_name,
+        "platform": platform,
+        "task_id": task_id,
+        "message": format!("{game_name} ajouté à la file d'attente (native DDL)"),
+        "queue_position": 0,
+    })))
 }
 
 /// `get_app_paths` downloads klasörü + URL/oyun adından hedef dosya yolunu kurar.

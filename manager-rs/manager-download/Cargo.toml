@@ -1,0 +1,10 @@
+[package]
+name = "manager-download"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Faz 12e — indirme resolver soyutlaması: DDL/debrid (1Fichier/RealDebrid) çözümü + doğrudan HTTP torrent sınıflandırması (Python one_fichier.py/utils_torrent.py portu)"
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true

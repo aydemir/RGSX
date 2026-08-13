@@ -217,12 +217,21 @@ async fn main() {
                 .map(|p| p.join("static"))
                 .filter(|p| p.is_dir())
         });
-    // Faz 10c/3/2: katalog proxy kaynağı — `RGSX_PYTHON_MANAGER_URL` set ise Python'a
-    // bağlanır (devre dışıysa handler'lar placeholder'a düşer, geriye uyumlu).
-    let catalog = std::env::var("RGSX_PYTHON_MANAGER_URL")
-        .ok()
-        .filter(|u| !u.is_empty())
-        .map(|base| Arc::new(manager_http::catalog::PythonCatalog::new(base)) as Arc<dyn manager_http::catalog::CatalogSource>);
+    // Faz 12c — native catalog: `RGSX_NATIVE_CATALOG=1` ise Python'sız local
+    // dosyalardan üretir (systems_list.json, games/, languages/, images/). Komut
+    // POST'ları için yine de Python'a proxy edebilir (`RGSX_PYTHON_MANAGER_URL`).
+    // Aksi halde `RGSX_PYTHON_MANAGER_URL` set ise Python proxy (Faz 10c/3/2).
+    let native_catalog = std::env::var("RGSX_NATIVE_CATALOG")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> = if native_catalog {
+        Some(Arc::new(manager_http::catalog::NativeCatalog::from_env()))
+    } else {
+        std::env::var("RGSX_PYTHON_MANAGER_URL")
+            .ok()
+            .filter(|u| !u.is_empty())
+            .map(|base| Arc::new(manager_http::catalog::PythonCatalog::new(base)) as Arc<dyn manager_http::catalog::CatalogSource>)
+    };
 
     let app = router(AppState {
         data: Arc::new(std::sync::RwLock::new(data)),
@@ -231,6 +240,18 @@ async fn main() {
         static_root,
         catalog,
     });
+
+    // Faz 12b — TVUI shell: `RGSX_TVUI=1` ise SPA'yı kiosk/webview'da açar.
+    // Ayrı thread'de (webview feature event loop'u bloklar); kiosk yolunda
+    // tarayıcıyı spawn edip döner. Headless ortamda hata loglanır, sunucu etkilenmez.
+    if std::env::var("RGSX_TVUI").map(|v| v == "1").unwrap_or(false) {
+        let tv_port = port;
+        std::thread::spawn(move || {
+            if let Err(e) = manager_tvui::launch(tv_port) {
+                tracing::warn!("TVUI başlatılamadı: {e}");
+            }
+        });
+    }
 
     let addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

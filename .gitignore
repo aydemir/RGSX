@@ -46,3 +46,6 @@ ports/RGSX/rgsx_web/__pycache__/
 htmlcov/
 .pytest_cache/
 tests/__pycache__/
+
+# WebUI build deps
+webui/node_modules/

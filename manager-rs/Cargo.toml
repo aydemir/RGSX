@@ -7,6 +7,9 @@ members = [
     "manager-bridge",
     "manager-bin",
     "manager-torrent",
+    "manager-scan",
+    "manager-tvui",
+    "manager-download",
 ]
 
 [workspace.package]
@@ -25,6 +28,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 percent-encoding = "2"
+thiserror = "1"
 manager-core = { path = "manager-core" }
 manager-http = { path = "manager-http" }
 manager-bridge = { path = "manager-bridge" }

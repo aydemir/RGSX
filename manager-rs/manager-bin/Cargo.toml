@@ -16,6 +16,7 @@ manager-core.workspace = true
 manager-http.workspace = true
 manager-bridge.workspace = true
 manager-torrent.workspace = true
+manager-tvui = { path = "../manager-tvui" }
 
 [target.'cfg(windows)'.dependencies]
 manager-windows = { path = "../manager-windows" }

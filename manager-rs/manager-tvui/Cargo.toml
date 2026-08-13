@@ -1,0 +1,12 @@
+[package]
+name = "manager-tvui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TVUI native shell — aynı SPA'yı kiosk tarayıcıda tam ekran render eder (Faz 12b)"
+
+# NOT: Native webview embedding (wry+tao) bu crate'e eklenebilir bir `webview`
+# feature ile planlandı, ancak bu build ortamında tao'nun gdk-3 `links` çakışması
+# yüzünden workspace lockfile'ı çözümlenemiyor. Bu nedenle varsayılan yol harici
+# kiosk tarayıcı (chromium/chrome) spawn'ıdır; webview embedding uygun bir makinede
+# (webkit2gtk/webview2 yüklü) ayrı bir alt görev olarak eklenecek.

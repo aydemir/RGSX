@@ -20,6 +20,9 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 | `manager-bridge` (TorrentBackend trait + Python subprocess köprüsü) | `manager-rs/manager-bridge/src/lib.rs` | Bağımlı: `manager-core`. `Bridge::spawn` (lib.rs:108) → `python <script> --bridge` (qbittorrent_backend.py). Typed metodlar (ping/status/get_app_paths/change_webui_password…) JSON-RPC'ye proxy. `TorrentBackend` trait'ini tanımlar; `LibrqbitEngine` + `Bridge` implement eder |
 | `manager-http` (axum /api/* + SSE) | `manager-rs/manager-http/src/{api,state,sse,lib}.rs` | Bağımlı: `manager-core` (ManagerState), `manager-bridge` (TorrentBackend). `AppState` (state.rs:86) 32 çağıran: lib.rs, sse.rs, api.rs, manager-bin/main.rs. `finalize_download_in_state` (api.rs:647) → download handler'ı arka plan task'ında çağırır |
 | `manager-torrent` (librqbit embedded engine) | `manager-rs/manager-torrent/src/lib.rs` + `examples/live_torrent.rs` | Bağımlı: `librqbit 8.1.1`, `manager-bridge` (impl `TorrentBackend`), tokio/serde/tracing. `LibrqbitEngine::download_torrent` (lib.rs) → `download_torrent_source` (AddTorrent + wait_until_completed + resolve_downloaded_file + link_or_copy) |
+| `manager-scan` (HDD tarama + gamelist.xml + history) | `manager-rs/manager-scan/src/{scan,disk,gamelist,history}.rs` | Faz 12d — `ROMS_FOLDER` walkdir tarama (platform gruplu ROM listesi + boyut), `sysinfo` disk kullanımı, `quick-xml` ile `gamelist.xml` oku/yaz (Linux=yalnız RGSX entry, Windows=merge), `history_matches.py` portu. `manager-http` `/api/scan` (`RGSX_ROMS_FOLDER`) + SSE `scan` olayı. 8 test yeşil. |
+| `manager-tvui` (TVUI native shell) | `manager-rs/manager-tvui/src/{lib,main}.rs` | Faz 12b — WebUI SPA'sını `?mode=tv` ile kiosk tarayıcıda (`http://127.0.0.1:<port>/?mode=tv`) tam ekran açar. `RGSX_TVUI=1` → `manager-bin` ayrı thread. SPA TV modu: `webui/src/App.vue` (10-foot layout + gamepad/ok nav). NOT: `wry`+`tao` webview feature bu ortamda gdk-3 çakışması nedeniyle devre dışı; harici tarayıcı varsayılan. |
+| `manager-download` (DDL/debrid resolver) | `manager-rs/manager-download/src/lib.rs` | Faz 12e — `Resolver` trait + `DirectResolver` (torrent/DDL sınıflandırma) + `OneFichierResolver`/`RealDebridResolver` (kimlik gerektirir; `NotConfigured`/`NotImplemented`). `manager-http` `/api/download` DDL dalı (`RGSX_NATIVE_DOWNLOAD=1`) → `DownloadManager::resolve` → `DirectHttp` ise reqwest ile indirir, SSE/progress ile sonuçlanır. 3 test yeşil. |
 | `manager-windows` (tray/autostart/firewall, cfg(windows)) | `manager-rs/manager-windows/src/{lib,tray,firewall,autostart}.rs` | Bağımlı: `manager-core`, `windows-rs`. Yalnız Windows build'de (`manager-bin` cfg(windows) dalı) linklenir; Linux'ta stub (`manager_windows_tray` modülü) |
 | `manager-bin` (entrypoint + engine seçimi) | `manager-rs/manager-bin/src/main.rs` | Bağımlı: `manager-core`, `manager-http`, `manager-bridge`, `manager-torrent`, (cfg windows) `manager-windows`. `resolve_engine` (main.rs:46): `RGSX_TORRENT_ENGINE=librqbit` → `LibrqbitEngine`; aksi → `Bridge::spawn`. `AppState.bridge`'e yazar; `axum::serve` ile dinler (port 5010 / `RGSX_MANAGER_BIN_PORT`) |
 
@@ -38,6 +41,16 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 
 ### Rust katalog proxy (Faz 10c/3/2, TASK-002k-2) — strangler/proxy
 - `manager-http/src/catalog.rs`: `CatalogSource` trait + `PythonCatalog` (reqwest/rustls-tls; `RGSX_PYTHON_MANAGER_URL`). `AppState.catalog` alanı eklendi.
+
+### Catalog native port (Faz 12c, TASK-002o) — Python'sız catalog
+- `NativeCatalog` (`catalog.rs`) `CatalogSource` implement eder: `systems_list.json` +
+  `games/<platform>.json` + `languages/<lang>.json` + `images/<platform>.*` local
+  dosyalarından birebir aynı JSON şeklini üretir (offline). `RGSX_NATIVE_CATALOG=1`
+  → main.rs `NativeCatalog::from_env()` kurar (yollar `RGSX_DATA_DIR` altından;
+  tek tek `RGSX_SOURCES_FILE`/`RGSX_GAMES_FOLDER`/`RGSX_IMAGES_FOLDER`/`RGSX_LANGUAGES_FOLDER`
+  override). Komut POST'ları (download/queue) native değildir → `NativeCatalog`
+  içindeki opsiyonel `PythonCatalog` fallback'e proxy edilir. Ayrı crate yerine
+  `manager-http` içinde (trait zaten orada; döngü yok). 5 birim test + 102 contract yeşil.
 - `platforms`/`search`/`games`/`translations`/`image` handler'ları `state.catalog` varsa Python'a proxy'ler (yanıt birebir iletilir), yoksa mevcut placeholder'a düşer (geriye uyumlu). Native Rust logic portu ileride ayrı alt faz.
 - `cargo test -p manager-http`: 74/74 yeşil (6 yeni proxy testi, `FakeCatalog` ile).
 
@@ -67,6 +80,13 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 ### Rust WebUI + SSE cutover (Faz 10c/3/6, TASK-002k-6) — flag-gated
 - Rust `index`/`static_file` (static_root + hydration + traversal koruması) ve SSE `/api/events`
   (`sse.rs`, native) zaten mevcut ve testli. `RGSX_WEBUI_DIR` ile statik kök override.
+
+### WebUI frontend (Faz 12a, TASK-002n) — native Vue 3 SPA
+- `webui/` (Vite + Vue 3): `npm run build` → `webui/dist/`. Rust `tower-http::ServeDir`
+  ile `/static/*` sunulur; `/` ve SPA route'ları (`/settings`,`/downloads`,...) hydrate
+  edilmiş `index.html` döndürür (client-side routing, `lib.rs` fallback = `api::index`).
+  Canlı ilerleme `EventSource('/api/events')` ile (SSE, TASK-002m). `RGSX_WEBUI_DIR=webui/dist`
+  + `RGSX_RUST_WEBUI=1` ile aktif. 102/102 contract testi yeşil.
 - `RGSX_RUST_WEBUI=1` → Rust 5000 (TV UI portu değişmez), Python SADECE `RGSX_CATALOG_PORT`
   (vars. 5001) üzerinden catalog servis eder; Rust oraya proxy'ler. `manager-bin/main.rs`
   port default 5000, `rgsx_manager.py` run_server portu 5001 + env'ler set edilir.

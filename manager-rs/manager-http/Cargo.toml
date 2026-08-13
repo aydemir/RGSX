@@ -12,8 +12,11 @@ serde.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
+tower-http = { version = "0.6", features = ["fs"] }
 manager-core.workspace = true
 manager-bridge.workspace = true
+manager-scan = { path = "../manager-scan" }
+manager-download = { path = "../manager-download" }
 reqwest.workspace = true
 percent-encoding.workspace = true
 async-trait.workspace = true
@@ -23,3 +26,4 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 async-trait.workspace = true
 manager-torrent = { path = "../manager-torrent" }
+tempfile = "3"
