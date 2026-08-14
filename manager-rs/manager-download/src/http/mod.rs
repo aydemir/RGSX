@@ -9,18 +9,20 @@
 //! - `headers` — header varyantları + retry/backoff (faz 4b).
 //! - `vimm` — vimm.net form/mediaId çözümü (faz 4c).
 //! - `archive_org` — archive.org cookie/metadata/alt-URL (faz 4d).
+//! - `lolroms` — lolroms.com parent-warm + indirme (faz 4f, reqwest fallback).
 //!
 //! ## Faz takibi
 //! - 4a ✅ stream çekirdek (bu dosya + stream.rs + guards.rs)
-//! - 4b ⏳ header varyantları + 429/retry (headers.rs)
-//! - 4c ⏳ vimm.net
-//! - 4d ⏳ archive.org
-//! - 4e ⏳ rust_daemon/WebUI delegasyonu
-//! - 4f ⏳ lolroms external-tool → sonraki sprint (reqwest fallback ile)
+//! - 4b ✅ header varyantları + 429/retry (headers.rs)
+//! - 4c ✅ vimm.net
+//! - 4d ✅ archive.org
+//! - 4e ✅ rust_daemon/WebUI delegasyonu
+//! - 4f ✅ lolroms reqwest fallback (parent GET warm + Referer + guards)
 
 pub mod archive_org;
 pub mod guards;
 pub mod headers;
+pub mod lolroms;
 pub mod stream;
 pub mod vimm;
 
@@ -175,9 +177,14 @@ impl HttpDownloader {
     }
 
     fn client(&self) -> reqwest::Client {
-        self.client
-            .clone()
-            .unwrap_or_else(|| reqwest::Client::new())
+        self.client.clone().unwrap_or_else(|| {
+            // Python `requests.Session` gibi cookie oturumu — LOLROMs parent fetch
+            // (4f) cookie jar'ı ısıtsın, böylece dosya isteği aynı oturumu kullanır.
+            reqwest::Client::builder()
+                .cookie_store(true)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new())
+        })
     }
 
     fn cancel(&self) -> Option<Arc<CancelFlag>> {
@@ -237,6 +244,21 @@ impl HttpDownloader {
                 effective_url = info.download_url.clone();
                 resolved_referer = Some(req.url.clone());
             }
+        }
+
+        // Provider çözümü (4f): lolroms.com → normalize + parent sayfa GET (cookie/
+        // referer ısınması), sonra dosya isteği `Referer: parent_url` ile.
+        if self::lolroms::is_lolroms_url(&req.url) {
+            effective_url = self::lolroms::normalize_lolroms_url(&req.url);
+            let parent = self::lolroms::parent_url(&effective_url);
+            let pheaders = self::lolroms::lolroms_headers("https://lolroms.com/");
+            // Parent sayfayı GET et (cookie jar ısınması) — sonucu yok say (best-effort).
+            let mut pbuilder = self.client().get(&parent);
+            for (k, v) in &pheaders {
+                pbuilder = pbuilder.header(k, v);
+            }
+            let _ = pbuilder.send().await;
+            resolved_referer = Some(parent.clone());
         }
 
         // archive.org cookie (4d): request'ten ya da dosyadan.

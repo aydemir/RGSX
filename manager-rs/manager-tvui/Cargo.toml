@@ -10,3 +10,20 @@ description = "TVUI native shell — aynı SPA'yı kiosk tarayıcıda tam ekran 
 # yüzünden workspace lockfile'ı çözümlenemiyor. Bu nedenle varsayılan yol harici
 # kiosk tarayıcı (chromium/chrome) spawn'ıdır; webview embedding uygun bir makinede
 # (webkit2gtk/webview2 yüklü) ayrı bir alt görev olarak eklenecek.
+
+[dependencies]
+manager-http = { path = "../manager-http" }
+manager-core = { path = "../manager-core" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+
+# TASK-005-B — native SDL2/gilrs gamepad girdi yolu (yalnız `native-input` feature
+# ile gelir; böylece libudev gerektiren gilrs varsayılan Linux sandbox build'ini
+# kırmaz, yalnız Windows native / uygun makinede etkinleşir).
+[dependencies.gilrs]
+version = "0.11"
+optional = true
+
+[features]
+# Native gamepad: gilrs tabanlı SDL code okuyucu + ES map sadakati.
+native-input = ["gilrs"]

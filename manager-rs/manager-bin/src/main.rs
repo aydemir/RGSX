@@ -235,13 +235,24 @@ async fn main() {
             .map(|base| Arc::new(manager_http::catalog::PythonCatalog::new(base)) as Arc<dyn manager_http::catalog::CatalogSource>)
     };
 
+    let events = manager_http::sse::channel();
     let app = router(AppState {
         data: Arc::new(std::sync::RwLock::new(data)),
-        events: manager_http::sse::channel(),
+        events: events.clone(),
         bridge: bridge.clone(),
         static_root,
         catalog,
     });
+
+    // TASK-005-B — native SDL2/gilrs gamepad girdi yolu. `native-input` feature
+    // derlenmişse VE `RGSX_NATIVE_INPUT=1` set ise, bağlı gamepad'i ES map ile
+    // okuyup SSE `gamepad` olayı olarak yukarıdaki kanaldan yayar (webui TV
+    // modu tüketir). Headless/sandbox'ta gilrs başlatılamazsa sessizce atlanır.
+    #[cfg(feature = "native-input")]
+    if std::env::var("RGSX_NATIVE_INPUT").map(|v| v == "1").unwrap_or(false) {
+        let es = manager_http::es_input::load_best();
+        manager_tvui::native_input::start_native_input(events.clone(), es);
+    }
 
     // Faz 12b — TVUI shell: `RGSX_TVUI=1` ise SPA'yı kiosk/webview'da açar.
     // Ayrı thread'de (webview feature event loop'u bloklar); kiosk yolunda

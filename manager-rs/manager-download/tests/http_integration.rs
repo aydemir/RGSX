@@ -442,3 +442,76 @@ async fn archive_org_alt_url_fallback_on_403() {
     assert_eq!(std::fs::read(&dest).unwrap(), b"ARCHDATA");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn lolroms_parent_warms_then_downloads() {
+    // 4f: lolroms.com → parent sayfa GET (cookie/referer ısınması) → dosya isteği
+    // Referer: parent_url ile iner. Mock, parent yolu ile dosya yolunu ayırt eder.
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits2 = hits.clone();
+    let addr = mock_server(move |path, _r| {
+        let n = hits2.fetch_add(1, Ordering::SeqCst);
+        if path == "/games/nes/" {
+            // Parent fetch → 200 (cookie jar ısınır), gövde önemli değil.
+            full_body(StatusCode::OK, b"<html>parent</html>", "text/html")
+        } else if path == "/games/nes/rom.zip" {
+            assert!(n >= 1, "parent önce istenmeli");
+            full_body(StatusCode::OK, b"PK\x03\x04LOLBIN", "application/octet-stream")
+        } else {
+            full_body(StatusCode::NOT_FOUND, b"", "text/plain")
+        }
+    })
+    .await;
+    let client = reqwest::Client::builder()
+        .cookie_store(true)
+        .resolve("lolroms.com", addr)
+        .build()
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("rgsx-hdl-lol-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dest = dir.join("rom.zip");
+    let out = manager_download::http::HttpDownloader::new()
+        .with_client(client)
+        .download_async(&req("http://lolroms.com/games/nes/rom.zip".to_string(), &dest))
+        .await
+        .unwrap();
+    assert_eq!(out, dest);
+    assert_eq!(std::fs::read(&dest).unwrap(), b"PK\x03\x04LOLBIN");
+    // En az parent + dosya olmak üzere 2 istek yapıldı.
+    assert!(hits.load(Ordering::SeqCst) >= 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn lolroms_html_guard_rejects_parentless() {
+    // 4f: dosya isteği HTML döndürürse (challenge/fallback) arşiv guard'ı reddeder.
+    let addr = mock_server(move |path, _r| {
+        if path == "/parent/" {
+            full_body(StatusCode::OK, b"<html>p</html>", "text/html")
+        } else {
+            full_body(StatusCode::OK, b"<html>challenge</html>", "text/html")
+        }
+    })
+    .await;
+    let client = reqwest::Client::builder()
+        .cookie_store(true)
+        .resolve("lolroms.com", addr)
+        .build()
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("rgsx-hdl-lolhtml-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dest = dir.join("rom.zip");
+    let err = manager_download::http::HttpDownloader::new()
+        .with_client(client)
+        .download_async(&req("http://lolroms.com/parent/rom.zip".to_string(), &dest))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        manager_download::http::DownloadError::HtmlInsteadOfPayload(_)
+    ));
+    assert!(!dest.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

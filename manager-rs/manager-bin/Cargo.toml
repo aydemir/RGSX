@@ -20,3 +20,7 @@ manager-tvui = { path = "../manager-tvui" }
 
 [target.'cfg(windows)'.dependencies]
 manager-windows = { path = "../manager-windows" }
+
+[features]
+# TASK-005-B — native SDL2/gilrs gamepad girdi yolu (RGSX_NATIVE_INPUT=1 ile).
+native-input = ["manager-tvui/native-input"]

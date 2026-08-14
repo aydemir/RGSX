@@ -11,6 +11,10 @@
 //! bu ortamdaki gdk-3 link çakışması nedeniyle şimdilik devre dışı; uygun makinede
 //! eklenecek.
 
+/// TASK-005-B — native SDL2/gilrs gamepad girdi yolu (yalnız `native-input`
+/// feature ile derlenir; varsayılan build'de boş modül).
+pub mod native_input;
+
 /// TVUI URL'i — WebUI SPA'sı, TV modu etkin.
 pub fn tv_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/?mode=tv")
