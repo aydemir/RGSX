@@ -22,7 +22,9 @@ function changeUiLang(l) { setLocale(l); locale.value = l; dict.value = STRINGS[
 const settingsOpen = ref(false)
 const languages = ref([])       // mevcut veri-dili kodları (/api/languages)
 const serverSettings = ref(null)
+const settings = ref(null)      // düzenlenebilir ayar nesnesi (native /api/settings)
 const dataLang = ref('')
+const saveMsg = ref('')
 async function loadSettings() {
   try {
     const ls = await apiGet('/api/languages')
@@ -31,15 +33,33 @@ async function loadSettings() {
   try {
     const s = await apiGet('/api/settings')
     serverSettings.value = s
-  } catch (e) { serverSettings.value = null }
+    settings.value = (s && s.settings) ? JSON.parse(JSON.stringify(s.settings)) : null
+  } catch (e) { serverSettings.value = null; settings.value = null }
   try {
     const tr = await apiGet('/api/translations')
     dataLang.value = tr.language || 'en'
   } catch (e) { dataLang.value = 'en' }
 }
+async function saveSettings() {
+  if (!settings.value) return
+  saveMsg.value = ''
+  try {
+    await apiPost('/api/settings', { settings: settings.value })
+    saveMsg.value = tt('saved')
+    // kalıcılığı yansıt: sunucudan taze durum al
+    await loadSettings()
+  } catch (e) {
+    saveMsg.value = tt('save_failed')
+  }
+}
 function changeDataLang(l) {
   dataLang.value = l
   apiGet('/api/translations?lang=' + encodeURIComponent(l)).catch(() => {})
+  if (settings.value) {
+    settings.value.language = l
+    saveMsg.value = tt('data_language_saved')
+    apiPost('/api/settings', { settings: settings.value }).catch(() => {})
+  }
 }
 function toggleSettings() { settingsOpen.value = !settingsOpen.value }
 
@@ -342,10 +362,49 @@ const pct = (id) => {
           <option v-if="!languages.length" value="">—</option>
         </select>
       </div>
-      <div class="field">
+      <div class="field" v-if="settings">
         <label>{{ tt('server_settings') }}</label>
-        <pre class="mono" v-if="serverSettings">{{ JSON.stringify(serverSettings, null, 2) }}</pre>
-        <p v-else class="muted">{{ tt('no_settings') }}</p>
+        <div class="sub">
+          <div class="row">
+            <label>{{ tt('light_mode') }}</label>
+            <input type="checkbox" v-model="settings.display.light_mode" @change="saveSettings()" />
+          </div>
+          <div class="row">
+            <label>{{ tt('grid') }}</label>
+            <select v-model="settings.display.grid" @change="saveSettings()">
+              <option value="2x4">2x4</option>
+              <option value="3x4">3x4</option>
+              <option value="4x3">4x3</option>
+              <option value="5x3">5x3</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>{{ tt('max_downloads') }}</label>
+            <input type="number" min="1" max="20" v-model.number="settings.max_simultaneous_downloads" @change="saveSettings()" />
+          </div>
+          <div class="row">
+            <label>{{ tt('music') }}</label>
+            <input type="checkbox" v-model="settings.music_enabled" @change="saveSettings()" />
+          </div>
+          <div class="row">
+            <label>{{ tt('show_unsupported') }}</label>
+            <input type="checkbox" v-model="settings.show_unsupported_platforms" @change="saveSettings()" />
+          </div>
+          <div class="row">
+            <label>{{ tt('sort') }}</label>
+            <select v-model="settings.global_sort_option" @change="saveSettings()">
+              <option value="name_asc">{{ tt('sort_name_asc') }}</option>
+              <option value="name_desc">{{ tt('sort_name_desc') }}</option>
+              <option value="size_desc">{{ tt('sort_size_desc') }}</option>
+              <option value="added_desc">{{ tt('sort_added_desc') }}</option>
+            </select>
+          </div>
+          <p v-if="saveMsg" class="saved">{{ saveMsg }}</p>
+        </div>
+      </div>
+      <div class="field" v-else>
+        <label>{{ tt('server_settings') }}</label>
+        <p class="muted">{{ tt('no_settings') }}</p>
       </div>
     </section>
 
