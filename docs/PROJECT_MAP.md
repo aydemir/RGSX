@@ -143,6 +143,7 @@ aynı obje kimliğiyle tutulur.
 | Şablon | `tasks/_template.md` | `environment: linux\|windows\|both` zorunlu (AGENTS.md kuralı) |
 | Tamamlanan görevler | `tasks/done/*.md` | TASK-001 (Faz 7), TASK-002 + 002a–002g (Faz 10 Rust), TASK-003 (Faz 11). Hepsi `done/` |
 | Aktif / bekleyen | `tasks/in-progress/`, `tasks/todo/` | Faz 12 çekirdeği (12a–12e + 12f) `done/`; kalan `in-progress`: 002i/002j/002k-7/002l/002m (commit'lendi, temizlenecek). `todo/TASK-002k-faz10c3-plan.md` (Faz 10c/3 planı, Faz 12 ile büyük ölçüde kapsandı) |
+| Rust gap'leri (Faz 13) | `tasks/gap/TASK-002-gap-{1..10}*.md` | Python iş akışında (PYTHON_WORKFLOW.md) Rust karşılığı OLMAYAN düğümler: retry engine, pause/resume, cancel+temizlik, HTTP-direct, disk alanı, extract, seed lifecycle, stray-temp, restart-resume, history/SSE. P0→P2 sıralı (Faz 13 roadmap) |
 
 ---
 
@@ -179,7 +180,8 @@ ADR dizini yok; mimari/akış/roadmap ayrı klasörlerde.
 | İndeks | `docs/README.md` | Tüm docs ağacı |
 | Mimari | `docs/architecture/{NETWORK_PACKAGE,DOWNLOAD_STATE_MACHINE,WEBUI_API,CONTROLS_PACKAGE,UTILS_PACKAGE,CONCURRENCY,DOWNLOAD_MANAGER,DISPLAY_PACKAGE}.md` | Paket/katman haritaları |
 | Akışlar | `docs/flows/{DOWNLOAD_PIPELINE,FILTER_PIPELINE,STARTUP,QBITTORRENT_PASSWORD}.md` | Uçtan uca akışlar |
-| Roadmap | `docs/roadmap/{ROADMAP,ROADMAP_DOWNLOAD_MANAGER}.md` | Faz planı; Faz 10b + librqbit opt-in burada |
+| Roadmap | `docs/roadmap/{ROADMAP,ROADMAP_DOWNLOAD_MANAGER,ROADMAP_FAZ12_RUST_WEBUI_TVUI,FAZ10C3_CONTRACT_MAP}.md` | Faz planı; Faz 10b + librqbit opt-in; Faz 13 (Rust download gap'leri) burada |
+| İş akışı | `docs/PYTHON_WORKFLOW.md` | Python indirme akışı haritası (queue.py/qbittorrent_backend.py/rgsx_manager.py) — her karar noktası düğüm (W/D/T/H/F/R/P/Q/RD/M); Rust eşleme tablosu + eksik düğümler. `tasks/gap/*.md` ile çapraz bağıntılı |
 | Rehber | `docs/guides/{TESTING,DEVELOPMENT}.md` | Test / geliştirme kuralları |
 | Özellikler | `docs/features/FEATURES.md` | Değişiklik günlüğü (Faz 10/10b girişleri) |
 | Kullanıcı | `docs/user/{TVUI_FILTERS,WEBUI_FILTERS}.md` | UI kılavuzu |

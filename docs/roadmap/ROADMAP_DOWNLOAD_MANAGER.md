@@ -551,6 +551,8 @@ Faz 9 (Toplu indirme) ✅
 Faz 10 (Rust refaktör) ✅       ← Faz 1-9 + 10a (Windows) + 10b (librqbit engine) tamamlandı
    ↓
 Faz 11 (İlk açılışta dil algılama)
+   ↓
+Faz 13 (Rust download gap'leri — P0'dan P2'ye)
 ```
 
 Gerekçeler:
@@ -561,6 +563,8 @@ Gerekçeler:
 - **10 (Rust)**: en son — ancak davranış sabitlendikten (Faz 7) ve yeni özellikler oturduktan sonra.
   Faz 9 ile birlikte Faz 1-9 tamamlandı — **Faz 10 sıradaki aktif fazdır**.
 - **11 (dil algılama)**: bağımsız; tasarımı Faz 6 sırasında tamamlandı, uygulaması istendiğinde.
+- **13 (gap'ler)**: Faz 10'un eksiklerini kapatır — Faz 10 kapsamında keşfedilen, Python iş
+  akışının Rust'a taşınmamış düğümleri.
 
 ---
 
@@ -640,3 +644,40 @@ manual yazılır sonraki boot'larda korunur; eski settings regression: `language
 en ise hiçbir şey yazılmaz/bildirim gösterilmez, farklı dil ise settings güncellenir + tek
 seferlik bildirim; Batocera dışı + Termux/RetroBat env mirası için ayrı test; mevcut suite
 baseline ile aynı kalır (246 passed / 23 pre-existing).
+
+---
+
+## Faz 13 — Rust download gap'leri (Python iş akışı doğrulaması)
+
+> **Kök bulgu:** Rust refaktörü "satır satır okuyarak" gittiği için Python indirme iş akışının
+> tamamı (özellikle nadir/hatalı dallar) gözden kaçtı. Faz 13, önce Python iş akışını bütün
+> karar noktalarıyla çıkaran `docs/PYTHON_WORKFLOW.md` haritası üzerinden **Rust karşılığı
+> olmayan düğümleri** tespit eder ve kapatır. Her gap, `tasks/gap/TASK-002-gap-*.md` dosyasıyla
+> birebir eşlenir (düğüm ID'leri `docs/PYTHON_WORKFLOW.md` §3 tablosundan gelir).
+
+| Gap | Eksik düğümler | Öncelik | Görev dosyası |
+|---|---|---|---|
+| **Gap 1 — Retry/backoff motoru** | `F1→F2→R0..R3`: transient sınıflandırma, `_retry_backoff`, `_schedule_download_retry`, `_retry_in_flight` dedup | P1 | `tasks/gap/TASK-002-gap-1-retry-engine.md` |
+| **Gap 2 — Pause/Resume orkestrasyonu** | `P0..P2`, `P7`: toggle, pause_all, resume_all, pause_ev → backend (librqbit pause API) | **P0** | `tasks/gap/TASK-002-gap-2-pause-resume.md` |
+| **Gap 3 — Cancel + temizlik** | `P3..P6`, `Q9`, `Q8`: partial dosya, temp-root, seeder artifact temizliği | **P0** | `tasks/gap/TASK-002-gap-3-cancel-cleanup.md` |
+| **Gap 4 — HTTP-doğrudan indirme** | `H0..H12` tüm HTTP-alt ağacı: vimm/archive.org/lolroms/1fichier, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri | **P0** | `tasks/gap/TASK-002-gap-4-http-direct.md` |
+| **Gap 5 — Disk alanı ön-kontrolü** | `D5`, `H8`: `InsufficientDiskSpaceError` | P1 | `tasks/gap/TASK-002-gap-5-disk-space.md` |
+| **Gap 6 — Arşiv auto-extract** | `H12`, `H12e`: BIOS/PS3 redump force extract, post-process | P2 | `tasks/gap/TASK-002-gap-6-extract.md` |
+| **Gap 7 — Seed lifecycle + şifre migration** | `Q6ok→Q7→Q8`, `Q6c`: promote-to-seed, `_seed_status_worker`, `stop_seed`, password migration | P1 | `tasks/gap/TASK-002-gap-7-seed-lifecycle.md` |
+| **Gap 8 — Stray temp-root temizliği** | `Q9`: `_find_stray_torrent_temp_roots` orphan taraması | P2 | `tasks/gap/TASK-002-gap-8-stray-temp.md` |
+| **Gap 9 — Restart sonrası resume** | `M0`: librqbit session ephemral → torrent resume kaybolur | P1 | `tasks/gap/TASK-002-gap-9-resume-interrupted.md` |
+| **Gap 10 — History/SSE sonlandırma** | `F0` (mark_game_as_downloaded, emit_state_event, bulk history), `D2/D7` | P1 | `tasks/gap/TASK-002-gap-10-history-sse.md` |
+
+**Sıralama ilkesi:** Orkestratör (`W0..W3`, `D0..D8` dış sarmalayıcı) Python'da kalırken
+Rust yalnızca *torrent byte indirme* (`T4r`/`RD4`) devralmıştı. Bu 10 madde, Python
+kaldırıldığında **davranışsal olarak kaybolacak** düğümlerdir. İş sırası:
+1. **P0'lar** (Gap 2 → 3 → 4): pause/resume, cancel+temizlik, HTTP-direct — kullanıcının
+   her gün dokunduğu yollar.
+2. **P1'ler** (Gap 1 → 10 → 9 → 7 → 5): retry motoru (Faz 8 Python'da zaten var, birebir port),
+   history/SSE, restart-resume, seed lifecycle, disk alanı.
+3. **P2'ler** (Gap 6 → 8): extract post-process ve stray temp (nadir dallar, düşük risk).
+
+**Doğrulama:** Her gap ayrı commit; `cargo test -p manager-*` + contract suite (103/103)
+yeşil kalır; parity davranışları için Python `tests/` suite ile çapraz kontrol.
+
+---
