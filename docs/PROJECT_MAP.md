@@ -51,6 +51,14 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   override). Komut POST'ları (download/queue) native değildir → `NativeCatalog`
   içindeki opsiyonel `PythonCatalog` fallback'e proxy edilir. Ayrı crate yerine
   `manager-http` içinde (trait zaten orada; döngü yok). 5 birim test + 102 contract yeşil.
+
+### Native katalog OTA bootstrap (Faz 12f, TASK-004) — veri otomatik çekme
+- `manager-http/src/catalog_bootstrap.rs`: `ensure_catalog_ready()` — `RGSX_NATIVE_CATALOG=1`
+  ama `RGSX_DATA_DIR`'de `systems_list.json` + `games/*.json` yoksa OTA `games.zip`'i
+  indirip çıkarır (Python `rgsx_cli.ensure_data_present` birebir karşılığı, saf-Rust).
+  Zip URL: `RGSX_SOURCES_MODE=custom`+`RGSX_SOURCES_ZIP_URL` / yerel `games.zip` /
+  varsayılan `https://retrogamesets.fr/softs/games.zip`. `main.rs` native dalında
+  `NativeCatalog::from_env()` öncesi `.await` edilir. Bağımlılık: `zip` (deflate) + reqwest `stream`.
 - `platforms`/`search`/`games`/`translations`/`image` handler'ları `state.catalog` varsa Python'a proxy'ler (yanıt birebir iletilir), yoksa mevcut placeholder'a düşer (geriye uyumlu). Native Rust logic portu ileride ayrı alt faz.
 - `cargo test -p manager-http`: 74/74 yeşil (6 yeni proxy testi, `FakeCatalog` ile).
 

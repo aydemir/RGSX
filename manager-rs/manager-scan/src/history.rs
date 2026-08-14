@@ -39,7 +39,7 @@ pub fn match_history_local(entry: &serde_json::Value, roms_folder: &Path) -> Vec
     for c in candidates {
         let p = Path::new(&c).to_path_buf();
         let norm = p.to_string_lossy().to_string();
-        if !seen.insert(norm.clone()) {
+        if !seen.insert(norm.replace('\\', "/")) {
             continue;
         }
         if p.is_file() {

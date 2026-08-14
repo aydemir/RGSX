@@ -20,6 +20,7 @@ manager-download = { path = "../manager-download" }
 reqwest.workspace = true
 percent-encoding.workspace = true
 async-trait.workspace = true
+zip = { version = "2", features = ["deflate"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

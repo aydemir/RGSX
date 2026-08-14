@@ -16,6 +16,7 @@
 
 pub mod api;
 pub mod catalog;
+pub mod catalog_bootstrap;
 pub mod sse;
 pub mod state;
 

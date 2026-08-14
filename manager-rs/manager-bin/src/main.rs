@@ -225,6 +225,8 @@ async fn main() {
         .map(|v| v == "1")
         .unwrap_or(false);
     let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> = if native_catalog {
+        // Faz 12f: native katalog verisi (systems_list.json + games/) eksikse OTA'dan çek.
+        manager_http::catalog_bootstrap::ensure_catalog_ready().await;
         Some(Arc::new(manager_http::catalog::NativeCatalog::from_env()))
     } else {
         std::env::var("RGSX_PYTHON_MANAGER_URL")

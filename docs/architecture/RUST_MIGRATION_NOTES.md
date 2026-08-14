@@ -288,6 +288,7 @@ günceller. Artık WebUI barı canlı akar.
 | 2026-08-13 | `RGSX_TORRENT_ENGINE=python` (bridge) | Tek indirme altyapısı korunur; qBittorrent WebUI/şifre migration bozulmaz |
 | 2026-08-13 | İndirme state GET'leri proxy (`progress`/`history`/`queue`) | İndirme Python'da yaşıyor; Rust state'i kopyası boş kaldığı için boş paneller görünüyordu |
 | 2026-08-13 | `RGSX_NO_AUTOSTART=1` | Rust sidecar Python ile aynı registry anahtarını kullanıyor; boot autostart Python'da kalmalı |
+| 2026-08-14 | `RGSX rust.bat` ayrı launcher üret (pure-Rust) | `RGSX Retrobat.bat` (Python) yerine ayrı bir Rust launcher: `manager-bin.exe` doğrudan başlatılır; `RGSX_NATIVE_CATALOG=1` + `RGSX_DATA_DIR=%ROOT%\saves\ports\rgsx` (gerçek catalog), `RGSX_TORRENT_ENGINE=librqbit` (embedded), port 5000, SPA `roms\ports\RGSX\webui`'ye deploy edildi. REASON: Kullanıcı Python'sız saf-Rust başlatıcı istedi; native catalog save klasöründeki `systems_list.json`/`games`/`images` ile çalışır. SUPERSEDES: 2026-08-13 sidecar yaklaşımı (Rust proxy→Python) yalnızca `RGSX Retrobat.bat` için geçerli; Rust-only yol ayrı bat'ta. |
 
 > Güncel kaynaklar: `FAZ10C3_CONTRACT_MAP.md` (route durum tablosu) ·
 > `PROJECT_MAP.md` (Rust workspace) · bu dosya (hata/çözüm günlüğü).

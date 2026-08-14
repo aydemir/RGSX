@@ -486,8 +486,16 @@
             }
         }
         
+        // Intervalle de rafraîchissement de la progression (téléchargements actifs)
+        let downloadsRefreshTimer = null;
+        
         // Afficher un onglet
         function showTab(tab, updateHistory = true) {
+            // Arrêter tout rafraîchissement périodique de l'onglet précédent
+            if (downloadsRefreshTimer !== null) {
+                clearInterval(downloadsRefreshTimer);
+                downloadsRefreshTimer = null;
+            }
             // Mettre à jour l'UI - tabs desktop
             document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
             const tabButtons = Array.from(document.querySelectorAll('.tab[data-tab]'));
@@ -519,6 +527,11 @@
             else if (tab === 'queue') loadQueue();
             else if (tab === 'history') loadHistory();
             else if (tab === 'settings') loadSettings();
+
+            // Rafraîchir la progression périodiquement tant que l'onglet Downloads est actif
+            if (tab === 'downloads' && downloadsRefreshTimer === null) {
+                downloadsRefreshTimer = setInterval(() => loadProgress(), 3000);
+            }
         }
         
         // ===== EVENT LISTENERS =====
