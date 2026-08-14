@@ -27,11 +27,14 @@ Karar: 2026-08-14 (kullanıcı: "Tam yedek + Python'sız").
 - ⚠️ ~~BUG: `/api/image/{platform}` → 404 (platform_name platform_image ile eşlenmiyordu).~~ **DÜZELTİLDİ:** `catalog.rs` `NativeCatalog::read_image` artık hem doğrudan adı hem `platform_name → platform_image` eşlemesini dener. Canlı test: `- BIOS by TMCTV -`→`bios.png` ve `3DO Interactive Multiplayer (Archive)`→`3do.png` için `200 image/png`. Görseller artık native servis ediliyor.
 - Not: `RGSX_MANAGER_PORT` set edilmeyen testte default `5010` kullanıldı; `rust.bat` `5000` set ediyor, deploy'da sorun yok.
 - **2.** İndirme akışı SPA'dan: oyun → `POST /api/download` ({url, platform, game_name}) → canlı kuyrukta SSE ile görünür (Gap-4 `native_ddl_download` ile bağlı).
-- **3.** Ayarlar sayfası + i18n: `/api/translations` (native hazır) + `/api/settings` (backend proxy; native'leştirilecek).
+- **3.** Ayarlar sayfası + i18n: ✅ YAPILDI. Backend: `catalog.rs` `build_translations(lang)` artık `?lang=` honor eder; yeni `list_languages()` + `GET /api/languages` ucu (native). Webui: `i18n.js` (en/tr UI dizgeleri) + Ayarlar paneli (UI dili istemci-taraflı, Veri Dili sunucudan `/api/languages`+`/api/translations?lang=`, Sunucu Ayarları `/api/settings` salt-okunur). `105` contract + katalog testleri yeşil; canlı test (`RGSX_NATIVE_CATALOG=1`) dil listesi + `?lang=` doğrulandı. Not: `/api/settings` hâlâ Python proxy (native ayar kaynağı ileride).
 - **4.** TV modu (`?mode=tv`) katalog gezinmesiyle zenginleştir (ok tuşu/gamepad ile platform/oyun seçimi). ✅ YAPILDI: `App.vue` `activeKind()/move()/activate()` genellendi — platform ızgarası / oyun listesi / arama sonuçları / kuyruk arasında ok+Enter+gamepad(A) ile gezinme. `sel` görsel vurgu eklendi. `npm run build` geçti.
-- **5.** Canlı uçtan uca test: `manager-bin` + `RGSX_NATIVE_CATALOG=1` + `RGSX_WEBUI_DIR` ile SPA'yı serve et, katalogların göründüğünü doğrula (katalog verisi `systems_list.json`+`games/` gerekir).
+- **5.** Canlı uçtan uca test: `manager-bin` + `RGSX_NATIVE_CATALOG=1` + `RGSX_WEBUI_DIR` ile SPA'yı serve et, katalogların göründüğünü doğrula (katalog verisi `systems_list.json`+`games/` gerekir). ✅ (Adım 1/2/4/5 doğrulandı; Adım 3 canlı test edildi: dil listesi + `?lang=` native çalışıyor.)
 
 **Doğrulama:** `webui` `npm run build` (dist üretir); manager-http contract 105 korunur;
 native backend unit testleri yeşil.
 
 **Bağımlılık:** Görev 1 yalnız frontend; backend hazır olduğu için bağımsız ilerler.
+
+## İlerleme
+- 2026-08-14 — Adım 3 (Ayarlar sayfası + i18n) implemente edildi ve commit edildi: backend `/api/languages` + `?lang=` desteği, webui `i18n.js` + Ayarlar paneli. Tüm Adım 1-5 tamam; TASK-003 kapanmıştır (kalan not: `/api/settings` native'leştirilmesi ileride).

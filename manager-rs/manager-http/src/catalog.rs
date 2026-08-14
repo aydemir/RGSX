@@ -414,8 +414,8 @@ impl NativeCatalog {
         })
     }
 
-    fn build_translations(&self) -> Value {
-        let lang = &self.default_language;
+    fn build_translations(&self, lang: &str) -> Value {
+        let lang = if lang.is_empty() { &self.default_language } else { lang };
         let file = self.languages_folder.join(format!("{lang}.json"));
         let translations = match std::fs::read_to_string(&file) {
             Ok(txt) => serde_json::from_str::<Value>(&txt).unwrap_or(Value::Object(Default::default())),
@@ -425,8 +425,25 @@ impl NativeCatalog {
             Value::Object(m) => m,
             _ => serde_json::Map::new(),
         };
-        t.insert("_language".into(), Value::String(lang.clone()));
+        t.insert("_language".into(), Value::String(lang.to_string()));
         serde_json::json!({ "success": true, "language": lang, "translations": Value::Object(t) })
+    }
+
+    /// `languages_folder` içindeki `*.json` dosyalarından dil kodlarını listeler (TASK-003).
+    fn list_languages(&self) -> Value {
+        let mut langs: Vec<String> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.languages_folder) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("json") {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        langs.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        langs.sort();
+        serde_json::json!({ "success": true, "languages": langs })
     }
 
     fn read_image(&self, platform: &str) -> Option<(Vec<u8>, String)> {
@@ -475,7 +492,15 @@ impl CatalogSource for NativeCatalog {
             return Ok(self.build_games(&platform));
         }
         if route.starts_with("/api/translations") {
-            return Ok(self.build_translations());
+            let lang = route
+                .split_once('?')
+                .map(|(_, q)| parse_query(q))
+                .and_then(|m| m.get("lang").cloned())
+                .unwrap_or_default();
+            return Ok(self.build_translations(&lang));
+        }
+        if route.starts_with("/api/languages") {
+            return Ok(self.list_languages());
         }
         // Bilinmeyen GET route → Python fallback (varsa).
         if let Some(p) = &self.python {

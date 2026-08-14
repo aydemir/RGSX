@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { connectSSE, apiGet, apiPost } from './api.js'
+import { t as _t, getLocale, setLocale, STRINGS } from './i18n.js'
 
 const connected = ref(false)
 const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {} })
@@ -10,6 +11,37 @@ const tv = ref(new URLSearchParams(location.search).get('mode') === 'tv')
 const selected = ref(0)        // kuyruk seçimi (TV)
 const selPlatform = ref(0)     // platform ızgarası seçimi (TV)
 const selGame = ref(0)         // oyun listesi seçimi (TV)
+
+// --- i18n (TASK-003 Adım 3) ---
+const locale = ref(getLocale())
+const dict = ref(STRINGS[locale.value] || STRINGS.tr)
+function tt(key) { return dict.value[key] ?? STRINGS.tr[key] ?? key }
+function changeUiLang(l) { setLocale(l); locale.value = l; dict.value = STRINGS[l] || STRINGS.tr }
+
+// --- Ayarlar paneli durumu ---
+const settingsOpen = ref(false)
+const languages = ref([])       // mevcut veri-dili kodları (/api/languages)
+const serverSettings = ref(null)
+const dataLang = ref('')
+async function loadSettings() {
+  try {
+    const ls = await apiGet('/api/languages')
+    languages.value = ls.languages || []
+  } catch (e) { languages.value = [] }
+  try {
+    const s = await apiGet('/api/settings')
+    serverSettings.value = s
+  } catch (e) { serverSettings.value = null }
+  try {
+    const tr = await apiGet('/api/translations')
+    dataLang.value = tr.language || 'en'
+  } catch (e) { dataLang.value = 'en' }
+}
+function changeDataLang(l) {
+  dataLang.value = l
+  apiGet('/api/translations?lang=' + encodeURIComponent(l)).catch(() => {})
+}
+function toggleSettings() { settingsOpen.value = !settingsOpen.value }
 
 // ES (EmulationStation) gamepad map'inden türetilmiş aksiyon -> tarayıcı Gamepad index.
 // Varsayılan standart mapping; /api/es-input bulunursa ES değerleriyle override edilir (TASK-005).
@@ -33,7 +65,7 @@ async function loadPlatforms() {
     platforms.value = (p.platforms || []).slice(0, 80)
     selPlatform.value = 0
   } catch (e) {
-    catalogError.value = 'Katalog yüklenemedi (RGSX_NATIVE_CATALOG=1 ve veri gerekli)'
+    catalogError.value = tt('catalog_error')
   }
 }
 
@@ -47,7 +79,7 @@ async function selectPlatform(name) {
     const g = await apiGet('/api/games/' + encodeURIComponent(name))
     games.value = g.games || []
   } catch (e) {
-    catalogError.value = 'Oyun listesi alınamadı'
+    catalogError.value = tt('game_list_failed')
   } finally {
     catalogLoading.value = false
   }
@@ -61,7 +93,7 @@ async function doSearch() {
     const r = await apiGet('/api/search?q=' + encodeURIComponent(q))
     searchResults.value = r.results || { platforms: [], games: [] }
   } catch (e) {
-    catalogError.value = 'Arama başarısız'
+    catalogError.value = tt('search_failed')
   } finally {
     catalogLoading.value = false
   }
@@ -99,6 +131,7 @@ onMounted(async () => {
     downloaded: (data) => { lastEvent.value = 'downloaded' },
   })
   await loadPlatforms()
+  loadSettings()
   if (tv.value) {
     window.addEventListener('keydown', onKey)
     gamepadTimer = setInterval(pollGamepad, 100)
@@ -163,6 +196,7 @@ function activate() {
   }
 }
 function back() {
+  if (settingsOpen.value) { settingsOpen.value = false; return }
   if (selectedPlatform.value && !searchResults.value) { selectedPlatform.value = null; games.value = [] }
   else if (searchResults.value) { searchResults.value = null; searchTerm.value = '' }
 }
@@ -181,7 +215,8 @@ function pollGamepad() {
     if (ax !== undefined && Math.abs(ax) > 0.6) { move(ax > 0 ? 1 : -1); break }
     for (let i = 0; i < p.buttons.length; i++) {
       if (p.buttons[i].pressed) {
-        if (i === m.navUp) move(-1)
+        if (i === m.menu) toggleSettings()      // gamepad Start = ayarlar
+        else if (i === m.navUp) move(-1)
         else if (i === m.navDown) move(1)
         else if (i === m.pageUp) move(-10)
         else if (i === m.pageDown) move(10)
@@ -206,24 +241,25 @@ const pct = (id) => {
 <template>
   <div class="app" :class="{ tv: tv }">
     <header>
-      <h1>RGSX Manager</h1>
+      <h1>{{ tt('app_title') }}</h1>
       <span class="status" :class="{ on: connected }">
-        {{ connected ? 'SSE bağlı' : 'bağlanıyor…' }}
+        {{ connected ? tt('status_connected') : tt('status_connecting') }}
       </span>
-      <span class="active" v-if="snapshot.active">● aktif indirme</span>
+      <span class="active" v-if="snapshot.active">{{ tt('active_download') }}</span>
+      <button class="gear" :class="{ on: settingsOpen }" @click="toggleSettings" :title="tt('settings')">⚙</button>
     </header>
 
     <p v-if="catalogError" class="err">{{ catalogError }}</p>
 
     <section v-if="!searchResults">
-      <h2>Platformlar <small>({{ platforms.length }})</small></h2>
+      <h2>{{ tt('platforms') }} <small>({{ platforms.length }})</small></h2>
       <div class="grid">
         <button v-for="(p, i) in platforms" :key="p.platform_name || p.name"
                 class="card" :class="{ sel: tv && selPlatform === i }"
                 @click="selPlatform = i; selectPlatform(p.platform_name || p.name)">
           <img v-if="p.platform_image" :src="'/api/image/' + encodeURIComponent(p.platform_name || p.name)" class="box" alt="" />
           <span class="pname">{{ p.platform_name || p.name }}</span>
-          <span class="count" v-if="p.games_count != null">{{ p.games_count }} oyun</span>
+          <span class="count" v-if="p.games_count != null">{{ p.games_count }} {{ tt('games') }}</span>
         </button>
       </div>
     </section>
@@ -232,45 +268,45 @@ const pct = (id) => {
       <h2>
         {{ selectedPlatform }}
         <small>({{ games.length }} oyun)</small>
-        <a class="back" @click="selectedPlatform = null; games = []">← geri</a>
+        <a class="back" @click="selectedPlatform = null; games = []">{{ tt('back') }}</a>
       </h2>
-      <p v-if="catalogLoading" class="muted">yükleniyor…</p>
+      <p v-if="catalogLoading" class="muted">{{ tt('loading') }}</p>
       <ul class="games">
         <li v-for="(g, i) in games" :key="g.name || g.url || i" :class="{ sel: tv && selGame === i }" @click="selGame = i">
           <div class="row">
             <span class="name">{{ g.name || g.game_name }}</span>
             <span class="size">{{ g.size || '' }}</span>
           </div>
-          <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)">İndir</button>
+           <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)">{{ tt('download') }}</button>
         </li>
       </ul>
     </section>
 
     <section>
-      <h2>Arama</h2>
+      <h2>{{ tt('search') }}</h2>
       <div class="search">
-        <input v-model="searchTerm" @keyup.enter="doSearch" placeholder="oyun / platform ara…" />
-        <button @click="doSearch">Ara</button>
-        <button v-if="searchResults" @click="searchResults = null; searchTerm = ''">Temizle</button>
+        <input v-model="searchTerm" @keyup.enter="doSearch" :placeholder="tt('search_placeholder')" />
+        <button @click="doSearch">{{ tt('search_button') }}</button>
+        <button v-if="searchResults" @click="searchResults = null; searchTerm = ''">{{ tt('clear') }}</button>
       </div>
       <div v-if="searchResults" class="results">
-        <h3>Oyunlar</h3>
+        <h3>{{ tt('search_results') }}</h3>
         <ul class="games">
           <li v-for="(g, i) in searchResults.games" :key="g.game_name || g.url || i" :class="{ sel: tv && selGame === i }" @click="selGame = i">
             <div class="row">
               <span class="name">{{ g.game_name }} <small>({{ g.platform }})</small></span>
               <span class="size">{{ g.size || '' }}</span>
             </div>
-            <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)">İndir</button>
+            <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)">{{ tt('download') }}</button>
           </li>
         </ul>
-        <p v-if="!searchResults.games.length" class="muted">sonuç yok</p>
+        <p v-if="!searchResults.games.length" class="muted">{{ tt('no_results') }}</p>
       </div>
     </section>
 
     <section>
-      <h2>İndirmeler <small>(canlı)</small></h2>
-      <p v-if="!queueItems.length" class="muted">Kuyruk boş</p>
+      <h2>{{ tt('downloads') }} <small>(canlı)</small></h2>
+      <p v-if="!queueItems.length" class="muted">{{ tt('queue_empty') }}</p>
       <ul class="dl">
         <li v-for="(item, i) in queueItems" :key="item.id || item.url || i"
             :class="{ sel: tv && i === selected }">
@@ -286,11 +322,34 @@ const pct = (id) => {
     </section>
 
     <section>
-      <h2>İlerleme haritası <small>(ham SSE)</small></h2>
+      <h2>{{ tt('progress_map') }} <small>({{ tt('raw_sse') }})</small></h2>
       <pre class="mono">{{ JSON.stringify(progress, null, 2) }}</pre>
     </section>
 
-    <footer class="muted">son olay: {{ lastEvent }} · refresh gerektirmez</footer>
+    <!-- Ayarlar paneli (TASK-003 Adım 3) -->
+    <section v-if="settingsOpen" class="settings">
+      <h2>{{ tt('settings') }} <a class="back" @click="settingsOpen = false">{{ tt('close') }}</a></h2>
+      <div class="field">
+        <label>{{ tt('ui_language') }}</label>
+        <select :value="locale" @change="changeUiLang($event.target.value)">
+          <option v-for="(v, k) in STRINGS" :key="k" :value="k">{{ k }}</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>{{ tt('data_language') }}</label>
+        <select :value="dataLang" @change="changeDataLang($event.target.value)">
+          <option v-for="l in languages" :key="l" :value="l">{{ l }}</option>
+          <option v-if="!languages.length" value="">—</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>{{ tt('server_settings') }}</label>
+        <pre class="mono" v-if="serverSettings">{{ JSON.stringify(serverSettings, null, 2) }}</pre>
+        <p v-else class="muted">{{ tt('no_settings') }}</p>
+      </div>
+    </section>
+
+    <footer class="muted">{{ tt('last_event') }}: {{ lastEvent }} · {{ tt('refresh_note') }}</footer>
   </div>
 </template>
 
@@ -336,6 +395,13 @@ small { color: #8b949e; font-weight: normal; }
 .search button { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; color: inherit; cursor: pointer; }
 .results h3 { font-size: 13px; color: #8b949e; margin: 12px 0 4px; }
 .back { font-size: 11px; color: #58a6ff; cursor: pointer; margin-left: 8px; }
+
+/* Ayarlar paneli (TASK-003 Adım 3) */
+.gear { margin-left: auto; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: inherit; font-size: 16px; width: 32px; height: 32px; cursor: pointer; }
+.gear.on { background: #1f6feb; border-color: #1f6feb; }
+.settings .field { margin: 12px 0; }
+.settings label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+.settings select { background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
 
 /* TV modu: 10-foot UI — büyük font, ölçekli layout, seçili vurgu */
 .app.tv { max-width: none; padding: 4vh 6vw; }

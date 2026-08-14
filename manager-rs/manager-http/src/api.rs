@@ -8,6 +8,7 @@
 //! - Her yanıtta `Access-Control-Allow-Origin: *`
 //! - Başarı: `{"success": true, ...}` ; Hata: `{"success": false, "error": msg}`
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -159,9 +160,16 @@ pub async fn search(State(state): State<AppState>, Query(params): Query<std::col
 }
 
 /// GET `/api/translations` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
-pub async fn translations(State(state): State<AppState>) -> Response {
+/// Opsiyonel `?lang=` ile dil seçilebilir (native backend).
+pub async fn translations(Query(params): Query<HashMap<String, String>>, State(state): State<AppState>) -> Response {
+    let lang = params.get("lang").cloned().unwrap_or_default();
     if let Some(c) = &state.catalog {
-        if let Ok(v) = c.get_json("/api/translations").await {
+        let route = if lang.is_empty() {
+            "/api/translations".to_string()
+        } else {
+            format!("/api/translations?lang={}", lang)
+        };
+        if let Ok(v) = c.get_json(&route).await {
             return ok(v);
         }
     }
@@ -169,6 +177,16 @@ pub async fn translations(State(state): State<AppState>) -> Response {
         "language": "tr",
         "translations": { "_language": "tr" },
     })))
+}
+
+/// GET `/api/languages` — TASK-003: mevcut dil kodlarını listeler (native backend).
+pub async fn languages(State(state): State<AppState>) -> Response {
+    if let Some(c) = &state.catalog {
+        if let Ok(v) = c.get_json("/api/languages").await {
+            return ok(v);
+        }
+    }
+    ok(contract::ok(json!({ "languages": ["en", "tr"] })))
 }
 
 /// GET `/api/games/{platform}` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.

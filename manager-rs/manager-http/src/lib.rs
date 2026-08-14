@@ -38,6 +38,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/platforms", get(api::platforms))
         .route("/api/search", get(api::search))
         .route("/api/translations", get(api::translations))
+        .route("/api/languages", get(api::languages))
         .route("/api/games/:platform", get(api::games))
         .route("/api/progress", get(api::progress))
         .route("/api/game-status", get(api::game_status))
