@@ -28,7 +28,7 @@ Karar: 2026-08-14 (kullanıcı: "Tam yedek + Python'sız").
 - Not: `RGSX_MANAGER_PORT` set edilmeyen testte default `5010` kullanıldı; `rust.bat` `5000` set ediyor, deploy'da sorun yok.
 - **2.** İndirme akışı SPA'dan: oyun → `POST /api/download` ({url, platform, game_name}) → canlı kuyrukta SSE ile görünür (Gap-4 `native_ddl_download` ile bağlı).
 - **3.** Ayarlar sayfası + i18n: `/api/translations` (native hazır) + `/api/settings` (backend proxy; native'leştirilecek).
-- **4.** TV modu (`?mode=tv`) katalog gezinmesiyle zenginleştir (ok tuşu/gamepad ile platform/oyun seçimi).
+- **4.** TV modu (`?mode=tv`) katalog gezinmesiyle zenginleştir (ok tuşu/gamepad ile platform/oyun seçimi). ✅ YAPILDI: `App.vue` `activeKind()/move()/activate()` genellendi — platform ızgarası / oyun listesi / arama sonuçları / kuyruk arasında ok+Enter+gamepad(A) ile gezinme. `sel` görsel vurgu eklendi. `npm run build` geçti.
 - **5.** Canlı uçtan uca test: `manager-bin` + `RGSX_NATIVE_CATALOG=1` + `RGSX_WEBUI_DIR` ile SPA'yı serve et, katalogların göründüğünü doğrula (katalog verisi `systems_list.json`+`games/` gerekir).
 
 **Doğrulama:** `webui` `npm run build` (dist üretir); manager-http contract 105 korunur;

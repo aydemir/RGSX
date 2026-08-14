@@ -7,7 +7,9 @@ const snapshot = reactive({ history: [], queue: [], active: false, progress: {},
 const progress = reactive({})
 const lastEvent = ref('')
 const tv = ref(new URLSearchParams(location.search).get('mode') === 'tv')
-const selected = ref(0)
+const selected = ref(0)        // kuyruk seçimi (TV)
+const selPlatform = ref(0)     // platform ızgarası seçimi (TV)
+const selGame = ref(0)         // oyun listesi seçimi (TV)
 
 let es = null
 
@@ -25,6 +27,7 @@ async function loadPlatforms() {
   try {
     const p = await apiGet('/api/platforms')
     platforms.value = (p.platforms || []).slice(0, 80)
+    selPlatform.value = 0
   } catch (e) {
     catalogError.value = 'Katalog yüklenemedi (RGSX_NATIVE_CATALOG=1 ve veri gerekli)'
   }
@@ -33,6 +36,7 @@ async function loadPlatforms() {
 async function selectPlatform(name) {
   selectedPlatform.value = name
   searchResults.value = null
+  selGame.value = 0
   games.value = []
   catalogLoading.value = true
   try {
@@ -103,17 +107,45 @@ onUnmounted(() => {
   if (gamepadTimer) clearInterval(gamepadTimer)
 })
 
-// TV modu: ok tuşları / gamepad ile seçim gezinmesi.
+// TV modu: ok tuşları / gamepad ile katalog + kuyruk gezinmesi.
 let gamepadTimer = null
+function activeKind() {
+  if (searchResults.value) return 'search'
+  if (selectedPlatform.value) return 'games'
+  return 'platforms'
+}
+function activeList() {
+  const k = activeKind()
+  if (k === 'platforms') return platforms.value
+  if (k === 'games') return games.value
+  if (k === 'search') return searchResults.value?.games || []
+  return queueItems.value
+}
 function move(dir) {
-  const n = queueItems.value.length
+  const list = activeList()
+  const n = list.length
   if (!n) return
-  selected.value = (selected.value + dir + n) % n
+  if (activeKind() === 'platforms') selPlatform.value = (selPlatform.value + dir + n) % n
+  else if (activeKind() === 'games' || activeKind() === 'search') selGame.value = (selGame.value + dir + n) % n
+  else selected.value = (selected.value + dir + n) % n
+}
+function activate() {
+  const k = activeKind()
+  if (k === 'platforms') {
+    const p = platforms.value[selPlatform.value]
+    if (p) selectPlatform(p.platform_name || p.name)
+  } else if (k === 'games') {
+    const g = games.value[selGame.value]
+    if (g) downloadGame(g)
+  } else if (k === 'search') {
+    const g = (searchResults.value?.games || [])[selGame.value]
+    if (g) downloadGame(g)
+  }
 }
 function onKey(e) {
   if (e.key === 'ArrowDown') { move(1); e.preventDefault() }
   else if (e.key === 'ArrowUp') { move(-1); e.preventDefault() }
-  else if (e.key === 'Enter') { e.preventDefault() }
+  else if (e.key === 'Enter') { activate(); e.preventDefault() }
 }
 function pollGamepad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : []
@@ -122,7 +154,12 @@ function pollGamepad() {
     const [ax] = p.axes
     if (ax !== undefined && Math.abs(ax) > 0.6) { move(ax > 0 ? 1 : -1); break }
     for (let i = 0; i < p.buttons.length; i++) {
-      if (p.buttons[i].pressed) { if (i === 12) move(-1); else if (i === 13) move(1); break }
+      if (p.buttons[i].pressed) {
+        if (i === 12) move(-1)
+        else if (i === 13) move(1)
+        else if (i === 0) activate()   // gamepad A = seç
+        break
+      }
     }
   }
 }
@@ -152,9 +189,9 @@ const pct = (id) => {
     <section v-if="!searchResults">
       <h2>Platformlar <small>({{ platforms.length }})</small></h2>
       <div class="grid">
-        <button v-for="p in platforms" :key="p.platform_name || p.name"
-                class="card" :class="{ sel: tv && selectedPlatform === (p.platform_name || p.name) }"
-                @click="selectPlatform(p.platform_name || p.name)">
+        <button v-for="(p, i) in platforms" :key="p.platform_name || p.name"
+                class="card" :class="{ sel: tv && selPlatform === i }"
+                @click="selPlatform = i; selectPlatform(p.platform_name || p.name)">
           <img v-if="p.platform_image" :src="'/api/image/' + encodeURIComponent(p.platform_name || p.name)" class="box" alt="" />
           <span class="pname">{{ p.platform_name || p.name }}</span>
           <span class="count" v-if="p.games_count != null">{{ p.games_count }} oyun</span>
@@ -170,7 +207,7 @@ const pct = (id) => {
       </h2>
       <p v-if="catalogLoading" class="muted">yükleniyor…</p>
       <ul class="games">
-        <li v-for="(g, i) in games" :key="g.name || g.url || i" :class="{ sel: tv && i === selected }">
+        <li v-for="(g, i) in games" :key="g.name || g.url || i" :class="{ sel: tv && selGame === i }" @click="selGame = i">
           <div class="row">
             <span class="name">{{ g.name || g.game_name }}</span>
             <span class="size">{{ g.size || '' }}</span>
@@ -190,7 +227,7 @@ const pct = (id) => {
       <div v-if="searchResults" class="results">
         <h3>Oyunlar</h3>
         <ul class="games">
-          <li v-for="(g, i) in searchResults.games" :key="g.game_name || g.url || i">
+          <li v-for="(g, i) in searchResults.games" :key="g.game_name || g.url || i" :class="{ sel: tv && selGame === i }" @click="selGame = i">
             <div class="row">
               <span class="name">{{ g.game_name }} <small>({{ g.platform }})</small></span>
               <span class="size">{{ g.size || '' }}</span>
