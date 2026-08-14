@@ -660,14 +660,17 @@ impl manager_bridge::TorrentBackend for FakeProgressEngine {
         &self,
         _source_url: &str,
         dest_path: &std::path::Path,
+        _task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>>,
     ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
+        let _ = _task_id;
         if let Some(cb) = &on_progress {
             let ev = manager_bridge::ProgressEvent {
                 downloaded: 50,
                 total: 100,
                 speed: 1.5,
                 finished: false,
+                paused: false,
             };
             // Engine'in aldığı olayı kaydet (handler'ın callback'inin çalıştığını kanıtlar).
             self.events.lock().unwrap().push((ev.downloaded, ev.total, ev.speed, ev.finished));

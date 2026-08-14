@@ -35,6 +35,7 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 ///
 /// `downloaded`/`total` bayt cinsinden; `speed` MiB/s; `finished` torrent'in
 /// tamamlandığını (ve `download_torrent` sonlanmak üzere olduğunu) belirtir.
+/// `paused` — Gap-2: torrent `TorrentStatsState::Paused` ise true (speed 0 raporlanır).
 /// TASK-002m: librqbit engine'i `handle.stats()` döngüsünden bu olayı yayar;
 /// Python bridge varsayılan olarak yok sayar (kendi progress_queue akışını kullanır).
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +44,7 @@ pub struct ProgressEvent {
     pub total: u64,
     pub speed: f64,
     pub finished: bool,
+    pub paused: bool,
 }
 
 /// Köprü hatası.
@@ -353,6 +355,48 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
         Ok((ok, pw))
     }
 
+    /// Tüm aktif indirmeleri duraklatır (Gap-2, `P1` karşılığı).
+    ///
+    /// Default: `pause_all` JSON-RPC'sine proxy eder (Python bridge `_BRIDGE_METHODS`
+    /// ile; yoksa `Method not found` hatası — caller placeholder'a düşer). librqbit
+    /// engine gerçek implementasyonla override eder. Dönen değer duraklatılan sayıdır.
+    async fn pause_all(&self) -> Result<usize, BridgeError> {
+        let v = self.call("pause_all", json!({})).await?;
+        Ok(v.get("paused").and_then(Value::as_u64).unwrap_or(0) as usize)
+    }
+
+    /// Duraklatılmış tüm indirmeleri sürdürür (Gap-2, `P2` karşılığı).
+    ///
+    /// Default: `resume_all` JSON-RPC'sine proxy eder. Dönen değer sürdürülen sayıdır.
+    async fn resume_all(&self) -> Result<usize, BridgeError> {
+        let v = self.call("resume_all", json!({})).await?;
+        Ok(v.get("resumed").and_then(Value::as_u64).unwrap_or(0) as usize)
+    }
+
+    /// Tek bir indirmeyi duraklatır (Gap-2, `P0` — Python `toggle_pause_download`).
+    ///
+    /// Default: `pause` JSON-RPC'sine proxy eder. librqbit engine override eder.
+    async fn pause_torrent(&self, task_id: &str) -> Result<(), BridgeError> {
+        let _ = self.call("pause", json!({ "task_id": task_id })).await?;
+        Ok(())
+    }
+
+    /// Duraklatılmış tek bir indirmeyi sürdürür (Gap-2).
+    ///
+    /// Default: `resume` JSON-RPC'sine proxy eder. librqbit engine override eder.
+    async fn resume_torrent(&self, task_id: &str) -> Result<(), BridgeError> {
+        let _ = self.call("resume", json!({ "task_id": task_id })).await?;
+        Ok(())
+    }
+
+    /// `task_id`'li indirme şu an duraklatılmış mı (Gap-2 `is_paused`).
+    ///
+    /// Default: `is_paused` JSON-RPC'sine proxy eder; sonuç yoksa false.
+    async fn is_paused(&self, task_id: &str) -> Result<bool, BridgeError> {
+        let v = self.call("is_paused", json!({ "task_id": task_id })).await?;
+        Ok(v.as_bool().unwrap_or(false))
+    }
+
     /// `get_app_paths` → tray menüsü için indirme/log klasör yolları.
     async fn get_app_paths(&self) -> Result<(String, String), BridgeError> {
         let v = self.call("get_app_paths", json!({})).await?;
@@ -395,11 +439,13 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
     ///
     /// Default: `on_progress`'u yok sayar ve sıradan `download_torrent`'e düşer
     /// (Python bridge kendi `progress_queue` akışını zaten kullanır). librqbit
-    /// engine override edip `handle.stats()` döngüsünden olay yayar.
+    /// engine override edip `handle.stats()` döngüsünden olay yayar. Gap-2:
+    /// `task_id` verilirse engine pause/resume için handle'ı kaydeder.
     async fn download_torrent_progress(
         &self,
         source_url: &str,
         dest_path: &std::path::Path,
+        _task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         let _ = on_progress;

@@ -232,3 +232,97 @@ def test_download_torrent_mirrors_progress(monkeypatch):
     )
     assert _cfg.download_progress["orig"]["progress_percent"] == 100
     assert _cfg.history[0]["status"] == "Download_OK"
+
+
+class _FakePauseEv:
+    """is_set() döndüren ve clear edilebilen pause event kuklası."""
+
+    def __init__(self, states):
+        self._states = list(states)
+        self._idx = 0
+
+    def is_set(self):
+        self._idx += 1
+        return self._states[min(self._idx, len(self._states)) - 1]
+
+
+def test_download_torrent_sends_task_id_in_body(monkeypatch):
+    """Gap-2: /api/download gövdesi `task_id`'yi de taşır (pause eşleşmesi için)."""
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    posted = {}
+
+    def _post(port, path, body):
+        posted[(path, port)] = body
+        return {}
+
+    monkeypatch.setattr(rust_daemon, "_post_json", _post)
+    states = [{"status": "Download_OK", "progress": 100}]
+    monkeypatch.setattr(rust_daemon, "_poll_progress", lambda port, url: states.pop(0))
+
+    rust_daemon.download_torrent(
+        {"source_url": "magnet:?xt=foo"}, "/d", "/d/foo", "task_42", _FakeCancel(),
+        "Foo", "snes", "u",
+    )
+    body = posted[("/api/download", 5010)]
+    assert body["task_id"] == "task_42"
+
+
+def test_download_torrent_pause_resume_cycle(monkeypatch):
+    """Gap-2: pause_ev set → /api/pause, clear → /api/resume (task_id ile)."""
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "_DAEMON_PORT", 5010)
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    posted = []
+
+    def _post(port, path, body):
+        posted.append((path, port, body))
+        return {}
+
+    monkeypatch.setattr(rust_daemon, "_post_json", _post)
+    # Poll sırası: pause (evet) → resume (hayır) → tamam.
+    pause_states = [True, False, False]
+    states = [
+        {"status": "Downloading", "progress": 10},
+        {"status": "Downloading", "progress": 30},
+        {"status": "Download_OK", "progress": 100},
+    ]
+    monkeypatch.setattr(rust_daemon, "_poll_progress", lambda port, url: states.pop(0))
+
+    rust_daemon.download_torrent(
+        {"source_url": "magnet:?xt=foo"}, "/d", "/d/foo", "task_p", _FakeCancel(),
+        "Foo", "snes", "u",
+        pause_ev=_FakePauseEv(pause_states),
+    )
+    paths = [p for (p, _, _) in posted]
+    assert "/api/pause" in paths
+    assert "/api/resume" in paths
+    pause_body = next(b for (p, _, b) in posted if p == "/api/pause")
+    resume_body = next(b for (p, _, b) in posted if p == "/api/resume")
+    assert pause_body["task_id"] == "task_p"
+    assert resume_body["task_id"] == "task_p"
+
+
+def test_download_torrent_pause_ev_none_no_pause_posts(monkeypatch):
+    """Gap-2: pause_ev yoksa pause/resume POST'u hiç gönderilmez (geriye uyum)."""
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    posted = []
+
+    def _post(port, path, body):
+        posted.append(path)
+        return {}
+
+    monkeypatch.setattr(rust_daemon, "_post_json", _post)
+    states = [{"status": "Download_OK", "progress": 100}]
+    monkeypatch.setattr(rust_daemon, "_poll_progress", lambda port, url: states.pop(0))
+
+    rust_daemon.download_torrent(
+        {"source_url": "magnet:?xt=foo"}, "/d", "/d/foo", "t1", _FakeCancel(),
+        "Foo", "snes", "u",
+    )
+    assert "/api/pause" not in posted
+    assert "/api/resume" not in posted

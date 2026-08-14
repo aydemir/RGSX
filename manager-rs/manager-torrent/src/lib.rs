@@ -15,10 +15,11 @@
 //! - `shutdown` → session'ı durdurur
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session};
+use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session, TorrentStatsState};
 use manager_bridge::{BridgeError, ProgressEvent, TorrentBackend};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
@@ -33,6 +34,8 @@ pub struct LibrqbitEngine {
     downloads_folder: String,
     /// `get_app_paths` — log klasörü (tray "Logs" için).
     logs_folder: String,
+    /// Aktif indirme handle'ları — task_id → handle (Gap-2 pause/resume için).
+    active_handles: RwLock<HashMap<String, Arc<ManagedTorrent>>>,
 }
 
 impl std::fmt::Debug for LibrqbitEngine {
@@ -51,6 +54,7 @@ impl LibrqbitEngine {
             output_folder,
             downloads_folder,
             logs_folder,
+            active_handles: RwLock::new(HashMap::new()),
         }
     }
 
@@ -110,45 +114,68 @@ impl LibrqbitEngine {
         source: AddTorrent<'_>,
         dest_path: &std::path::Path,
     ) -> Result<std::path::PathBuf, BridgeError> {
-        self.download_torrent_source_with_progress(source, dest_path, None).await
+        self.download_torrent_source_with_progress(source, dest_path, None, None).await
     }
 
     /// `download_torrent_source`'un canlı progress yayınlayan hali (TASK-002m).
     /// `on_progress` varsa indirme sırasında `handle.stats()` döngüsünden
     /// `ProgressEvent` yayar; bitince `wait_until_completed` ile hash-check
     /// tamamlanır ve son bir `finished: true` olayı gönderilir.
+    ///
+    /// Gap-2: `task_id` verilirse handle `active_handles`'a kaydedilir (pause/resume
+    /// için) ve indirme bitince/hatalanınca kaldırılır. Torrent `Paused` ise
+    /// `paused: true` + speed 0 olayı yayar.
     pub async fn download_torrent_source_with_progress(
         &self,
         source: AddTorrent<'_>,
         dest_path: &std::path::Path,
+        task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         let handle = self.add_torrent(source).await?;
+        if let Some(id) = &task_id {
+            self.active_handles.write().await.insert(id.clone(), handle.clone());
+        }
         let mut finished = false;
         let mut last_total = 0u64;
-        while !finished {
-            let s = handle.stats();
-            last_total = s.total_bytes;
-            if let Some(cb) = &on_progress {
-                cb(ProgressEvent {
-                    downloaded: s.progress_bytes,
-                    total: s.total_bytes,
-                    speed: s.live.as_ref().map(|l| l.download_speed.mbps).unwrap_or(0.0),
-                    finished: false,
-                });
+        let result = async {
+            while !finished {
+                let s = handle.stats();
+                last_total = s.total_bytes;
+                if let Some(cb) = &on_progress {
+                    let paused = matches!(s.state, TorrentStatsState::Paused);
+                    cb(ProgressEvent {
+                        downloaded: s.progress_bytes,
+                        total: s.total_bytes,
+                        speed: if paused {
+                            0.0
+                        } else {
+                            s.live.as_ref().map(|l| l.download_speed.mbps).unwrap_or(0.0)
+                        },
+                        finished: false,
+                        paused,
+                    });
+                }
+                finished = s.finished;
+                if !finished {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
             }
-            finished = s.finished;
-            if !finished {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
+            handle
+                .wait_until_completed()
+                .await
+                .map_err(|e| BridgeError::Rpc {
+                    code: -32000,
+                    message: format!("indirme tamamlanamadı: {e}"),
+                })
         }
-        handle
-            .wait_until_completed()
-            .await
-            .map_err(|e| BridgeError::Rpc {
-                code: -32000,
-                message: format!("indirme tamamlanamadı: {e}"),
-            })?;
+        .await;
+
+        // Kayıttan çıkar (biten, iptal edilen veya hataya düşen indirme).
+        if let Some(id) = &task_id {
+            self.active_handles.write().await.remove(id);
+        }
+        result?;
 
         // İnen root'u çöz: bazı torrentlerin kök klasörü olabilir.
         let found = self.resolve_downloaded_file().await?;
@@ -162,10 +189,85 @@ impl LibrqbitEngine {
                 total: last_total,
                 speed: 0.0,
                 finished: true,
+                paused: false,
             });
         }
         tracing::info!(src = %found.display(), dst = %dest_path.display(), "torrent indirildi");
         Ok(found)
+    }
+
+    /// `pause_all` için gereken session + kayıtlı handle listesini toplar.
+    async fn session_handles(
+        &self,
+    ) -> Result<(Option<Arc<Session>>, Vec<Arc<ManagedTorrent>>), BridgeError> {
+        let handles: Vec<_> = self.active_handles.read().await.values().cloned().collect();
+        if handles.is_empty() {
+            // Aktif indirme yok — session spawn etmeye gerek yok (çevrimdışı birim
+            // testlerinde DHT persistent kurulumu tetiklenmez).
+            return Ok((None, handles));
+        }
+        let session = self.ensure_running().await?;
+        Ok((Some(session), handles))
+    }
+
+    /// Tüm aktif indirmeleri duraklatır; duraklatılan sayıyı döner (Gap-2 `P1`).
+    pub async fn pause_active(&self) -> Result<usize, BridgeError> {
+        let (session, handles) = self.session_handles().await?;
+        let Some(session) = session else { return Ok(0) };
+        let mut n = 0usize;
+        for h in &handles {
+            if session.pause(h).await.is_ok() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// Duraklatılmış tüm indirmeleri sürdürür; sürdürülen sayıyı döner (Gap-2 `P2`).
+    pub async fn resume_active(&self) -> Result<usize, BridgeError> {
+        let (session, handles) = self.session_handles().await?;
+        let Some(session) = session else { return Ok(0) };
+        let mut n = 0usize;
+        for h in &handles {
+            if session.unpause(h).await.is_ok() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// `task_id`'li tek indirmeyi duraklatır (Gap-2 `P0`).
+    pub async fn pause_task(&self, task_id: &str) -> Result<bool, BridgeError> {
+        let Some(h) = self.active_handles.read().await.get(task_id).cloned() else {
+            return Ok(false);
+        };
+        let session = self.ensure_running().await?;
+        session.pause(&h).await.map(|_| true).map_err(|e| BridgeError::Rpc {
+            code: -32000,
+            message: format!("pause başarısız ({task_id}): {e}"),
+        })
+    }
+
+    /// `task_id`'li tek indirmeyi sürdürür (Gap-2).
+    pub async fn resume_task(&self, task_id: &str) -> Result<bool, BridgeError> {
+        let Some(h) = self.active_handles.read().await.get(task_id).cloned() else {
+            return Ok(false);
+        };
+        let session = self.ensure_running().await?;
+        session.unpause(&h).await.map(|_| true).map_err(|e| BridgeError::Rpc {
+            code: -32000,
+            message: format!("resume başarısız ({task_id}): {e}"),
+        })
+    }
+
+    /// `task_id`'li indirme şu an duraklatılmış mı (Gap-2 `is_paused`).
+    pub async fn is_task_paused(&self, task_id: &str) -> bool {
+        self.active_handles
+            .read()
+            .await
+            .get(task_id)
+            .map(|h| matches!(h.stats().state, TorrentStatsState::Paused))
+            .unwrap_or(false)
     }
 
     /// `output_folder` içinde tamamlanmış torrent dosyasını bulur (Python
@@ -265,6 +367,20 @@ impl TorrentBackend for LibrqbitEngine {
                     Err(e) => Err(e),
                 }
             }
+            "pause_all" => self.pause_all().await.map(|n| json!({ "paused": n })),
+            "resume_all" => self.resume_all().await.map(|n| json!({ "resumed": n })),
+            "pause" => {
+                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                self.pause_torrent(id).await.map(|_| json!(null))
+            }
+            "resume" => {
+                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                self.resume_torrent(id).await.map(|_| json!(null))
+            }
+            "is_paused" => {
+                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                self.is_paused(id).await.map(|b| json!(b))
+            }
             "shutdown" => {
                 if let Some(session) = self.session.write().await.take() {
                     session.stop().await;
@@ -297,18 +413,48 @@ impl TorrentBackend for LibrqbitEngine {
     }
 
     /// TASK-002m: canlı progress akışı — `download_torrent_source_with_progress`
-    /// üzerinden `handle.stats()` döngüsünden `ProgressEvent` yayar.
+    /// üzerinden `handle.stats()` döngüsünden `ProgressEvent` yayar. Gap-2:
+    /// `task_id` verilirse handle pause/resume kaydına alınır.
     async fn download_torrent_progress(
         &self,
         source_url: &str,
         dest_path: &std::path::Path,
+        task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         self.download_torrent_source_with_progress(
             AddTorrent::from_url(source_url.to_string()),
             dest_path,
+            task_id,
             on_progress,
         )
         .await
+    }
+
+    /// Gap-2 `P1`: tüm aktif indirmeleri duraklatır.
+    async fn pause_all(&self) -> Result<usize, BridgeError> {
+        self.pause_active().await
+    }
+
+    /// Gap-2 `P2`: duraklatılmış tüm indirmeleri sürdürür.
+    async fn resume_all(&self) -> Result<usize, BridgeError> {
+        self.resume_active().await
+    }
+
+    /// Gap-2 `P0`: tek indirmeyi duraklatır.
+    async fn pause_torrent(&self, task_id: &str) -> Result<(), BridgeError> {
+        let _ = self.pause_task(task_id).await?;
+        Ok(())
+    }
+
+    /// Gap-2: tek indirmeyi sürdürür.
+    async fn resume_torrent(&self, task_id: &str) -> Result<(), BridgeError> {
+        let _ = self.resume_task(task_id).await?;
+        Ok(())
+    }
+
+    /// Gap-2: `task_id`'li indirme duraklatılmış mı.
+    async fn is_paused(&self, task_id: &str) -> Result<bool, BridgeError> {
+        Ok(self.is_task_paused(task_id).await)
     }
 }

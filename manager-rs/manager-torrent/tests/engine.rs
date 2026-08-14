@@ -111,3 +111,42 @@ fn link_or_copy_creates_dest_linked_to_src() {
     assert_eq!(std::fs::read(&dst).unwrap(), b"data");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[tokio::test]
+async fn pause_all_without_active_torrents_returns_zero() {
+    let e = engine().await;
+    // Session spawn edilir (ensure_running) ama aktif handle yok → 0, hata değil.
+    assert_eq!(e.pause_all().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn resume_all_without_active_torrents_returns_zero() {
+    let e = engine().await;
+    assert_eq!(e.resume_all().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn pause_unknown_task_reports_not_paused() {
+    let e = engine().await;
+    assert!(!e.is_paused("bilinmeyen-task").await.unwrap());
+    // `pause_torrent` kayıtlı handle yoksa sessizce başarılı (Python 1:1: no-op).
+    assert!(e.pause_torrent("bilinmeyen-task").await.is_ok());
+    assert!(e.resume_torrent("bilinmeyen-task").await.is_ok());
+}
+
+#[tokio::test]
+async fn pause_resume_dispatched_via_jsonrpc_call() {
+    let e = engine().await;
+    // `call` sözleşmesi: `pause_all`/`resume_all`/`pause`/`resume` metodları tanımlı
+    // olmalı (Python `_BRIDGE_METHODS` simetrisi) — boş map ile `{paused:0}`/`{resumed:0}`.
+    let paused = e.call("pause_all", json!({})).await.unwrap();
+    assert_eq!(paused["paused"], json!(0));
+    let resumed = e.call("resume_all", json!({})).await.unwrap();
+    assert_eq!(resumed["resumed"], json!(0));
+    let single = e.call("pause", json!({ "task_id": "x" })).await.unwrap();
+    assert_eq!(single, json!(null));
+    let resumed_one = e.call("resume", json!({ "task_id": "x" })).await.unwrap();
+    assert_eq!(resumed_one, json!(null));
+    let paused_check = e.call("is_paused", json!({ "task_id": "x" })).await.unwrap();
+    assert_eq!(paused_check, json!(false));
+}

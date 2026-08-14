@@ -848,9 +848,10 @@ async def download_rom(url, platform, game_name, is_zip_non_supported=False, tas
                                 dest_path,
                                 task_id,
                                 cancel_ev,
-                                game_name,
-                                platform,
-                                original_history_url,
+                                pause_ev=pause_events.setdefault(task_id, threading.Event()),
+                                game_name=game_name,
+                                platform=platform,
+                                original_url=original_history_url,
                             )
                             result[0] = success
                             result[1] = message

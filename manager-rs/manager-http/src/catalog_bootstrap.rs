@@ -220,10 +220,9 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> bool {
         }
         #[cfg(unix)]
         {
-            let _ = std::fs::set_permissions(
-                &out,
-                std::os::unix::fs::Permissions::from_mode(0o644),
-            );
+            use std::fs::Permissions;
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&out, Permissions::from_mode(0o644));
         }
     }
     true

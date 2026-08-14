@@ -263,16 +263,19 @@ def download_torrent(
     dest_path,
     task_id,
     cancel_ev,
-    game_name,
-    platform,
-    original_url,
+    game_name=None,
+    platform=None,
+    original_url=None,
+    pause_ev=None,
 ) -> tuple[bool, str]:
     """Faz 10c/2 — torrent indirmeyi Rust daemon'a devreder.
 
     `torrent_meta` (parse_torrent_download_url çıktısı) içindeki `source_url`'yi
     Rust `/api/download`'a gönderir; ilerlemeyi `/api/progress`'ten poll edip
-    Python state'ine yansıtır; `cancel_ev` set edilirse iptal eder. Başarısızlık
-    veya timeout → `RustDaemonError` (caller qBittorrent'e fallback eder).
+    Python state'ine yansıtır; `cancel_ev` set edilirse iptal eder, `pause_ev`
+    set edilirse `/api/pause` ile Rust engine'ini duraklatır (clear edilince
+    `/api/resume`). Başarısızlık veya timeout → `RustDaemonError` (caller
+    qBittorrent'e fallback eder).
     """
     if not (enabled() and healthy()):
         raise RustDaemonError("[RUST-DAEMON] daemon hazır değil (sağlıksız/kapalı)")
@@ -290,12 +293,14 @@ def download_torrent(
             "game_name": game_name,
             "url": source_url,
             "dest_path": dest_path,
+            "task_id": task_id,
         },
     )
     logger.info(f"[RUST-DAEMON] torrent devredildi: {game_name} -> {source_url}")
 
-    # 2) İlerlemeyi izle.
+    # 2) İlerlemeyi izle (pause/resume sinyali Python Event'inden Rust'a aktarılır).
     deadline = time.time() + _TORRENT_DELEGATE_TIMEOUT
+    paused = False
     while time.time() < deadline:
         if cancel_ev is not None and cancel_ev.is_set():
             try:
@@ -303,6 +308,22 @@ def download_torrent(
             except Exception:
                 pass
             raise RustDaemonError("[RUST-DAEMON] torrent iptal edildi")
+        if pause_ev is not None:
+            want_paused = pause_ev.is_set()
+            if want_paused and not paused:
+                try:
+                    _post_json(port, "/api/pause", {"url": source_url, "task_id": task_id})
+                    paused = True
+                    logger.info(f"[RUST-DAEMON] torrent duraklatıldı: {game_name}")
+                except Exception:
+                    pass
+            elif not want_paused and paused:
+                try:
+                    _post_json(port, "/api/resume", {"url": source_url, "task_id": task_id})
+                    paused = False
+                    logger.info(f"[RUST-DAEMON] torrent sürdürüldü: {game_name}")
+                except Exception:
+                    pass
         prog = _poll_progress(port, source_url)
         _mirror_progress(original_url, task_id, prog, game_name, platform)
         status = (prog or {}).get("status")

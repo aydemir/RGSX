@@ -484,7 +484,13 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                             map.insert(
                                 cb_url.clone(),
                                 json!({
-                                    "status": if ev.finished { "Download_OK" } else { "Downloading" },
+                                    "status": if ev.finished {
+                                        "Download_OK"
+                                    } else if ev.paused {
+                                        "Paused"
+                                    } else {
+                                        "Downloading"
+                                    },
                                     "progress": pct,
                                     "downloaded": ev.downloaded,
                                     "total": ev.total,
@@ -494,7 +500,10 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                         }
                         sse::publish(&cb_state.events, "progress", &json!(data.progress));
                     }));
-                match bridge.download_torrent_progress(&u, &dest_path, on_progress).await {
+                match bridge
+                    .download_torrent_progress(&u, &dest_path, Some(t.clone()), on_progress)
+                    .await
+                {
                     Ok(src) => {
                         tracing::info!(src = %src.display(), dest = %dest_path.display(), "torrent indirme tamamlandı");
                         finalize_download_in_state(
@@ -772,23 +781,49 @@ pub async fn shutdown(State(state): State<AppState>) -> Response {
     ok(contract::ok(Value::Null))
 }
 
-/// POST `/api/pause` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder.
-pub async fn pause(State(state): State<AppState>) -> Response {
+/// POST `/api/pause` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa bridge'e
+/// `pause_all` (Gap-2). Body'de opsiyonel `task_id` verilirse yalnız o indirme
+/// duraklatılır (Python `toggle_pause_download` karşılığı). Bridge yoksa placeholder.
+pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/pause", &Value::Null).await {
             return ok(v);
         }
     }
+    let task_id = body.as_ref().and_then(|b| b.get("task_id")).and_then(Value::as_str);
+    if let Some(bridge) = &state.bridge {
+        let paused = match task_id {
+            Some(id) => match bridge.pause_torrent(id).await {
+                Ok(()) => 1,
+                Err(_) => 0,
+            },
+            None => bridge.pause_all().await.unwrap_or(0),
+        };
+        return ok(contract::ok(json!({ "paused": paused })));
+    }
     let paused = state.read().queue_size();
     ok(contract::ok(json!({ "paused": paused })))
 }
 
-/// POST `/api/resume` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder (0).
-pub async fn resume(State(state): State<AppState>) -> Response {
+/// POST `/api/resume` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa bridge'e
+/// `resume_all` (Gap-2). Body'de opsiyonel `task_id` verilirse yalnız o indirme
+/// sürdürülür. Bridge yoksa placeholder (0).
+pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value>>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/resume", &Value::Null).await {
             return ok(v);
         }
+    }
+    let task_id = body.as_ref().and_then(|b| b.get("task_id")).and_then(Value::as_str);
+    if let Some(bridge) = &state.bridge {
+        let resumed = match task_id {
+            Some(id) => match bridge.resume_torrent(id).await {
+                Ok(()) => 1,
+                Err(_) => 0,
+            },
+            None => bridge.resume_all().await.unwrap_or(0),
+        };
+        return ok(contract::ok(json!({ "resumed": resumed })));
     }
     ok(contract::ok(json!({ "resumed": 0 })))
 }
