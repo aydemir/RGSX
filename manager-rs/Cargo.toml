@@ -29,6 +29,8 @@ async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 percent-encoding = "2"
 thiserror = "1"
+regex = "1"
+url = "2"
 manager-core = { path = "manager-core" }
 manager-http = { path = "manager-http" }
 manager-bridge = { path = "manager-bridge" }

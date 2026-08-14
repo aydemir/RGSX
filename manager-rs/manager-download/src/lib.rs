@@ -11,6 +11,8 @@
 //! döndürür. Native DDL fetch (`manager-http` tarafında reqwest ile) doğrudan HTTP
 //! kaynakları için çalışır.
 
+pub mod http;
+
 use std::sync::Arc;
 
 /// Çözülmüş indirme kaynağı.

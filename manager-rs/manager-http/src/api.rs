@@ -1126,59 +1126,46 @@ async fn native_ddl_download(
     let c_plat = platform.clone();
     let c_task = task_id.clone();
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        match client.get(&resolved).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                Ok(bytes) => {
-                    if let Some(parent) = dest.parent() {
-                        let _ = tokio::fs::create_dir_all(parent).await;
-                    }
-                    if let Err(e) = tokio::fs::write(&dest, &bytes).await {
-                        finalize_download_in_state(
-                            &c_state,
-                            &c_task,
-                            &c_url,
-                            &c_name,
-                            &c_plat,
-                            false,
-                            &format!("yazma hatası: {e}"),
-                        )
-                        .await;
-                    } else {
-                        finalize_download_in_state(
-                            &c_state,
-                            &c_task,
-                            &c_url,
-                            &c_name,
-                            &c_plat,
-                            true,
-                            &dest.display().to_string(),
-                        )
-                        .await;
-                    }
-                }
-                Err(e) => {
-                    finalize_download_in_state(
-                        &c_state,
-                        &c_task,
-                        &c_url,
-                        &c_name,
-                        &c_plat,
-                        false,
-                        &format!("indirme hatası: {e}"),
-                    )
-                    .await;
-                }
-            },
-            Ok(resp) => {
+        // Gap-4 4a — bellek içi `bytes()` yerine `HttpDownloader` stream motoru
+        // (`.part` yazma, Range resume, challenge/HTML/arşiv guards, cancel).
+        let progress_state = c_state.clone();
+        let progress_url = c_url.clone();
+        let req = manager_download::http::DownloadRequest {
+            url: resolved.clone(),
+            dest_path: dest.clone(),
+            known_total_size: 0,
+            referer: None,
+            cookie: None,
+        };
+        let result = manager_download::http::HttpDownloader::new()
+            .with_progress(move |downloaded, total| {
+                let pct = if total > 0 {
+                    (downloaded * 100 / total) as u32
+                } else {
+                    0
+                };
+                let mut data = progress_state.write();
+                data.progress[&progress_url] =
+                    json!({ "status": "Downloading", "progress": pct });
+                sse::publish(
+                    &progress_state.events,
+                    "progress",
+                    &json!(data.progress),
+                );
+            })
+            .download_async(&req)
+            .await;
+
+        match result {
+            Ok(path) => {
                 finalize_download_in_state(
                     &c_state,
                     &c_task,
                     &c_url,
                     &c_name,
                     &c_plat,
-                    false,
-                    &format!("HTTP {}", resp.status()),
+                    true,
+                    &path.display().to_string(),
                 )
                 .await;
             }
@@ -1190,7 +1177,7 @@ async fn native_ddl_download(
                     &c_name,
                     &c_plat,
                     false,
-                    &format!("istek hatası: {e}"),
+                    &e.message(),
                 )
                 .await;
             }
