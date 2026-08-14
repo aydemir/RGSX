@@ -1,16 +1,74 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
-import { connectSSE, apiGet } from './api.js'
+import { connectSSE, apiGet, apiPost } from './api.js'
 
 const connected = ref(false)
 const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {} })
 const progress = reactive({})
 const lastEvent = ref('')
-const platforms = ref([])
 const tv = ref(new URLSearchParams(location.search).get('mode') === 'tv')
 const selected = ref(0)
 
 let es = null
+
+// --- Katalog tarama durumu (native backend uçları) ---
+const platforms = ref([])
+const selectedPlatform = ref(null)   // platform_name
+const games = ref([])
+const searchTerm = ref('')
+const searchResults = ref(null)      // { platforms:[], games:[] }
+const catalogLoading = ref(false)
+const catalogError = ref('')
+
+async function loadPlatforms() {
+  catalogError.value = ''
+  try {
+    const p = await apiGet('/api/platforms')
+    platforms.value = (p.platforms || []).slice(0, 80)
+  } catch (e) {
+    catalogError.value = 'Katalog yüklenemedi (RGSX_NATIVE_CATALOG=1 ve veri gerekli)'
+  }
+}
+
+async function selectPlatform(name) {
+  selectedPlatform.value = name
+  searchResults.value = null
+  games.value = []
+  catalogLoading.value = true
+  try {
+    const g = await apiGet('/api/games/' + encodeURIComponent(name))
+    games.value = g.games || []
+  } catch (e) {
+    catalogError.value = 'Oyun listesi alınamadı'
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+async function doSearch() {
+  const q = searchTerm.value.trim()
+  if (!q) { searchResults.value = null; return }
+  catalogLoading.value = true
+  try {
+    const r = await apiGet('/api/search?q=' + encodeURIComponent(q))
+    searchResults.value = r.results || { platforms: [], games: [] }
+  } catch (e) {
+    catalogError.value = 'Arama başarısız'
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+async function downloadGame(g) {
+  if (!g.url) return
+  try {
+    await apiPost('/api/download', {
+      url: g.url,
+      platform: selectedPlatform.value || g.platform || '',
+      game_name: g.name || g.game_name || '',
+    })
+  } catch (e) { /* kuyruk zaten SSE ile güncellenir */ }
+}
 
 onMounted(async () => {
   es = connectSSE({
@@ -32,10 +90,7 @@ onMounted(async () => {
     history: (data) => { lastEvent.value = 'history'; snapshot.history = data.history || data || [] },
     downloaded: (data) => { lastEvent.value = 'downloaded' },
   })
-  try {
-    const p = await apiGet('/api/platforms')
-    platforms.value = (p.platforms || p.result?.platforms || []).slice(0, 12)
-  } catch (e) { /* katalog kapalı olabilir */ }
+  await loadPlatforms()
   if (tv.value) {
     window.addEventListener('keydown', onKey)
     gamepadTimer = setInterval(pollGamepad, 100)
@@ -92,9 +147,60 @@ const pct = (id) => {
       <span class="active" v-if="snapshot.active">● aktif indirme</span>
     </header>
 
-    <nav v-if="platforms.length">
-      <span v-for="p in platforms" :key="p.name || p" class="chip">{{ p.name || p }}</span>
-    </nav>
+    <p v-if="catalogError" class="err">{{ catalogError }}</p>
+
+    <section v-if="!searchResults">
+      <h2>Platformlar <small>({{ platforms.length }})</small></h2>
+      <div class="grid">
+        <button v-for="p in platforms" :key="p.platform_name || p.name"
+                class="card" :class="{ sel: tv && selectedPlatform === (p.platform_name || p.name) }"
+                @click="selectPlatform(p.platform_name || p.name)">
+          <img v-if="p.platform_image" :src="'/api/image/' + encodeURIComponent(p.platform_name || p.name)" class="box" alt="" />
+          <span class="pname">{{ p.platform_name || p.name }}</span>
+          <span class="count" v-if="p.games_count != null">{{ p.games_count }} oyun</span>
+        </button>
+      </div>
+    </section>
+
+    <section v-if="selectedPlatform && !searchResults">
+      <h2>
+        {{ selectedPlatform }}
+        <small>({{ games.length }} oyun)</small>
+        <a class="back" @click="selectedPlatform = null; games = []">← geri</a>
+      </h2>
+      <p v-if="catalogLoading" class="muted">yükleniyor…</p>
+      <ul class="games">
+        <li v-for="(g, i) in games" :key="g.name || g.url || i" :class="{ sel: tv && i === selected }">
+          <div class="row">
+            <span class="name">{{ g.name || g.game_name }}</span>
+            <span class="size">{{ g.size || '' }}</span>
+          </div>
+          <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)">İndir</button>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Arama</h2>
+      <div class="search">
+        <input v-model="searchTerm" @keyup.enter="doSearch" placeholder="oyun / platform ara…" />
+        <button @click="doSearch">Ara</button>
+        <button v-if="searchResults" @click="searchResults = null; searchTerm = ''">Temizle</button>
+      </div>
+      <div v-if="searchResults" class="results">
+        <h3>Oyunlar</h3>
+        <ul class="games">
+          <li v-for="(g, i) in searchResults.games" :key="g.game_name || g.url || i">
+            <div class="row">
+              <span class="name">{{ g.game_name }} <small>({{ g.platform }})</small></span>
+              <span class="size">{{ g.size || '' }}</span>
+            </div>
+            <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)">İndir</button>
+          </li>
+        </ul>
+        <p v-if="!searchResults.games.length" class="muted">sonuç yok</p>
+      </div>
+    </section>
 
     <section>
       <h2>İndirmeler <small>(canlı)</small></h2>
@@ -144,6 +250,26 @@ small { color: #8b949e; font-weight: normal; }
 .bar { height: 8px; background: #21262d; border-radius: 6px; margin-top: 6px; overflow: hidden; }
 .fill { height: 100%; background: linear-gradient(90deg, #1f6feb, #58a6ff); transition: width .3s ease; }
 .mono { background: #161b22; padding: 12px; border-radius: 8px; font-size: 12px; max-height: 240px; overflow: auto; }
+.err { color: #ff7b72; background: #2d1418; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+
+/* Katalog tarayıcı */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.card { display: flex; flex-direction: column; align-items: center; gap: 6px; background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 10px; cursor: pointer; color: inherit; }
+.card:hover, .card.sel { border-color: #1f6feb; background: #15233b; }
+.card .box { width: 64px; height: 64px; object-fit: contain; border-radius: 6px; background: #0e1116; }
+.card .pname { font-size: 12px; text-align: center; }
+.card .count { font-size: 10px; color: #8b949e; }
+.games { list-style: none; padding: 0; margin: 0; }
+.games li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #21262d; }
+.games li.sel { background: #15233b; border-radius: 8px; padding-left: 8px; padding-right: 8px; }
+.games .size { color: #8b949e; font-size: 12px; }
+.dlbtn { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+.dlbtn:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+.search { display: flex; gap: 8px; }
+.search input { flex: 1; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; color: inherit; font-size: 13px; }
+.search button { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; color: inherit; cursor: pointer; }
+.results h3 { font-size: 13px; color: #8b949e; margin: 12px 0 4px; }
+.back { font-size: 11px; color: #58a6ff; cursor: pointer; margin-left: 8px; }
 
 /* TV modu: 10-foot UI — büyük font, ölçekli layout, seçili vurgu */
 .app.tv { max-width: none; padding: 4vh 6vw; }

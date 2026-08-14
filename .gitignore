@@ -47,5 +47,8 @@ htmlcov/
 .pytest_cache/
 tests/__pycache__/
 
+# CI-generated WebUI SPA (built by release.yml -> ports/RGSX/webui)
+ports/RGSX/webui/
+
 # WebUI build deps
 webui/node_modules/

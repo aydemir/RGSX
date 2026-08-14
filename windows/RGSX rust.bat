@@ -140,6 +140,12 @@ echo [%DATE% %TIME%] ========================================== >> "%LOG_FILE%"
 :: =============================================================================
 set "RUST_MANAGER_BIN=%ROOT_DIR%\roms\ports\RGSX\manager-bin.exe"
 set "RGSX_WEBUI_DIR=%ROOT_DIR%\roms\ports\RGSX\webui"
+:: Fallback (local dev / CI build yokken): repo kokundeki webui/dist'i kullan.
+if not exist "%RGSX_WEBUI_DIR%\index.html" (
+    if exist "%ROOT_DIR%\webui\dist\index.html" (
+        set "RGSX_WEBUI_DIR=%ROOT_DIR%\webui\dist"
+    )
+)
 set "RGSX_DATA_DIR=%ROOT_DIR%\saves\ports\rgsx"
 set "RGSX_LANGUAGES_FOLDER=%ROOT_DIR%\roms\ports\RGSX\languages"
 set "RGSX_DOWNLOADS_FOLDER=%ROOT_DIR%\saves\ports\rgsx\downloads"

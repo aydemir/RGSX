@@ -17,6 +17,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build WebUI (Vue SPA) and stage into ports/RGSX/webui
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd webui
+          npm ci
+          npm run build
+          cd ..
+          # Rust launcher (windows/RGSX rust.bat) SPA'yı RGSX_WEBUI_DIR=
+          # ports/RGSX/webui uzerinden servis eder. Derlenmis dist buraya kopyalanir.
+          mkdir -p ports/RGSX/webui
+          cp -r webui/dist/. ports/RGSX/webui/
+          echo "✓ WebUI built -> ports/RGSX/webui"
+          ls -la ports/RGSX/webui
+
       - name: Build RGSX Release Package
         shell: bash
         run: |

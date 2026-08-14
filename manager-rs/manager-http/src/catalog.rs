@@ -430,10 +430,30 @@ impl NativeCatalog {
     }
 
     fn read_image(&self, platform: &str) -> Option<(Vec<u8>, String)> {
-        for ext in ["png", "jpg", "jpeg", "webp", "gif", "svg"] {
-            let path = self.images_folder.join(format!("{platform}.{ext}"));
-            if let Ok(bytes) = std::fs::read(&path) {
-                return Some((bytes, image_content_type(&path).to_string()));
+        // Aday taban adlar: (1) doğrudan argüman — scraper platform_name ile
+        // adlandırdıysa; (2) platform_name -> platform_image eşlemesi (OTA layout:
+        // images/3do.png). Her ikisini de deneriz ki fetch mekanizmasından bağımsız
+        // çalışsın.
+        let mut candidates: Vec<String> = vec![platform.to_string()];
+        if let Some(src) = self
+            .load_sources()
+            .into_iter()
+            .find(|s| s.get("platform_name").and_then(|v| v.as_str()) == Some(platform))
+        {
+            if let Some(img) = src.get("platform_image").and_then(|v| v.as_str()) {
+                let base = img
+                    .rsplit_once('.')
+                    .map(|(b, _)| b.to_string())
+                    .unwrap_or_else(|| img.to_string());
+                candidates.push(base);
+            }
+        }
+        for cand in &candidates {
+            for ext in ["png", "jpg", "jpeg", "webp", "gif", "svg"] {
+                let path = self.images_folder.join(format!("{cand}.{ext}"));
+                if let Ok(bytes) = std::fs::read(&path) {
+                    return Some((bytes, image_content_type(&path).to_string()));
+                }
             }
         }
         None
