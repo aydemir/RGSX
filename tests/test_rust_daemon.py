@@ -5,6 +5,8 @@ import os
 
 os.environ.setdefault("RGSX_HEADLESS", "1")
 
+import pytest
+
 import rust_daemon
 
 
@@ -326,3 +328,35 @@ def test_download_torrent_pause_ev_none_no_pause_posts(monkeypatch):
     )
     assert "/api/pause" not in posted
     assert "/api/resume" not in posted
+
+
+def test_download_torrent_cancel_sends_task_id(monkeypatch):
+    """Gap-3: iptalde /api/cancel gövdesi task_id'yi taşır (Rust temp temizliği için)."""
+    _reset(monkeypatch)
+    monkeypatch.setenv("RGSX_RUST_DAEMON", "1")
+    monkeypatch.setattr(rust_daemon, "_DAEMON_PORT", 5010)
+    monkeypatch.setattr(rust_daemon, "healthy", lambda: True)
+    posted = []
+
+    def _post(port, path, body):
+        posted.append((path, port, body))
+        return {}
+
+    monkeypatch.setattr(rust_daemon, "_post_json", _post)
+    states = [{"status": "Downloading", "progress": 10}]
+    monkeypatch.setattr(rust_daemon, "_poll_progress", lambda port, url: states.pop(0))
+
+    cancel_ev = _FakeCancel()
+    cancel_ev._set = True
+
+    with pytest.raises(rust_daemon.RustDaemonError):
+        rust_daemon.download_torrent(
+            {"source_url": "magnet:?xt=foo"}, "/d", "/d/foo", "task_c", cancel_ev,
+            "Foo", "snes", "u",
+        )
+
+    cancel_posts = [(p, b) for (p, _, b) in posted if p == "/api/cancel"]
+    assert cancel_posts, "iptal POST'u gönderilmedi"
+    _, body = cancel_posts[0]
+    assert body["task_id"] == "task_c"
+    assert body["url"] == "magnet:?xt=foo"

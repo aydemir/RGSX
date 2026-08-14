@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session, TorrentStatsState};
 use manager_bridge::{BridgeError, ProgressEvent, TorrentBackend};
 use serde_json::{json, Value};
@@ -140,6 +141,16 @@ impl LibrqbitEngine {
         let mut last_total = 0u64;
         let result = async {
             while !finished {
+                // Gap-3: cancel edildiyse (handle `active_handles`'tan çıkarıldıysa)
+                // döngüyü kır — `wait_until_completed`'e takılıp kalmayalım.
+                if let Some(id) = &task_id {
+                    if !self.active_handles.read().await.contains_key(id) {
+                        return Err(BridgeError::Rpc {
+                            code: -32000,
+                            message: "indirme iptal edildi".to_string(),
+                        });
+                    }
+                }
                 let s = handle.stats();
                 last_total = s.total_bytes;
                 if let Some(cb) = &on_progress {
@@ -270,6 +281,39 @@ impl LibrqbitEngine {
             .unwrap_or(false)
     }
 
+    /// `task_id`'li tek indirmeyi iptal eder (Gap-3, Python `request_cancel` karşılığı).
+    ///
+    /// Handle'ı `active_handles`'tan çıkarıp `Session::delete(delete_files=true)`
+    /// ile session'dan siler — librqbit `.rqbitpart`/kısmi dosyaları diskten de
+    /// temizler. Progress loop'u bir sonraki turda map'ten çıktığını görüp iptal
+    /// hatası döner. Dönen değer: task bulundu mu.
+    pub async fn cancel_task(&self, task_id: &str) -> Result<bool, BridgeError> {
+        let Some(handle) = self.active_handles.read().await.get(task_id).cloned() else {
+            return Ok(false);
+        };
+        let session = self.ensure_running().await?;
+        let id = TorrentIdOrHash::Id(handle.id());
+        session.delete(id, true).await.map_err(|e| BridgeError::Rpc {
+            code: -32000,
+            message: format!("iptal başarısız ({task_id}): {e}"),
+        })?;
+        self.active_handles.write().await.remove(task_id);
+        Ok(true)
+    }
+
+    /// Tüm aktif indirmeleri iptal eder; iptal edilen sayıyı döner (Gap-3
+    /// `cancel_all_downloads` karşılığı).
+    pub async fn cancel_all_tasks(&self) -> Result<usize, BridgeError> {
+        let task_ids: Vec<String> = self.active_handles.read().await.keys().cloned().collect();
+        let mut n = 0usize;
+        for id in task_ids {
+            if self.cancel_task(&id).await.unwrap_or(false) {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
     /// `output_folder` içinde tamamlanmış torrent dosyasını bulur (Python
     /// `_resolve_downloaded_file` karşılığı). Torrent'teki ana içerik en büyük
     /// ve en anlamlı dosya olduğundan (`Sintel.mp4` vs `Sintel.de.srt` gibi)
@@ -381,6 +425,11 @@ impl TorrentBackend for LibrqbitEngine {
                 let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
                 self.is_paused(id).await.map(|b| json!(b))
             }
+            "cancel" => {
+                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                self.cancel_task(id).await.map(|b| json!(b))
+            }
+            "cancel_all" => self.cancel_all_tasks().await.map(|n| json!({ "canceled": n })),
             "shutdown" => {
                 if let Some(session) = self.session.write().await.take() {
                     session.stop().await;
@@ -456,5 +505,15 @@ impl TorrentBackend for LibrqbitEngine {
     /// Gap-2: `task_id`'li indirme duraklatılmış mı.
     async fn is_paused(&self, task_id: &str) -> Result<bool, BridgeError> {
         Ok(self.is_task_paused(task_id).await)
+    }
+
+    /// Gap-3: `task_id`'li indirmeyi iptal eder (kısmi/temp dosyaları da silinir).
+    async fn cancel_torrent(&self, task_id: &str) -> Result<bool, BridgeError> {
+        self.cancel_task(task_id).await
+    }
+
+    /// Gap-3: tüm aktif indirmeleri iptal eder; iptal edilen sayıyı döner.
+    async fn cancel_all(&self) -> Result<usize, BridgeError> {
+        self.cancel_all_tasks().await
     }
 }

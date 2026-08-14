@@ -304,7 +304,7 @@ def download_torrent(
     while time.time() < deadline:
         if cancel_ev is not None and cancel_ev.is_set():
             try:
-                _post_json(port, "/api/cancel", {"url": source_url})
+                _post_json(port, "/api/cancel", {"url": source_url, "task_id": task_id})
             except Exception:
                 pass
             raise RustDaemonError("[RUST-DAEMON] torrent iptal edildi")

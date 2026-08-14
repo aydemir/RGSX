@@ -397,6 +397,27 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
         Ok(v.as_bool().unwrap_or(false))
     }
 
+    /// Tek bir indirmeyi iptal eder; kısmi/`.rqbitpart`/temp dosyalarını da siler
+    /// (Gap-3, `P3..P6` karşılığı).
+    ///
+    /// Default: `cancel` JSON-RPC'sine proxy eder. librqbit engine override edip
+    /// `Session::delete(id, delete_files=true)` üzerinden gerçek temizlik yapar.
+    /// Dönen değer: iptal edilen task bulundu mu.
+    async fn cancel_torrent(&self, task_id: &str) -> Result<bool, BridgeError> {
+        let v = self.call("cancel", json!({ "task_id": task_id })).await?;
+        Ok(v.as_bool().unwrap_or(false))
+    }
+
+    /// Tüm aktif indirmeleri iptal eder + kısmi/temp dosyalarını temizler
+    /// (Gap-3, `cancel_all_downloads` karşılığı).
+    ///
+    /// Default: `cancel_all` JSON-RPC'sine proxy eder. Dönen değer iptal edilen
+    /// indirme sayısıdır.
+    async fn cancel_all(&self) -> Result<usize, BridgeError> {
+        let v = self.call("cancel_all", json!({})).await?;
+        Ok(v.get("canceled").and_then(Value::as_u64).unwrap_or(0) as usize)
+    }
+
     /// `get_app_paths` → tray menüsü için indirme/log klasör yolları.
     async fn get_app_paths(&self) -> Result<(String, String), BridgeError> {
         let v = self.call("get_app_paths", json!({})).await?;

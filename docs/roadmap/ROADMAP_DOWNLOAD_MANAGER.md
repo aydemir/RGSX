@@ -658,8 +658,8 @@ baseline ile aynı kalır (246 passed / 23 pre-existing).
 | Gap | Eksik düğümler | Öncelik | Görev dosyası |
 |---|---|---|---|
 | **Gap 1 — Retry/backoff motoru** | `F1→F2→R0..R3`: transient sınıflandırma, `_retry_backoff`, `_schedule_download_retry`, `_retry_in_flight` dedup | P1 | `tasks/gap/TASK-002-gap-1-retry-engine.md` |
-| **Gap 2 — Pause/Resume orkestrasyonu** | `P0..P2`, `P7`: toggle, pause_all, resume_all, pause_ev → backend (librqbit pause API) | **P0** ✅ **TAMAMLANDI** (2026-08-14) | `tasks/in-progress/TASK-002-gap-2-pause-resume.md` |
-| **Gap 3 — Cancel + temizlik** | `P3..P6`, `Q9`, `Q8`: partial dosya, temp-root, seeder artifact temizliği | **P0** | `tasks/gap/TASK-002-gap-3-cancel-cleanup.md` |
+| **Gap 2 — Pause/Resume orkestrasyonu** | `P0..P2`, `P7`: toggle, pause_all, resume_all, pause_ev → backend (librqbit pause API) | **P0** ✅ **TAMAMLANDI** (2026-08-14) | `tasks/done/TASK-002-gap-2-pause-resume.md` |
+| **Gap 3 — Cancel + temizlik** | `P3..P6`, `Q9`, `Q8`: partial dosya, temp-root, seeder artifact temizliği | **P0** ✅ **TAMAMLANDI** (2026-08-14) | `tasks/done/TASK-002-gap-3-cancel-cleanup.md` |
 | **Gap 4 — HTTP-doğrudan indirme** | `H0..H12` tüm HTTP-alt ağacı: vimm/archive.org/lolroms/1fichier, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri | **P0** | `tasks/gap/TASK-002-gap-4-http-direct.md` |
 | **Gap 5 — Disk alanı ön-kontrolü** | `D5`, `H8`: `InsufficientDiskSpaceError` | P1 | `tasks/gap/TASK-002-gap-5-disk-space.md` |
 | **Gap 6 — Arşiv auto-extract** | `H12`, `H12e`: BIOS/PS3 redump force extract, post-process | P2 | `tasks/gap/TASK-002-gap-6-extract.md` |
@@ -672,7 +672,7 @@ baseline ile aynı kalır (246 passed / 23 pre-existing).
 **Sıralama ilkesi:** Orkestratör (`W0..W3`, `D0..D8` dış sarmalayıcı) Python'da kalırken
 Rust yalnızca *torrent byte indirme* (`T4r`/`RD4`) devralmıştı. Bu 11 madde, Python
 kaldırıldığında **davranışsal olarak kaybolacak** düğümlerdir. İş sırası:
-1. **P0'lar** (Gap 2 → 3 → 4 → 11): pause/resume, cancel+temizlik, HTTP-direct, 1fichier
+1. **P0'lar** (Gap 2 ✅ → 3 ✅ → 4 → 11): pause/resume, cancel+temizlik, HTTP-direct, 1fichier
    provider zinciri — kullanıcının her gün dokunduğu yollar.
 2. **P1'ler** (Gap 1 → 10 → 9 → 7 → 5): retry motoru (Faz 8 Python'da zaten var, birebir port),
    history/SSE, restart-resume, seed lifecycle, disk alanı.

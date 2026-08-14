@@ -324,6 +324,40 @@ async fn test_cancel_unknown_url() {
     assert_eq!(body["task_id"], Value::Null);
 }
 
+/// Gap-3: bridge varken `/api/cancel` task_id'yi engine'e iletir (catalog yoksa).
+#[tokio::test]
+async fn test_cancel_with_bridge_forwards_task_id() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FakeCancelEngine {
+        calls: calls.clone(),
+    });
+    let app = app_with_bridge(bridge);
+
+    let (status, _, body) =
+        call_post(app, "/api/cancel", json!({"url": "https://exemple.invalid/rom.zip", "task_id": "t1"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["canceled"], json!(true));
+    assert_eq!(body["task_id"], json!("t1"));
+    assert_eq!(calls.lock().unwrap().as_slice(), &[("cancel_torrent".to_string(), "t1".to_string())]);
+}
+
+/// Gap-3: bridge varken `/api/cancel` task_id yoksa `cancel_all`'a düşer.
+#[tokio::test]
+async fn test_cancel_with_bridge_no_task_forwards_cancel_all() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FakeCancelEngine {
+        calls: calls.clone(),
+    });
+    let app = app_with_bridge(bridge);
+
+    let (status, _, body) =
+        call_post(app, "/api/cancel", json!({"url": "https://exemple.invalid/rom.zip"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["canceled"], json!(true));
+    assert_eq!(calls.lock().unwrap().as_slice(), &[("cancel_all".to_string(), String::new())]);
+}
+
 #[tokio::test]
 async fn test_queue_post() {
     let (status, _, body) = call_post(empty_app(), "/api/queue", json!({})).await;
@@ -538,6 +572,41 @@ impl manager_bridge::TorrentBackend for FakeEngine {
             .unwrap()
             .push((source_url.to_string(), dest_path.display().to_string()));
         Ok(dest_path.to_path_buf())
+    }
+}
+
+/// Gap-3: `cancel_torrent`/`cancel_all` çağrılarını kaydeden test engine.
+#[derive(Debug)]
+struct FakeCancelEngine {
+    calls: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl manager_bridge::TorrentBackend for FakeCancelEngine {
+    fn engine(&self) -> &'static str {
+        "fake-cancel"
+    }
+
+    async fn call(&self, method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+        Err(manager_bridge::BridgeError::Rpc {
+            code: -32601,
+            message: format!("Method not found: {method}"),
+        })
+    }
+
+    async fn shutdown(&self) {}
+
+    async fn cancel_torrent(&self, task_id: &str) -> Result<bool, manager_bridge::BridgeError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(("cancel_torrent".to_string(), task_id.to_string()));
+        Ok(true)
+    }
+
+    async fn cancel_all(&self) -> Result<usize, manager_bridge::BridgeError> {
+        self.calls.lock().unwrap().push(("cancel_all".to_string(), String::new()));
+        Ok(1)
     }
 }
 

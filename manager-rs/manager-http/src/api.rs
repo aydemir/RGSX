@@ -579,14 +579,30 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
     json_err("Batch indirme devre dışı (RGSX_PYTHON_MANAGER_URL gerekli)", StatusCode::BAD_REQUEST)
 }
 
-/// POST `/api/cancel` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa placeholder.
+/// POST `/api/cancel` — Faz 10c/3/4 + Gap-3: `catalog` varsa Python'a proxy;
+/// yoksa bridge'e `cancel_torrent` (task_id) / `cancel_all` (task_id yoksa).
+/// Bridge yoksa placeholder (geriye uyum).
 pub async fn cancel(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/cancel", &body).await {
             return ok(v);
         }
     }
-    let Some(url) = body.get("url").and_then(Value::as_str) else {
+    let url = body.get("url").and_then(Value::as_str);
+    let task_id = body.get("task_id").and_then(Value::as_str);
+    if let Some(bridge) = &state.bridge {
+        let canceled = match task_id {
+            Some(id) => bridge.cancel_torrent(id).await.unwrap_or(false),
+            None => bridge.cancel_all().await.unwrap_or(0) > 0,
+        };
+        return ok(contract::ok(json!({
+            "message": "Téléchargement annulé",
+            "url": url.unwrap_or_default(),
+            "task_id": task_id.unwrap_or_default(),
+            "canceled": canceled,
+        })));
+    }
+    let Some(url) = url else {
         return json_err("Paramètre manquant: url requis", StatusCode::BAD_REQUEST);
     };
     ok(contract::ok(json!({

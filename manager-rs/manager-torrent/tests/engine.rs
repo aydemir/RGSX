@@ -150,3 +150,22 @@ async fn pause_resume_dispatched_via_jsonrpc_call() {
     let paused_check = e.call("is_paused", json!({ "task_id": "x" })).await.unwrap();
     assert_eq!(paused_check, json!(false));
 }
+
+#[tokio::test]
+async fn cancel_unknown_task_reports_not_found() {
+    let e = engine().await;
+    // Kayıtlı handle yok → `cancel` false, `cancel_all` 0, sessiz hata değil.
+    assert!(!e.cancel_torrent("bilinmeyen-task").await.unwrap());
+    assert_eq!(e.cancel_all().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn cancel_dispatched_via_jsonrpc_call() {
+    let e = engine().await;
+    // `call` sözleşmesi: `cancel`/`cancel_all` metodları tanımlı olmalı — boş map ile
+    // `cancel:false`, `cancel_all:{canceled:0}`.
+    let single = e.call("cancel", json!({ "task_id": "x" })).await.unwrap();
+    assert_eq!(single, json!(false));
+    let all = e.call("cancel_all", json!({})).await.unwrap();
+    assert_eq!(all["canceled"], json!(0));
+}
