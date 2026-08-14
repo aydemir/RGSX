@@ -23,7 +23,7 @@
   - content-type HTML kontrolü (vimm), arşiv imza guards (`.7z/.zip/.rar`),
     kısmi arşiv kabul (`_should_accept_partial_archive`)
   - `_stream_response_to_path` (Range resume), `InsufficientDiskSpaceError`
-- `ports/RGSX/network/one_fichier.py` — `download_from_1fichier` (ayrı modül, Rust'ta yok)
+- `ports/RGSX/network/one_fichier.py` — `download_from_1fichier` (ayrı modül, Rust'ta yok) → **`tasks/gap/TASK-002-gap-11-1fichier-provider.md`** (ayrı görev: provider zinciri 1F→AD→DL→RD→TB→FREE)
 
 ## Açıklama
 

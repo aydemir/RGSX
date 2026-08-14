@@ -667,12 +667,13 @@ baseline ile aynı kalır (246 passed / 23 pre-existing).
 | **Gap 8 — Stray temp-root temizliği** | `Q9`: `_find_stray_torrent_temp_roots` orphan taraması | P2 | `tasks/gap/TASK-002-gap-8-stray-temp.md` |
 | **Gap 9 — Restart sonrası resume** | `M0`: librqbit session ephemral → torrent resume kaybolur | P1 | `tasks/gap/TASK-002-gap-9-resume-interrupted.md` |
 | **Gap 10 — History/SSE sonlandırma** | `F0` (mark_game_as_downloaded, emit_state_event, bulk history), `D2/D7` | P1 | `tasks/gap/TASK-002-gap-10-history-sse.md` |
+| **Gap 11 — 1fichier provider zinciri** | `OF0..OF18`: 1F→AD→DL→RD→TB→FREE sıralı fallback, debrid unlock/poll, Range resume, 10x retry, provider_used history yazımı (ayrı modül `one_fichier.py`) | **P0** | `tasks/gap/TASK-002-gap-11-1fichier-provider.md` |
 
 **Sıralama ilkesi:** Orkestratör (`W0..W3`, `D0..D8` dış sarmalayıcı) Python'da kalırken
-Rust yalnızca *torrent byte indirme* (`T4r`/`RD4`) devralmıştı. Bu 10 madde, Python
+Rust yalnızca *torrent byte indirme* (`T4r`/`RD4`) devralmıştı. Bu 11 madde, Python
 kaldırıldığında **davranışsal olarak kaybolacak** düğümlerdir. İş sırası:
-1. **P0'lar** (Gap 2 → 3 → 4): pause/resume, cancel+temizlik, HTTP-direct — kullanıcının
-   her gün dokunduğu yollar.
+1. **P0'lar** (Gap 2 → 3 → 4 → 11): pause/resume, cancel+temizlik, HTTP-direct, 1fichier
+   provider zinciri — kullanıcının her gün dokunduğu yollar.
 2. **P1'ler** (Gap 1 → 10 → 9 → 7 → 5): retry motoru (Faz 8 Python'da zaten var, birebir port),
    history/SSE, restart-resume, seed lifecycle, disk alanı.
 3. **P2'ler** (Gap 6 → 8): extract post-process ve stray temp (nadir dallar, düşük risk).

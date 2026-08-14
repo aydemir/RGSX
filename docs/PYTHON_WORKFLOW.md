@@ -1,17 +1,19 @@
 # Python → Rust İş Akışı Haritası (Rust Refaktörü Öncesi)
 
-> **Amaç:** `ports/RGSX/network/queue.py`, `ports/RGSX/qbittorrent_backend.py` ve
-> `ports/RGSX/rgsx_manager.py` üzerindeki *tam* indirme/iş akışını, her karar noktası
-> ayrı bir düğüm olacak şekilde çıkarmak; ardından Rust'a (`manager-rs`) şu ana kadar
-> taşınan fonksiyonlarla eşleyip **Rust karşılığı OLMAYAN** düğümleri (nadiren tetiklenen
-> dallar dahil) tespit etmek.
+> **Amaç:** `ports/RGSX/network/queue.py`, `ports/RGSX/network/one_fichier.py`,
+> `ports/RGSX/qbittorrent_backend.py` ve `ports/RGSX/rgsx_manager.py` üzerindeki
+> *tam* indirme/iş akışını, her karar noktası ayrı bir düğüm olacak şekilde çıkarmak;
+> ardından Rust'a (`manager-rs`) şu ana kadar taşınan fonksiyonlarla eşleyip
+> **Rust karşılığı OLMAYAN** düğümleri (nadiren tetiklenen dallar dahil) tespit etmek.
 >
 > Refaktör "satır satır okuyarak" değil, "tam iş akışı karşısında doğrulanarak"
-> ilerlesin diye hazırlandı. Her düğüm ID'si (`W1`, `T4`, `H9`, `F2`, `Q6`, ...)
-> alttaki Rust eşleme tablosu ve `tasks/gap/*.md` dosyalarıyla çapraz bağıntılanır.
+> ilerlesin diye hazırlandı. Her düğüm ID'si (`W1`, `T4`, `H9`, `F2`, `Q6`, `OF5`,
+> `MW3`, ...) alttaki Rust eşleme tablosu ve `tasks/gap/*.md` dosyalarıyla çapraz
+> bağıntılanır.
 >
-> Kaynak: `codegraph` + doğrudan dosya okuma (queue.py 1805 satır, qbittorrent_backend.py
-> 1853 satır, rgsx_manager.py 1072 satır). Tarih: 2026-08-14.
+> Kaynak: `codegraph` + doğrudan dosya okuma (queue.py 1805 satır, one_fichier.py 1841
+> satır, qbittorrent_backend.py 1853 satır, rgsx_manager.py 1072 satır, download_state.py
+> 416 satır). Tarih: 2026-08-14.
 
 ---
 
@@ -128,6 +130,80 @@ flowchart TD
         DLoop -- "CancelledError" --> DEndc([break + cleanup])
     end
 
+    %% ===================== 1FICHIER (ayrı modül) =====================
+    subgraph OF["download_from_1fichier (one_fichier.py:451, thread)"]
+        OF0["API key'leri yükle/refresh:<br/>1F/AD/DL/RD/TB (mtime aware)"] --> OF1{"url urls_in_progress içinde?<br/>(duplicate)"}
+        OF1 -- "evet" --> OF1w["url_done_events bekle (≤1800s)<br/>→ cache'ten sonuç dön"]
+        OF1 -- "hayır" --> OF2["url'i in_progress'a ekle,<br/>task_id progress/cancel event oluştur"]
+        OF1w --> OFEnd([return (True/cache)])
+        OF2 --> OF3["history entry: mevcut→Downloading reset,<br/>yok→yeni; save_history"]
+        OF3 --> OF4["dest_dir çöz (custom→platform_folder→<br/>BIOS→USERDATA_FOLDER) + makedirs + W_OK"]
+        OF4 --> OF5{"API_KEY_1FICHIER var mı?"}
+        OF5 -- "evet" --> OF6["1fichier file/info.cgi:<br/>gerçek filename + remote_size"]
+        OF6 -- "403/hata" --> OF5e["friendly msg, fallback provider'lara geç"]
+        OF6 -- "Resource not found" --> OF5e
+        OF6 -- "OK, filename yok" --> OF5e
+        OF6 -- "OK" --> OF7["dest_path=dest_dir/filename,<br/>_update_history_local_target"]
+        OF7 --> OF8{"dest_path var?<br/>size eşleşiyor mu?"}
+        OF8 -- "var + eşleşiyor" --> OF8ok["zaten var → toast, return"]
+        OF8 -- "var + farklı" --> OF8d["eksik dosyayı sil → indirme devam"]
+        OF8 -- "yok" --> OF8b{"aynı taban, farklı uzantı var mı?"}
+        OF8b -- "var + eşleşiyor" --> OF8ok
+        OF8b -- "hayır" --> OF9["1fichier get_token.cgi → final_url"]
+        OF9 -- "hata" --> OF9e["friendly msg (Bad token/Premium/4xx),<br/>fallback provider'lara geç"]
+        OF9 -- "OK" --> OF9ok["provider_used='1F'"] --> OFD2
+        OF5 -- "hayır" --> OFA{"API_KEY_ALLDEBRID var mı?"}
+        OFA -- "evet" --> OFAD["alldebrid link/unlock → final_url"]
+        OFAD -- "başarı" --> OFADok["provider_used='AD'"] --> OFD2
+        OFAD -- "hata" --> OFD
+        OFA -- "hayır" --> OFD{"API_KEY_DEBRIDLINK var mı?"}
+        OFD -- "evet" --> OFDL["debrid-link downloader/add → final_url"]
+        OFDL -- "başarı" --> OFDLok["provider_used='DL'"] --> OFD2
+        OFDL -- "hata" --> OFR
+        OFD -- "hayır" --> OFR{"API_KEY_REALDEBRID var mı?"}
+        OFR -- "evet" --> OFRD["real-debrid unrestrict/link → final_url"]
+        OFRD -- "başarı" --> OFRDok["provider_used='RD'"] --> OFD2
+        OFRD -- "hata" --> OFT
+        OFR -- "hayır" --> OFT{"API_KEY_TORBOX var mı?"}
+        OFT -- "evet" --> OFTB["torbox webdl: checkcached →<br/>createwebdownload → poll (≤120s)<br/>→ requestdl → final_url"]
+        OFTB -- "başarı" --> OFTBok["provider_used='TB'"] --> OFD2
+        OFTB -- "hata" --> OFF
+        OFT -- "hayır" --> OFF{"final_url hâlâ yok mu?"}
+        OFF -- "evet" --> OFFm["1fichier FREE mode:<br/>download_1fichier_free_mode (progress/wait<br/>callback + history güncelleme)"]
+        OFFm -- "başarı" --> OFFok["provider_used='FREE',<br/>zip/rar/7z extract (is_zip_non_supported değilse)"]
+        OFFm -- "hata" --> OFEnd
+        OFF -- "hayır" --> OFD2["final_url üzerinden HEAD size<br/>(AD/DL/RD atlar — geçici URL)"]
+        OF5e --> OFA
+        OF9e --> OFA
+        OF8ok --> OFEnd
+        OFD2 --> OF10{"dest_path var?<br/>size eşleşiyor mu? (2. kontrol)"}
+        OF10 -- "var + eşleşiyor" --> OF10ok["zaten var → toast, return"] --> OFEnd
+        OF10 -- "hayır" --> OF11["retry döngüsü (10 deneme, 10s delay):<br/>3 header variantı + Range resume"]
+        OF11 --> OF11a{"503 AND provider=AD?"}
+        OF11a -- "evet" --> OF11r["_refresh_alldebrid_final_url ile linki tazele"] --> OF11
+        OF11a -- "hayır" --> OF12{"response kod OK?"}
+        OF12 -- "hayır" --> OF12r["retry, sonunda raise"] --> OFEnd
+        OF12 -- "evet" --> OF13{"disk alanı yeterli mi?<br/>(total_size)"}
+        OF13 -- "hayır" --> OF13e["InsufficientDiskSpaceError"] --> OFEnd
+        OF13 -- "evet" --> OF14["chunk'la yaz (.part → os.replace),<br/>pause/cancel chunk-loop'ta kontrol"]
+        OF14 --> OF15{"downloaded <= 0?"}
+        OF15 -- "evet" --> OF15e["boş response → sil, raise"] --> OFEnd
+        OF15 -- "hayır" --> OF16{"cancel edildi mi?"}
+        OF16 -- "evet" --> OFEnd
+        OF16 -- "hayır" --> OF17{"force_extract?<br/>(is_zip_non_supported + auto_extract<br/>VEYA PS3 redump)"}
+        OF17 -- "evet" --> OF17e["_postprocess_downloaded_file"]
+        OF17 -- "hayır" --> OF17ok["chmod 644 → result=(True, ok)"]
+        OF17e --> OF18
+        OF17ok --> OF18["progress queue'a (task_id, success, msg) put; finally:<br/>urls_in_progress discard; sonuç urls cache'te"]
+        OF18 --> OFLoop["progress-loop: thread.is_alive() iken queue oku"]
+        OFLoop --> OFFin{"queue verisi bool mu?"}
+        OFFin -- "evet" --> F0["_finalize_download_result()"]
+        OFFin -- "hayır" --> OFProg["history progress güncelle (Téléchargement)"]
+        OFProg --> OFLoop
+        OFLoop -- "CancelledError" --> OFEnd
+        OFFok --> OF18
+    end
+
     %% ===================== FINALIZE / RETRY =====================
     subgraph FR["_finalize_download_result (queue.py:468)"]
         F0 --> F1{"success?"}
@@ -196,9 +272,13 @@ flowchart TD
         M0["_resume_interrupted_downloads():<br/>history(Téléchargement/Downloading/Paused)<br/>→ queue'ya 'Queued' geri ekle"]
         M1["_watchdog_loop():<br/>HysteresisMonitor + RestartLimiter<br/>→ UNRESPONSIVE→RESTARTING→spawn restart<br/>/ CRASHED"]
         M2["_trigger_shutdown():<br/>shutdown_downloads + cancel_all + STOP"]
+        M3["_handle_download_worker (POST /api/download):<br/>direct_url → check_extension_before_download;<br/>game_index → get_cached_games → name/url;<br/>config.download_queue'a 'Queued' push + history"]
+        M4["_handle_cancel_worker (POST /api/cancel):<br/>history'de url + active status ara →<br/>'Canceled' yaz → request_cancel(task_id)"]
     end
 
     %% ---- ÇAPRAZ BAĞLANTILAR ----
+    W3a -.thread.-> OF0
+    W3b -.thread.-> D0
     T4r -.delegasyon.-> RD3
     T5 ==> Q6
     Q6ok ==> Q7
@@ -209,6 +289,8 @@ flowchart TD
     M0 -.başlangıç.-> W0
     M1 -.state.-> Q1
     RD1 ==> RD3
+    DFin == "final bool" ==> F0
+    OFFin == "final bool" ==> F0
 ```
 
 ---
@@ -222,6 +304,7 @@ flowchart TD
 | `RD1`, `RD2`, `RD3` | `rust_daemon.start/supervisor/download_torrent` | `rust_daemon.py` (Python supervisor) + `manager-bin` | ✅ **TASK-002i/002j** |
 | `T4r` (torrent byte indirme) | `qbittorrent_backend.download_torrent_via_qbittorrent` | `manager-torrent/src/lib.rs` `LibrqbitEngine.download_torrent_source` | ⚠️ **kısmi** (TASK-002f/002g/002l): file-selection, pause/resume, seed, retry, cancel **yok** |
 | `Q10` (bridge protokol) | `qbittorrent_backend._BRIDGE_METHODS` | `manager-bridge` + Python `_bridge_serve_loop` | ✅ **TASK-002c/002k-5** (Python tarafı Rust bin'e servis eder) |
+| `W0..W2` (orkestratör), `D0..D8` (download_rom sarmalayıcı), `MW3/MW4` (manager HTTP worker) | `queue.py`, `rgsx_manager.py` | — (Python'da kalıyor; Rust yalnızca torrent-byte devralır) | ⚠️ taşınmadı |
 
 ---
 
@@ -235,18 +318,19 @@ henüz bir karşılığı yok. Nadir/hatalı dallar özellikle işaretlendi.
 | 1 | `F1→F2→R0..R3` — transient hata sınıflandırma, `_retry_backoff`, `_schedule_download_retry`, `_retry_in_flight` dedup | P1 | `tasks/gap/TASK-002-gap-1-retry-engine.md` |
 | 2 | `P0..P2`, `P7` — pause/resume orkestrasyonu (toggle, pause_all, resume_all, pause_ev → backend) | **P0** | `tasks/gap/TASK-002-gap-2-pause-resume.md` |
 | 3 | `P3..P6`, `Q9`, `Q8` (kısmi) — cancel + yarım kalan dosya/torrent temp-root/seeder artifact temizliği | **P0** | `tasks/gap/TASK-002-gap-3-cancel-cleanup.md` |
-| 4 | `H0..H12` (tüm HTTP-alt ağacı) — vimm/archive.org/lolroms/1fichier, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri | **P0** | `tasks/gap/TASK-002-gap-4-http-direct.md` |
+| 4 | `H0..H12` (tüm HTTP-alt ağacı) — vimm/archive.org/lolroms, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri | **P0** | `tasks/gap/TASK-002-gap-4-http-direct.md` |
 | 5 | `D5`, `H8` — disk alanı ön-kontrolü (`InsufficientDiskSpaceError`) | P1 | `tasks/gap/TASK-002-gap-5-disk-space.md` |
-| 6 | `H12`, `H12e` — arşiv auto-extract / post-process (BIOS, PS3 redump force) | P2 | `tasks/gap/TASK-002-gap-6-extract.md` |
+| 6 | `H12`, `H12e`, `OF17`, `OF17e` — arşiv auto-extract / post-process (BIOS, PS3 redump force) | P2 | `tasks/gap/TASK-002-gap-6-extract.md` |
 | 7 | `Q6ok→Q7→Q8`, `Q6c` — seed lifecycle (promote-to-seed, `_seed_status_worker`, `has_active_seed`, `stop_seed`) + password migration | P1 | `tasks/gap/TASK-002-gap-7-seed-lifecycle.md` |
 | 8 | `Q9` — stray torrent temp-root temizliği (`_find_stray_torrent_temp_roots`) | P2 | `tasks/gap/TASK-002-gap-8-stray-temp.md` |
 | 9 | `M0` — restart sonrası yarıda kalan indirmeyi sürdürme (Rust librqbit session ephemral → torrent resume kaybolur) | P1 | `tasks/gap/TASK-002-gap-9-resume-interrupted.md` |
 | 10 | `F0` (mark_game_as_downloaded, emit_state_event, bulk history), `D2/D7` history kayıtları — daemon içinde history/SSE sonlandırma | P1 | `tasks/gap/TASK-002-gap-10-history-sse.md` |
+| 11 | `OF0..OF18` (tüm 1fichier provider zinciri) — 1F→AD→DL→RD→TB→FREE sıralı fallback, debrid unlock/poll, Range resume, 10x retry, provider_used history yazımı | **P0** | `tasks/gap/TASK-002-gap-11-1fichier-provider.md` |
 
-> Not: Orkestratörün kendisi (`W0..W3`, `D0..D8` dış sarmalayıcı) şu an Python'da kalıyor ve
-> Rust'a yalnızca *torrent byte indirme* (`T4r`/`RD4`) devrediliyor. Yukarıdaki 10 madde, Python
-> kaldırıldığında/doğrulanırken **davranışsal olarak kaybolacak** düğümlerdir; refaktör bu düğümleri
-> ya Rust'a taşımalı ya da daemon sözleşmesine eklemelidir.
+> Not: Orkestratörün kendisi (`W0..W3`, `D0..D8` dış sarmalayıcı, `MW3/MW4`) şu an Python'da
+> kalıyor ve Rust'a yalnızca *torrent byte indirme* (`T4r`/`RD4`) devrediliyor. Yukarıdaki
+> 11 madde, Python kaldırıldığında/doğrulanırken **davranışsal olarak kaybolacak**
+> düğümlerdir; refaktör bu düğümleri ya Rust'a taşımalı ya da daemon sözleşmesine eklemelidir.
 
 ---
 
@@ -265,8 +349,14 @@ henüz bir karşılığı yok. Nadir/hatalı dallar özellikle işaretlendi.
 - [x] `H10` arşiv imza/HTML/challenge guards (kısmi kabul)
 - [x] `F2` transient vs kalıcı hata ayrımı + retry hakkı
 - [x] `M1` UNRESPONSIVE → RESTARTING → CRASHED (restart limiti)
+- [x] `OF1` 1fichier duplicate URL → cache'ten sonuç (≤1800s)
+- [x] `OF8/OF10` 1fichier size mismatch → eksik dosya sil, yeniden indir
+- [x] `OF11a` AllDebrid 503 → `_refresh_alldebrid_final_url` ile link yenile
+- [x] `OF15` 1fichier boş response → sil, raise
+- [x] `OF16` 1fichier cancel → part dosya sil (chunk-loop'ta)
+- [x] `OFF` tüm provider'lar başarısız → FREE mode fallback
 - [ ] `Q9` stray temp-root temizliği — **Rust yok**
 - [ ] `M0` restart sonrası resume — **Rust session ephemral, torrent resume kaybolur**
 - [ ] `Q6ok→Q7` seed sonrası temizlik/iptal — **Rust yok**
 - [ ] `H0..H12` HTTP-direct tüm alt ağaç — **Rust yok**
-```
+- [ ] `OF0..OF18` 1fichier provider zinciri — **Rust yok**
