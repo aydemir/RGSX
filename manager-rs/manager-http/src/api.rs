@@ -1245,3 +1245,29 @@ fn known_torrent_extension(seg: &str) -> bool {
 fn sanitize_file_name(name: &str) -> String {
     name.replace(['/', '\\', ':'], "_")
 }
+
+/// TASK-005 — ES (EmulationStation) gamepad map'ini sunar.
+///
+/// RetroBat/Batocera'daki `es_input.cfg`'yi okur; RGSX UI'ın aynı fiziksel
+/// tuşları ES ile paylaşmasını sağlar (ikinci remap gerekmez). Bulunamazsa
+/// `{"found": false}` döner (webui varsayılan standart mapping'e düşer).
+pub async fn es_input(State(_state): State<AppState>) -> Response {
+    match crate::es_input::load_best() {
+        Some(c) => {
+            let mut rgsx = serde_json::Map::new();
+            for action in c.actions.keys() {
+                if let Some(idx) = crate::es_input::es_action_to_gamepad_index(action) {
+                    rgsx.insert(action.clone(), json!(idx));
+                }
+            }
+            ok(json!({
+                "found": true,
+                "deviceName": c.device_name,
+                "guid": c.guid,
+                "actions": c.actions,
+                "rgsx": rgsx,
+            }))
+        }
+        None => ok(json!({ "found": false })),
+    }
+}

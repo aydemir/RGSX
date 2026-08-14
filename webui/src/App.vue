@@ -11,6 +11,10 @@ const selected = ref(0)        // kuyruk seçimi (TV)
 const selPlatform = ref(0)     // platform ızgarası seçimi (TV)
 const selGame = ref(0)         // oyun listesi seçimi (TV)
 
+// ES (EmulationStation) gamepad map'inden türetilmiş aksiyon -> tarayıcı Gamepad index.
+// Varsayılan standart mapping; /api/es-input bulunursa ES değerleriyle override edilir (TASK-005).
+const esMap = ref({ confirm: 0, back: 1, navUp: 12, navDown: 13, navLeft: 14, navRight: 15, pageUp: 4, pageDown: 5, menu: 9, view: 8 })
+
 let es = null
 
 // --- Katalog tarama durumu (native backend uçları) ---
@@ -98,8 +102,24 @@ onMounted(async () => {
   if (tv.value) {
     window.addEventListener('keydown', onKey)
     gamepadTimer = setInterval(pollGamepad, 100)
+    loadEsInput()
   }
 })
+
+// ES gamepad map'ini sunucudan alır; bulunursa navigasyon indekslerini ES ile senkronlar.
+async function loadEsInput() {
+  try {
+    const r = await apiGet('/api/es-input')
+    if (r && r.found && r.rgsx) {
+      const m = r.rgsx
+      esMap.value = {
+        confirm: m.a ?? 0, back: m.b ?? 1, navUp: m.up ?? 12, navDown: m.down ?? 13,
+        navLeft: m.left ?? 14, navRight: m.right ?? 15, pageUp: m.pageup ?? 4,
+        pageDown: m.pagedown ?? 5, menu: m.start ?? 9, view: m.select ?? 8,
+      }
+    }
+  } catch (e) { /* bulunamadıysa varsayılan standart mapping kullanılır */ }
+}
 
 onUnmounted(() => {
   es && es.close()
@@ -142,22 +162,31 @@ function activate() {
     if (g) downloadGame(g)
   }
 }
+function back() {
+  if (selectedPlatform.value && !searchResults.value) { selectedPlatform.value = null; games.value = [] }
+  else if (searchResults.value) { searchResults.value = null; searchTerm.value = '' }
+}
 function onKey(e) {
   if (e.key === 'ArrowDown') { move(1); e.preventDefault() }
   else if (e.key === 'ArrowUp') { move(-1); e.preventDefault() }
   else if (e.key === 'Enter') { activate(); e.preventDefault() }
+  else if (e.key === 'Escape') { back(); e.preventDefault() }
 }
 function pollGamepad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : []
+  const m = esMap.value
   for (const p of pads) {
     if (!p) continue
     const [ax] = p.axes
     if (ax !== undefined && Math.abs(ax) > 0.6) { move(ax > 0 ? 1 : -1); break }
     for (let i = 0; i < p.buttons.length; i++) {
       if (p.buttons[i].pressed) {
-        if (i === 12) move(-1)
-        else if (i === 13) move(1)
-        else if (i === 0) activate()   // gamepad A = seç
+        if (i === m.navUp) move(-1)
+        else if (i === m.navDown) move(1)
+        else if (i === m.pageUp) move(-10)
+        else if (i === m.pageDown) move(10)
+        else if (i === m.confirm) activate()   // gamepad A = seç
+        else if (i === m.back) back()
         break
       }
     }

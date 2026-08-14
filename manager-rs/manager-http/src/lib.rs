@@ -17,6 +17,7 @@
 pub mod api;
 pub mod catalog;
 pub mod catalog_bootstrap;
+pub mod es_input;
 pub mod sse;
 pub mod state;
 
@@ -47,6 +48,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/browse-directories", get(api::browse_directories))
         .route("/api/scan", get(api::scan))
         .route("/api/image/:platform", get(api::image))
+        .route("/api/es-input", get(api::es_input))
         .route("/api/favicon", get(api::favicon))
         .route("/api/update-cache", get(api::update_cache))
         .route("/api/download", post(api::download))
