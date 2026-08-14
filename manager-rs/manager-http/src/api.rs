@@ -279,7 +279,7 @@ pub async fn system_info(State(state): State<AppState>) -> Response {
             return ok(v);
         }
     }
-    let info = state.read().system_info.clone();
+    let info = manager_core::settings::system_info();
     ok(contract::ok(json!({ "system_info": info })))
 }
 
@@ -318,7 +318,13 @@ pub async fn browse_directories(
             return json_err("Le chemin spécifié n'existe pas", StatusCode::BAD_REQUEST);
         }
     }
-    let base = requested.cloned().unwrap_or_default();
+    // Saf-Rust modda pathsiz çağrı kök yerine RGSX_DATA_DIR'i (yoksa cwd) listeler.
+    let base = requested.cloned().unwrap_or_else(|| {
+        match std::env::var("RGSX_DATA_DIR") {
+            Ok(d) if std::path::Path::new(&d).is_dir() => d,
+            _ => ".".to_string(),
+        }
+    });
     let (current, dirs) = state.read().browse(&base);
     ok(contract::ok(json!({ "current_path": current, "directories": dirs })))
 }

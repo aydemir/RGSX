@@ -260,15 +260,33 @@ impl Settings {
     }
 }
 
-/// `GET /api/settings` `system_info` bloğu (env tabanlı; platform sayısı native'de 0).
+/// `GET /api/settings` `system_info` bloğu (env tabanlı; saf-Rust modda platform
+/// sayısı yerel `systems_list.json`'dan üretilir).
 pub fn system_info() -> serde_json::Value {
     let system = std::env::consts::OS;
     let roms_folder = std::env::var("RGSX_ROMS_FOLDER").unwrap_or_default();
     serde_json::json!({
         "system": system,
         "roms_folder": roms_folder,
-        "platforms_count": 0
+        "platforms_count": count_native_platforms()
     })
+}
+
+/// Saf-Rust modda (katalog proxy yok) `platforms_count`'u yerel `systems_list.json`
+/// dizisinden üretir; dosya/veri yoksa 0.
+fn count_native_platforms() -> u32 {
+    let data_dir = match std::env::var("RGSX_DATA_DIR") {
+        Ok(d) if !d.is_empty() => d,
+        _ => return 0,
+    };
+    let path = std::path::Path::new(&data_dir).join("systems_list.json");
+    match std::fs::read_to_string(&path) {
+        Ok(txt) => serde_json::from_str::<serde_json::Value>(&txt)
+            .ok()
+            .and_then(|v| v.as_array().map(|a| a.len() as u32))
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
 }
 
 #[cfg(test)]
