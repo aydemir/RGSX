@@ -472,6 +472,23 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         let gname = gname.to_string();
         let task_id = web_task_id();
 
+        // DÜZELTME: archive.org gibi düz HTTP (.zip) kaynakları torrent engine'ine
+        // (librqbit) GÖNDERİLMEMELİ — aksi halde "error decoding torrent" hatası verir.
+        // Katalog yoksa (native mod) doğrudan HTTP indirme yapılır.
+        if !is_torrent_url(&game_url) {
+            match manager_download::DownloadManager::new().resolve(&game_url) {
+                Ok(manager_download::DownloadSource::DirectHttp(resolved)) => {
+                    return native_ddl_download(state, game_url, resolved, platform, gname).await;
+                }
+                _ => {
+                    return json_err(
+                        "HTTP kaynağı çözümlenemedi (direct download desteklenmiyor)",
+                        StatusCode::BAD_REQUEST,
+                    );
+                }
+            }
+        }
+
     // Bridge varsa indirmeyi başlat (arka plan task; yanıt beklemez).
     // Await'ler kilit öncesi — spawn closure'u `'static' olduğundan değerler klonlanır.
     if let Some(bridge) = state.bridge.clone() {
@@ -1230,7 +1247,7 @@ pub fn dest_path_for(downloads_folder: &str, url: &str, game_name: &str) -> std:
         .filter(|s| !s.is_empty())
         .next_back()
         .filter(|seg| known_torrent_extension(seg))
-        .map(|s| s.to_string())
+        .map(|s| s.to_string().replace("%20", " "))
         .unwrap_or(fallback);
     base.join(from_url)
 }
