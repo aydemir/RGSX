@@ -1,7 +1,7 @@
 # TASK-002-gap-18 — WebUI qBittorrent bölümü (parola durum/regenerate/change/start)
 
 - **id:** TASK-002-gap-18
-- **title:** WebUI qBittorrent bölümü (parola durum / regenerate / change / start)
+- **title:** WebUI qBittorrent bölümü (parola durum / regenerate / change / start) (hibrit mod: RGSX_TORRENT_ENGINE=python ONLY)
 - **status:** todo
 
 ## Audit (2026-08-15, App.vue b6c37d8)
@@ -15,6 +15,16 @@
 - **environment:** both
 - **tags:** webui, qbittorrent, settings
 - **parent:** TASK-002
+
+## Scope Notu (2026-08-15)
+- Bu TASK **yalnızca `RGSX_TORRENT_ENGINE=python` hibrit/legacy modu** içindir. Saf-Rust
+  varsayılan yolunda (`librqbit`, `windows/RGSX rust.bat:207` sabit) qBittorrent instance'ı
+  yoktur.
+- librqbit modunda `/api/qbittorrent/*` uçları **embedded placeholder** döndürür:
+  `get_password_status` → `mode:'embedded'`; `change_webui_password` → 400 `embedded_mode`;
+  `regenerate-password` → 500 `bridge_unavailable` (`manager-torrent/src/lib.rs:376-399`,
+  `api.rs:927-990`). Panel bu durumda **"qBittorrent kullanımda değil"** mesajı göstermeli,
+  hata gibi (red/err) davranmamalı — `mode == 'embedded'` kontrolü ile zarif degrade.
 
 ## Karar (2026-08-15)
 
