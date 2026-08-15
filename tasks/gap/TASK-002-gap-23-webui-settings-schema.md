@@ -2,7 +2,19 @@
 
 - **id:** TASK-002-gap-23
 - **title:** WebUI Settings şema uyumu (sources.mode, symlink, display.grid, accessibility)
-- **status:** partial
+- **status:** done
+
+## Audit (2026-08-15, ADIM 1 HOTFIX — App.vue commit)
+- ✅ **TAMAM.** 3 binding bug'ı kaynak doğrulamasıyla düzeltildi (tahmin YOK):
+  - `symlink`: `settings.rs:60-65` + `rgsx_settings.py:73-76` → `{enabled, target_directory}` objesi.
+    `DEFAULT_SETTINGS.symlink: false` → `{ enabled: false, target_directory: '' }` (template `symlink.enabled` artık geçerli).
+  - `sources.mode`: `settings.rs:138-139` + `rgsx_settings.py:78` → default `"rgsx"` (Python'da `'archive'` DEĞİL).
+    `DEFAULT_SETTINGS.sources.mode: 'archive'` → `'rgsx'` (select opsiyonları `rgsx|custom` ile uyumlu).
+  - `display.grid`: `settings.rs:129-131` + `rgsx_settings.py:67` → **string** `"3x4"`.
+    `DEFAULT_SETTINGS.display.grid: true` → `'3x4'`.
+  - `normalizeSettings()` `symlink`'i de derin merge eder (`display`/`sources` gibi).
+- `npm run build` ile doğrulandı (12 modül, hatasız).
+- Not: `accessibility` alanının *UI* tarafı gap-22'de (ayrı ADIM). Şema uyumu (alanın varlığı + round-trip) burada tamam.
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ⚠️ **KISMEN.** Settings şeması genişledi: `sources.mode` select ('rgsx'/'custom') + `custom_url`,

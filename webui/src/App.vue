@@ -42,20 +42,21 @@ const searchResults = ref(null)
 const DEFAULT_SETTINGS = {
   language: 'Turkish',
   music_enabled: false,
-  display: { grid: true, light_mode: false, font_family: 'Arial', monitor: '', fullscreen: false },
+  display: { grid: '3x4', light_mode: false, font_family: 'Arial', monitor: '', fullscreen: false },
   show_unsupported_platforms: false,
   global_sort_option: 'name',
   max_simultaneous_downloads: 3,
-  sources: { mode: 'archive', custom_url: '' },
-  symlink: false,
+  sources: { mode: 'rgsx', custom_url: '' },
+  symlink: { enabled: false, target_directory: '' },
   accessibility: false
 }
 function normalizeSettings(s) {
   s = s || {}
   const d = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
-  Object.keys(d).forEach(k => { if (k !== 'display' && k !== 'sources' && s[k] !== undefined) d[k] = s[k] })
+  Object.keys(d).forEach(k => { if (k !== 'display' && k !== 'sources' && k !== 'symlink' && s[k] !== undefined) d[k] = s[k] })
   d.display = Object.assign({}, DEFAULT_SETTINGS.display, s.display || {})
   d.sources = Object.assign({}, DEFAULT_SETTINGS.sources, s.sources || {})
+  d.symlink = Object.assign({}, DEFAULT_SETTINGS.symlink, s.symlink || {})
   return d
 }
 const settings = ref(normalizeSettings(null))
