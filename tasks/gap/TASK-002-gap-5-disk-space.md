@@ -34,3 +34,23 @@ yakalanır ve indirme temiz şekilde başarısız olur. Rust `LibrqbitEngine`/`d
 - Yetersiz disk: Rust daemon `InsufficientDiskSpace` benzeri hata döner, partial dosya bırakmaz.
 - Yeterli disk: mevcut akış değişmeden devam eder.
 - Hem torrent hem HTTP (gelecekteki gap-4) yolu için kontrol uygulanır.
+
+---
+
+## Parite Denetimi 2026-08-15 — Ek Maddeler
+
+### Madde A: Disk alanı ön-kontrolü hâlâ YÜKSELTİLMİYOR (❌)
+
+- Python: `ports/RGSX/network/helpers.py:301` `_ensure_sufficient_disk_space` → `InsufficientDiskSpaceError`;
+  çağrı `queue.py:786`/`832`/`1471`, yakalama `queue.py:1618`.
+- Rust: `manager-download/src/http/mod.rs:56` `DownloadError::InsufficientDiskSpace` **yalnızca tanımlı**,
+  hiçbir yerde `.raise()`/dönüştürme yapılmıyor; `manager-scan/src/disk.rs:30` yalnız scan içindir.
+- Sonuç: Rust disk dolana kadar yazar, kullanıcıya net hata vermez (sessiz hata yutma riski).
+- Bağımlılık: yok. Bu TASK'ın asıl kapsamıyla aynı kod noktası (download başı).
+
+### Madde B: Permission (yazma izni) açık ön-kontrolü eksik (⚠️ KISMİ)
+
+- Python: `queue.py:775-776` `os.access(dest, os.W_OK)` → `PermissionError` ön-kontrolü.
+- Rust: `mod.rs:72-76` genel `From<std::io::Error>` sarmalama var; yazma izni için açık pre-check YOK.
+- Bu TASK'a FOLD edildi (aynı disk-guard kod noktası). BELİRSİZ: pre-check `os.access` gibi mi
+  yapılacak, yoksa ilk yazma hatası yakalanıp `Client` hatasına mı düşürülecek?

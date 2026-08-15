@@ -32,3 +32,16 @@ yapmaz**; eski konumlardaki `.rgsx_torrent` klasörleri birikir.
 
 - Farklı bir platform path'inde kalan `.rgsx_torrent/<key>` klasörü Rust cleanup ile silinir.
 - Mevcut (aktif) temp köküne yanlışlıkla dokunulmaz.
+
+---
+
+## Parite Denetimi 2026-08-15 — Ek Maddeler
+
+### Madde A: Disk yazma izolasyonu + kaynak koruma eksik (⚠️ KISMİ — BELİRSİZ)
+
+- Python: `qbittorrent_backend.py:1556` savepath `.rgsx_torrent/<key>` (temp izolasyonu);
+  `:1675-1681` kaynağı koruyup yalnız seed için `os.link` (orijinal silinmez).
+- Rust: `manager-torrent/src/lib.rs:73` `output_folder`; `:321-368` en büyük dosyayı seçip
+  `link_or_copy` — **temp_dir izolasyonu ve seed için kaynak koruma YOK**.
+- BELİRSİZ: izolasyon stratejisi (ayrı temp root mu, mevcut `output_folder` mı?) ve kaynak koruma
+  yaklaşımı kullanıcı onayı gerektirir. `TASK-002-gap-16` ile `lib.rs` paylaşımı var.

@@ -37,3 +37,17 @@ modda şifre kavramı yoktur ama fallback qBittorrent path'i için korunmalıdı
 - İndirme bitince seed durumu history'ye yansır (peers/ul_speed).
 - `stop_seed(task_id/url)` torrent+file'ı temizler, başka ref yoksa.
 - Şifre migration: mevcut qBittorrent kurulumunda regression yok (fallback path).
+
+---
+
+## Parite Denetimi 2026-08-15 — Ek Maddeler
+
+### Madde A: Seed yaşam döngüsü hâlâ YOK (❌ / ⚠️ KISMİ — parity denetimi teyidi)
+
+- Python: `qbittorrent_backend.py:1684` `_promote_active_download_to_seed`, `:1450`
+  `_seed_status_worker`, `:1440` `has_active_seed`, `:1481` `stop_seed`.
+- Rust: `manager-torrent/src/lib.rs:129-208` indirip `link_or_copy` eder; **seed takibi / status
+  worker / `stop_seed` yaşam döngüsü YOK**.
+- Bu TASK'ın asıl kapsamı zaten buydu; parity denetimiyle teyit edildi (dosya:satır kanıtlandı).
+- Bağımlılık: `TASK-002-gap-16` (dosya seçimi) ve `TASK-002-gap-8` (izolasyon) ile
+  `manager-torrent/src/lib.rs` paylaşımı — sıralı ele alınmalı.

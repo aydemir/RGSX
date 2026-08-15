@@ -34,3 +34,23 @@ HTTP path'inde de (`H12`) aynı mantık Python'da kalır.
 - BIOS/PS3 redump torrent: indirme sonrası otomatik extract gerçekleşir, history "Extracting"→tamam.
 - `is_zip_non_supported` ayarı parity.
 - Extract hatası → FAILED_PERMANENT (state.rs transition zaten var).
+
+---
+
+## Parite Denetimi 2026-08-15 — Ek Maddeler
+
+### Madde A: `auto_extract` ayarı Rust'ta persist EDİLMİYOR (❌)
+
+- Python: `ports/RGSX/rgsx_settings.py:722` `auto_extract` ayarı; `queue.py` `get_auto_extract()` ile okunur.
+- Rust: `manager-core/src/settings.rs:228,237` `normalize_transient`/`save()` içinde `auto_extract`
+  alanı **açıkça silinir**; settings şemasında persist edilmez. Native modda arşiv açma davranışı
+  ayardan bağımsız kalır.
+- Bağımlılık: yok. Bu TASK'ın extract mantığı ile aynı nokta.
+
+### Madde B: Bozuk arşiv bütünlük testi eksik (⚠️ KISMİ)
+
+- Python: `ports/RGSX/utils/extract.py:106,400,1213` `zipfile.BadZipFile` yakalanır, çıkarma öncesi
+  bütünlük testi yapılır.
+- Rust: `manager-download/src/http/mod.rs:397-399` yalnız imza guard'ı (`InvalidArchive`); gerçek
+  çıkarma / bütünlük testi YOK (extract Rust'ta henüz yok).
+- Bu TASK'ın extract implementasyonu kapsamına FOLD edildi.
