@@ -3,6 +3,11 @@
 - **id:** TASK-002-gap-22
 - **title:** WebUI Accessibility (a11y css + font_scale + toggle)
 - **status:** todo
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ❌ **Hâlâ YOK.** `DEFAULT_SETTINGS.accessibility: false` ama Settings'te toggle/slider YOK;
+  `font_scale` alanı YOK; `accessibility.css` / ARIA live region YOK.
+- Sonuç: başlanmadı, `todo` korunur.
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both

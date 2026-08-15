@@ -3,6 +3,11 @@
 - **id:** TASK-002-gap-19
 - **title:** WebUI Support / redaction ZIP UI (🆘 butonu)
 - **status:** todo
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ❌ **Hâlâ YOK.** Yeni App.vue'da 🆘 butonu / `/api/support` çağrısı yok (header ve tabs'da yok).
+- Backend mevcut: `manager-http/src/lib.rs:63` `/api/support`. UI eksik.
+- Sonuç: başlanmadı, `todo` korunur.
 - **priority:** P0
 - **created:** 2026-08-15
 - **environment:** both

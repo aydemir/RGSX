@@ -2,7 +2,17 @@
 
 - **id:** TASK-002-gap-25
 - **title:** WebUI Misc P2 (update-cache butonu, i18n tam entegrasyon, renk paleti hizası, SSE kontrat)
-- **status:** todo
+- **status:** partial
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ⚠️ **KISMEN.** SSE kontratı zaten ✅ (önceki tur, bu alt-madde TAMAM).
+- App.vue b6c37d8'de:
+  - (a) Update Cache butonu / `/api/update-cache` çağrısı **YOK** (backend `lib.rs:54` var).
+  - (b) i18n: `tt()` + `STRINGS` fallback + `/api/translations` (`dataLang`) var, ama Python
+    `data-translate` sunucu bind'i **YOK**.
+  - (c) Renkler hâlâ Python hex otoritesinden sapıyor (`.st-downloaded #66ff66`, `.dlall #2f8f46`,
+    `.danger #6e2b2b`, `status #58a6ff`, vb. — `#28a745/#dc3545/#ffc107/#17a2b8/#007bff` değil).
+- Sonuç: update-cache, i18n server-bind, renk hizası hâlâ eksik.
 - **priority:** P2
 - **created:** 2026-08-15
 - **environment:** both

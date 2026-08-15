@@ -2,7 +2,14 @@
 
 - **id:** TASK-002-gap-20
 - **title:** WebUI canlı Downloads sekmesi (SSE progress view)
-- **status:** todo
+- **status:** done
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ✅ **TAMAM (queue tab olarak teslim).** QUEUE tab: `queueItems = snapshot.queue`, `queuePct`
+  (canlı `%`, `progress[item.url]`), `queueSpeed` (MB/s), `pauseAll`/`resumeAll`/`cancelDownload`/
+  `clearQueue`. `connectSSE` `progress` handler'ı `Object.assign(progress, …)` ile canlı günceller;
+  Python 3s poll yerine SSE ile eşdeğer canlı indirme görünümü sağlandı.
+- Ayrı "Downloads" tab oluşturulmadı; işlevsel gereksinim (canlı %/hız) QUEUE tab ile karşılandı.
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both

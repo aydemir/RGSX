@@ -2,7 +2,16 @@
 
 - **id:** TASK-002-gap-24
 - **title:** WebUI Region-priority modal (One ROM Per Game)
-- **status:** todo
+- **status:** partial
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ⚠️ **KISMEN.** Region filtreleme TAM: `REGIONS`, `REGION_PRIORITY`, `regionFilters`
+  (include/exclude), `hideDownloaded`, `hideNonRelease`, `regexMode`, `oneRomPerGame`, `sortMode`,
+  `getRegions`/`regionPriority`/`getBaseName`/`filteredGames`, `cycleRegion`/`resetFilters`/
+  `saveFilters` + `/api/save_filters` (`loadFiltersFromSettings`). One ROM Per Game çalışır.
+- EKSİK: priority-reorder **modalı YOK** — `REGION_PRIORITY` hardcoded
+  (`['USA','Canada','World','Europe','Japan','Other']`), kullanıcı sıralama değiştiremez.
+- Sonuç: filtreleme tam, reorder modalı ayrı iş olarak kaldı.
 - **priority:** P2
 - **created:** 2026-08-15
 - **environment:** both

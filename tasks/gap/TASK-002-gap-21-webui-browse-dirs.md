@@ -3,6 +3,11 @@
 - **id:** TASK-002-gap-21
 - **title:** WebUI Browse-directories UI (Roms klasörü seçici)
 - **status:** todo
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ❌ **Hâlâ YOK.** Yeni App.vue'da `/api/browse-directories` çağrısı / klasör seçici modalı yok.
+- Backend mevcut: `manager-http/src/lib.rs:49`. UI eksik.
+- Sonuç: başlanmadı, `todo` korunur.
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both

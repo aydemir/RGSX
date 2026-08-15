@@ -3,6 +3,13 @@
 - **id:** TASK-002-gap-18
 - **title:** WebUI qBittorrent bölümü (parola durum / regenerate / change / start)
 - **status:** todo
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ❌ **Hâlâ YOK.** Yeni App.vue tabs: platforms / downloaded / queue / history / settings. Settings
+  sekmesinde (`<template>` + `loadSettings`) qBittorrent parola durumu / regenerate / change-password /
+  start formu bulunmuyor.
+- Backend mevcut: `manager-http/src/lib.rs:68-71` `/api/qbittorrent/*`. UI eksik.
+- Sonuç: başlanmadı, `todo` korunur.
 - **priority:** P0
 - **created:** 2026-08-15
 - **environment:** both

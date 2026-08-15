@@ -2,7 +2,19 @@
 
 - **id:** TASK-002-gap-23
 - **title:** WebUI Settings şema uyumu (sources.mode, symlink, display.grid, accessibility)
-- **status:** todo
+- **status:** partial
+
+## Audit (2026-08-15, App.vue b6c37d8)
+- ⚠️ **KISMEN.** Settings şeması genişledi: `sources.mode` select ('rgsx'/'custom') + `custom_url`,
+  `symlink` checkbox, `display.grid`, `light_mode`, `max_simultaneous_downloads`, vb.
+- AMA gap-23'teki tip çelişkileri SÜRÜYOR:
+  1. `DEFAULT_SETTINGS.sources.mode = 'archive'` vs select opsiyonları `'rgsx'|'custom'`
+     → Python (`'archive'|'custom'`) ile uyumsuz.
+  2. `DEFAULT_SETTINGS.symlink: false` ama template `v-model="settings.symlink.enabled"`
+     → `undefined.enabled` hatası (bind kırık).
+  3. `DEFAULT_SETTINGS.display.grid: true` (bool) vs select string `"2x4"…"5x3"` → uyumsuz.
+  4. `accessibility: false` (bool) ama UI toggle yok (bkz. gap-22).
+- Renk otoritesi hizalanmadı (bkz. gap-25). Sonuç: şema genişledi ama uyumsuzluklar devam.
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both
