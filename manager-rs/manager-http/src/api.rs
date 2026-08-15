@@ -1394,6 +1394,7 @@ fn push_queued_history_entry(
 fn classify_bridge_error(err: &BridgeError) -> ErrorClass {
     match err {
         BridgeError::Timeout(_) => ErrorClass::Transient,
+        BridgeError::DiskSpace(_) | BridgeError::PermissionDenied(_) => ErrorClass::Permanent,
         _ => {
             let msg = err.to_string();
             retry::classify_error(&msg, None)
@@ -1410,7 +1411,8 @@ fn classify_download_error(err: &DownloadError) -> ErrorClass {
         | DownloadError::InvalidArchive
         | DownloadError::PartialArchiveRejected(_)
         | DownloadError::EmptyResponse(_)
-        | DownloadError::InsufficientDiskSpace(_) => ErrorClass::Permanent,
+        | DownloadError::InsufficientDiskSpace(_)
+        | DownloadError::PermissionDenied(_) => ErrorClass::Permanent,
         DownloadError::Client(_) | DownloadError::Http(_) => {
             retry::classify_error(&err.message(), None)
         }

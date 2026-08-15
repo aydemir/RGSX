@@ -17,6 +17,7 @@ percent-encoding = "2"
 bytes = "1"
 regex.workspace = true
 url.workspace = true
+manager-core = { workspace = true }
 
 [dev-dependencies]
 hyper = { version = "1", features = ["server", "http1"] }

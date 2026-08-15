@@ -1739,8 +1739,10 @@ dependencies = [
 name = "manager-core"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
+ "sysinfo",
 ]
 
 [[package]]
@@ -1753,6 +1755,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "manager-core",
  "percent-encoding",
  "regex",
  "reqwest",
@@ -1770,6 +1773,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "chrono",
  "futures-util",
  "http-body-util",
  "manager-bridge",
@@ -1809,6 +1813,7 @@ dependencies = [
  "async-trait",
  "librqbit",
  "manager-bridge",
+ "manager-core",
  "serde",
  "serde_json",
  "tokio",

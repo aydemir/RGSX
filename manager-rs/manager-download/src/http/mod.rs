@@ -54,6 +54,8 @@ pub enum DownloadError {
     EmptyResponse(String),
     #[error("disk alanı yetersiz: {0}")]
     InsufficientDiskSpace(String),
+    #[error("yazma izni yok: {0}")]
+    PermissionDenied(String),
     #[error("indirme iptal edildi")]
     Canceled,
     #[error("istemci hatası: {0}")]
@@ -229,6 +231,23 @@ impl HttpDownloader {
 
     /// Async indirme — retry döngüsü (4b) + `.part` stream + guards + finalize.
     pub async fn download_async(&self, req: &DownloadRequest) -> Result<PathBuf, DownloadError> {
+        // Gap-5 (A+B): indirme başı disk alanı + yazılabilirlik ön-kontrolü.
+        // QueryFailed → atla (devam et), diğerleri anlamlı hata (Retry'a gitmez, bakınız
+        // `classify_download_error`).
+        let dest_dir = req.dest_path.parent().unwrap_or(&req.dest_path);
+        match manager_core::disk::precheck_destination(dest_dir, req.known_total_size) {
+            Ok(()) => {}
+            Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
+            Err(manager_core::disk::DiskError::PermissionDenied(m)) => {
+                return Err(DownloadError::PermissionDenied(m))
+            }
+            Err(manager_core::disk::DiskError::InsufficientSpace { free, required }) => {
+                return Err(DownloadError::InsufficientDiskSpace(format!(
+                    "gerekli {required} bayt, mevcut {free} bayt"
+                )))
+            }
+        }
+
         let cancel = self.cancel();
         let resume = self::stream::resume_offset(&req.dest_path);
         let base_backoff = self.base_backoff.as_secs_f64();

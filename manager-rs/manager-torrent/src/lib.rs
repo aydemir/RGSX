@@ -134,6 +134,24 @@ impl LibrqbitEngine {
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         let handle = self.add_torrent(source).await?;
+
+        // Gap-5 (A+B): indirme başı disk alanı + yazılabilirlik ön-kontrolü.
+        // Boyutu add_torrent sonrası biliyoruz (Python H8 parity). QueryFailed → atla.
+        let dest_dir = dest_path.parent().unwrap_or(dest_path);
+        let required = handle.stats().total_bytes;
+        match manager_core::disk::precheck_destination(dest_dir, required) {
+            Ok(()) => {}
+            Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
+            Err(manager_core::disk::DiskError::PermissionDenied(m)) => {
+                return Err(BridgeError::PermissionDenied(m))
+            }
+            Err(manager_core::disk::DiskError::InsufficientSpace { free, required }) => {
+                return Err(BridgeError::DiskSpace(format!(
+                    "gerekli {required} bayt, mevcut {free} bayt"
+                )))
+            }
+        }
+
         if let Some(id) = &task_id {
             self.active_handles.write().await.insert(id.clone(), handle.clone());
         }

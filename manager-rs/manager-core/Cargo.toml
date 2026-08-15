@@ -9,3 +9,4 @@ description = "Platform-bağımsız state machine: enum + match, contract tipler
 serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
+sysinfo = "0.30"

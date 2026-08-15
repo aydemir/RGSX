@@ -60,6 +60,10 @@ pub enum BridgeError {
     Protocol(String),
     /// Yanıt zaman aşımı (child cevap vermedi).
     Timeout(String),
+    /// Yetersiz disk alanı (indirme öncesi ön-kontrol).
+    DiskSpace(String),
+    /// Hedef dizine yazma izni yok (indirme öncesi ön-kontrol).
+    PermissionDenied(String),
 }
 
 impl std::fmt::Display for BridgeError {
@@ -70,6 +74,8 @@ impl std::fmt::Display for BridgeError {
             BridgeError::Rpc { code, message } => write!(f, "bridge rpc error {code}: {message}"),
             BridgeError::Protocol(m) => write!(f, "bridge protocol: {m}"),
             BridgeError::Timeout(m) => write!(f, "bridge timeout: {m}"),
+            BridgeError::DiskSpace(m) => write!(f, "bridge disk space: {m}"),
+            BridgeError::PermissionDenied(m) => write!(f, "bridge permission denied: {m}"),
         }
     }
 }
