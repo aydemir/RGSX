@@ -4,6 +4,7 @@
 
 pub mod contract;
 pub mod retry;
+pub mod secrets;
 pub mod state;
 pub mod watchdog;
 pub mod settings;

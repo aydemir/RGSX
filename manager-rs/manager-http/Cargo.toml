@@ -28,3 +28,4 @@ http-body-util = "0.1"
 async-trait.workspace = true
 manager-torrent = { path = "../manager-torrent" }
 tempfile = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }

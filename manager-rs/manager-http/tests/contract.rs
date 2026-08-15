@@ -4,6 +4,7 @@
 //! birebir eşleşmesi. `tower::ServiceExt::oneshot` ile gerçek axum router'ı
 //! çağrılır (soket yok, Python mock handler yaklaşımı gibi).
 
+use std::io::Read;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -68,6 +69,33 @@ async fn call_response(
         serde_json::from_slice(&bytes).unwrap_or(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
     };
     (status, headers, value)
+}
+
+async fn call_post_raw(
+    app: Router,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
+    let body_bytes = body.to_string();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let headers: Vec<(String, String)> = res
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+        .collect();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (status, headers, bytes)
 }
 
 fn has_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -1440,6 +1468,49 @@ async fn test_support_proxied_binary() {
         other => other.to_string().into_bytes(),
     };
     assert_eq!(bytes, b"ZIPDATA");
+}
+
+#[tokio::test]
+async fn test_support_redacted_offline() {
+    // TASK-002-gap-13: catalog-off modda üretilen ZIP, gizli alanları redakte etmeli.
+    let mut data = StateData::empty();
+    data.settings = json!({
+        "language": "tr",
+        "qbittorrent_webui_password": "s3cret!",
+        "sources": { "mode": "rgsx", "custom_url": "https://example.com", "api_key": "k123" }
+    });
+    let app = app_with(data);
+    let (status, headers, bytes) = call_post_raw(app, "/api/support", Value::Null).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        has_header(&headers, "content-type"),
+        Some("application/zip")
+    );
+    assert!(!bytes.is_empty(), "boş zip olmamalı");
+
+    // ZIP'i parse et, rgsx_settings.json içeriğini kontrol et.
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("geçerli zip olmalı");
+    let names: Vec<String> = zip.file_names().map(|n| n.to_string()).collect();
+    assert!(names.iter().any(|n| n == "rgsx_settings.json"));
+    assert!(names.iter().any(|n| n == "README.txt"));
+
+    let mut settings_text = String::new();
+    zip.by_name("rgsx_settings.json")
+        .expect("rgsx_settings.json bulunmalı")
+        .read_to_string(&mut settings_text)
+        .unwrap();
+    let parsed: Value = serde_json::from_str(&settings_text).expect("geçerli JSON olmalı");
+
+    assert_eq!(parsed["qbittorrent_webui_password"], json!("<redacted>"));
+    assert_eq!(parsed["sources"]["api_key"], json!("<redacted>"));
+    // hassas olmayanlar dokunulmaz.
+    assert_eq!(parsed["language"], json!("tr"));
+    assert_eq!(parsed["sources"]["mode"], json!("rgsx"));
+    assert_eq!(parsed["sources"]["custom_url"], json!("https://example.com"));
+    // ham şifre/key ZIP içinde görünmemeli.
+    assert!(!settings_text.contains("s3cret!"));
+    assert!(!settings_text.contains("k123"));
 }
 
 #[tokio::test]

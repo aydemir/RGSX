@@ -9,6 +9,7 @@
 //! - Başarı: `{"success": true, ...}` ; Hata: `{"success": false, "error": msg}`
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,6 +22,7 @@ use tokio::sync::Notify;
 
 use manager_core::contract;
 use manager_core::retry::{self, ErrorClass};
+use manager_core::secrets::redact_secrets;
 use manager_core::state::ManagerState;
 use manager_bridge::BridgeError;
 use manager_download::http::stream::CancelFlag;
@@ -815,7 +817,8 @@ pub async fn restart(State(state): State<AppState>) -> Response {
     ok(contract::ok(json!({ "message": "Redémarrage en cours..." })))
 }
 
-/// POST `/api/support` — Faz 10c/3/4: `catalog` varsa Python'a proxy (zip), yoksa boş placeholder.
+/// POST `/api/support` — Faz 10c/3/4: `catalog` varsa Python'a proxy (zip), yoksa
+/// saf-Rust modda gerçek redakteli support ZIP üretir (TASK-002-gap-13 / BELİRSİZ-2).
 pub async fn support(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok((bytes, ct)) = c.post_binary("/api/support", &body).await {
@@ -830,16 +833,72 @@ pub async fn support(State(state): State<AppState>, Json(body): Json<Value>) -> 
                 .into_response();
         }
     }
+    // catalog-off: gerçek redakteli support zip üret (boş placeholder değil).
+    let zip_bytes = build_support_zip(&state);
     (
-        StatusCode::OK,
         [
             ("Content-Type", "application/zip".to_string()),
             ("Access-Control-Allow-Origin", "*".to_string()),
             ("Content-Disposition", "attachment; filename=rgsx_support.zip".to_string()),
         ],
-        b"".as_slice(),
+        zip_bytes,
     )
         .into_response()
+}
+
+/// TASK-002-gap-13: catalog-off modda `support()` için redakteli ZIP üretir.
+///
+/// Python `utils/security.generate_support_zip` parity'si: `rgsx_settings.json`
+/// (redakte edilmiş), bilinen log dosyaları (ham), `README.txt`. Loglar yalnızca
+/// `RGSX_LOGS_FOLDER` set ise eklenir (best-effort); redaksiyon yalnızca settings'e uygulanır
+/// (Python ile aynı — loglar ham eklenir).
+fn build_support_zip(state: &AppState) -> Vec<u8> {
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // rgsx_settings.json — redakte edilmiş ayarlar (AppState.data.settings).
+    let settings_text = {
+        let redacted = redact_secrets(&state.read().settings);
+        serde_json::to_string_pretty(&redacted).unwrap_or_else(|_| "{}".to_string())
+    };
+
+    // README.txt içerik dosyası listesi.
+    let logs_dir = std::env::var("RGSX_LOGS_FOLDER").ok();
+    let mut included = vec!["rgsx_settings.json (redacted)".to_string()];
+    if logs_dir.is_some() {
+        included.push("RGSX.log (and related logs if present)".to_string());
+    }
+    included.push("README.txt".to_string());
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let readme = format!(
+        "RGSX Support Package\nGenerated: {now} (unix epoch seconds)\n\nIncluded Files:\n{}\n\nSensitive values (passwords, API keys, tokens) are redacted.\nDO NOT share this file publicly.\n",
+        included.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n")
+    );
+
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+
+    let _ = zip.start_file("rgsx_settings.json", opts);
+    let _ = zip.write_all(settings_text.as_bytes());
+
+    if let Some(ref dir) = logs_dir {
+        for name in ["RGSX.log", "rgsx_web.log", "rgsx_web_startup.log"] {
+            let path = std::path::Path::new(dir).join(name);
+            if let Ok(contents) = std::fs::read(&path) {
+                let _ = zip.start_file(name, opts);
+                let _ = zip.write_all(&contents);
+            }
+        }
+    }
+
+    let _ = zip.start_file("README.txt", opts);
+    let _ = zip.write_all(readme.as_bytes());
+
+    let cursor = zip.finish().unwrap_or_else(|_| std::io::Cursor::new(Vec::new()));
+    cursor.into_inner()
 }
 
 // ---------------------------------------------------------------------------
