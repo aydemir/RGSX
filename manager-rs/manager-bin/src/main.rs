@@ -20,6 +20,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
+
 use manager_bridge::{Bridge, BridgeConfig, TorrentBackend};
 use manager_core::state::ManagerState;
 use manager_http::{router, AppState, StateData};
@@ -245,12 +247,17 @@ async fn run() {
     };
 
     let events = manager_http::sse::channel();
+    // TASK-002-gap-1 (BELİRSİZ-2): global shutdown sinyali — retry döngülerinin
+    // `tokio::select!` ile dinlediği `AppState.shutdown` Notify'ı. Aynı Arc hem
+    // `AppState`'e hem tray Quit handler'ına geçer (iki ayrı instance OLMAZ).
+    let shutdown = Arc::new(Notify::new());
     let app = router(AppState {
         data: Arc::new(std::sync::RwLock::new(data)),
         events: events.clone(),
         bridge: bridge.clone(),
         static_root,
         catalog,
+        shutdown: shutdown.clone(),
     });
 
     // TASK-005-B — native SDL2/gilrs gamepad girdi yolu. `native-input` feature
@@ -284,7 +291,7 @@ async fn run() {
     let tray = setup_windows(port, &script);
 
     if let Some(tray) = tray {
-        run_with_tray(tray, port, bridge, app, listener).await;
+        run_with_tray(tray, port, bridge, app, listener, shutdown.clone()).await;
     } else {
         axum::serve(listener, app).await.unwrap();
     }
@@ -297,11 +304,14 @@ async fn run_with_tray(
     bridge: Option<Arc<dyn TorrentBackend>>,
     app: axum::Router,
     listener: tokio::net::TcpListener,
+    shutdown: Arc<Notify>,
 ) {
     let base = format!("http://localhost:{port}");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     // Tray eylemlerini izleyen task; Quit gelince shutdown sinyali verir.
+    // `shutdown_notify` = AppState.shutdown ile AYNI Arc (retry döngülerini keser).
+    let shutdown_notify = shutdown.clone();
     let tray_task = tokio::spawn(async move {
         loop {
             match tray.try_action() {
@@ -333,6 +343,9 @@ async fn run_with_tray(
                         }
                         TrayAction::Quit => {
                             tracing::info!("tray Exit — kapanıyor");
+                            // İki bağımsız sinyal: `shutdown_tx` axum'ın graceful
+                            // shutdown'ı; `shutdown_notify` aktif retry döngülerini keser.
+                            shutdown_notify.notify_one();
                             let _ = shutdown_tx.send(());
                             break;
                         }
