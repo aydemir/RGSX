@@ -24,19 +24,20 @@ use manager_bridge::{Bridge, BridgeConfig, TorrentBackend};
 use manager_core::state::ManagerState;
 use manager_http::{router, AppState, StateData};
 
+mod paths;
+
 fn resolve_script() -> String {
+    // gap-26: RGSX_MANAGER_SCRIPT artık resolve_paths() tarafından (exe'den türetilmiş)
+    // set edilir. Fallback: exe'yi içeren rgsx_dir'deki qbittorrent_backend.py (CWD-göreli DEĞİL).
     if let Ok(p) = std::env::var("RGSX_MANAGER_SCRIPT") {
         return p;
     }
-    // cargo run workdir = workspace kökü (manager-rs). Python tarafı bir üstte.
-    let fallback = std::path::Path::new("..")
-        .join("ports")
-        .join("RGSX")
-        .join("qbittorrent_backend.py");
-    fallback
-        .canonicalize()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| fallback.to_string_lossy().to_string())
+    let dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let fallback = dir.join("qbittorrent_backend.py");
+    fallback.to_string_lossy().to_string()
 }
 
 /// Torrent engine'ini `RGSX_TORRENT_ENGINE` env'ine göre kurar.
@@ -184,14 +185,26 @@ fn open_folder(path: &str) {
         .spawn();
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // gap-26 ZORUNLU SIRA: path-resolution TEK thread'de, tokio runtime BAŞLAMADAN ÖNCE.
+    // std::env::set_var thread-safe DEĞİL (Rust 1.80+ unsafe) — burada güvenli.
+    paths::resolve_paths();
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(run());
+}
+
+async fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
         .init();
 
     let port: u16 = {
-        let rust_webui = std::env::var("RGSX_RUST_WEBUI").map(|v| v == "1").unwrap_or(false);
+        // gap-27: saf-Rust varsayılan = true (port 5000). Flag yine env ile override edilebilir.
+        let rust_webui = std::env::var("RGSX_RUST_WEBUI").map(|v| v == "1").unwrap_or(true);
         let default = if rust_webui { 5000 } else { 5010 };
         std::env::var("RGSX_MANAGER_BIN_PORT")
             .ok()
@@ -207,23 +220,19 @@ async fn main() {
     data.manager_state = ManagerState::Running;
     // WebUI statik kökü: `RGSX_WEBUI_DIR` set ise onu kullan, yoksa bridge
     // script'inin yanındaki `static/` klasörü (varsa).
+    // gap-26: RGSX_WEBUI_DIR artık resolve_paths() tarafından türetilir (roms/ports/RGSX/webui).
     let static_root = std::env::var("RGSX_WEBUI_DIR")
         .ok()
         .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::path::Path::new(&script)
-                .parent()
-                .map(|p| p.join("static"))
-                .filter(|p| p.is_dir())
-        });
+        .map(std::path::PathBuf::from);
     // Faz 12c — native catalog: `RGSX_NATIVE_CATALOG=1` ise Python'sız local
     // dosyalardan üretir (systems_list.json, games/, languages/, images/). Komut
     // POST'ları için yine de Python'a proxy edebilir (`RGSX_PYTHON_MANAGER_URL`).
     // Aksi halde `RGSX_PYTHON_MANAGER_URL` set ise Python proxy (Faz 10c/3/2).
+    // gap-27: saf-Rust varsayılan = true (native catalog). Flag yine env ile override edilebilir.
     let native_catalog = std::env::var("RGSX_NATIVE_CATALOG")
         .map(|v| v == "1")
-        .unwrap_or(false);
+        .unwrap_or(true);
     let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> = if native_catalog {
         // Faz 12f: native katalog verisi (systems_list.json + games/) eksikse OTA'dan çek.
         manager_http::catalog_bootstrap::ensure_catalog_ready().await;

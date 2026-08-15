@@ -139,24 +139,14 @@ echo [%DATE% %TIME%] ========================================== >> "%LOG_FILE%"
 :: Configuration des chemins
 :: =============================================================================
 set "RUST_MANAGER_BIN=%ROOT_DIR%\roms\ports\RGSX\manager-bin.exe"
-set "RGSX_WEBUI_DIR=%ROOT_DIR%\roms\ports\RGSX\webui"
-:: Fallback (local dev / CI build yokken): repo kokundeki webui/dist'i kullan.
-if not exist "%RGSX_WEBUI_DIR%\index.html" (
-    if exist "%ROOT_DIR%\webui\dist\index.html" (
-        set "RGSX_WEBUI_DIR=%ROOT_DIR%\webui\dist"
-    )
-)
-set "RGSX_DATA_DIR=%ROOT_DIR%\saves\ports\rgsx"
-set "RGSX_LANGUAGES_FOLDER=%ROOT_DIR%\roms\ports\RGSX\languages"
-set "RGSX_DOWNLOADS_FOLDER=%ROOT_DIR%\saves\ports\rgsx\downloads"
-set "RGSX_LOGS_FOLDER=%ROOT_DIR%\saves\ports\rgsx\logs"
+:: Path env'leri artik manager-bin tarafindan current_exe()'den turetilir (gap-26) — burada set EDILMEZ.
 set "RGSX_MANAGER_PORT=5000"
 
 echo [%DATE% %TIME%] System info: >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   ROOT_DIR: %ROOT_DIR% >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   RUST_MANAGER_BIN: %RUST_MANAGER_BIN% >> "%LOG_FILE%"
-echo [%DATE% %TIME%]   RGSX_WEBUI_DIR: %RGSX_WEBUI_DIR% >> "%LOG_FILE%"
-echo [%DATE% %TIME%]   RGSX_DATA_DIR: %RGSX_DATA_DIR% >> "%LOG_FILE%"
+echo [%DATE% %TIME%]   RGSX_WEBUI_DIR: %ROOT_DIR%\roms\ports\RGSX\webui >> "%LOG_FILE%"
+echo [%DATE% %TIME%]   RGSX_DATA_DIR: %ROOT_DIR%\saves\ports\rgsx >> "%LOG_FILE%"
 echo [%DATE% %TIME%]   RGSX_MANAGER_PORT: %RGSX_MANAGER_PORT% >> "%LOG_FILE%"
 
 :: =============================================================================
@@ -175,11 +165,11 @@ if not exist "%RUST_MANAGER_BIN%" (
     echo [%DATE% %TIME%] ERROR: manager-bin.exe not found at %RUST_MANAGER_BIN% >> "%LOG_FILE%"
     goto :error
 )
-if not exist "%RGSX_WEBUI_DIR%\index.html" (
+if not exist "%ROOT_DIR%\roms\ports\RGSX\webui\index.html" (
     echo       %ESC%%YELLOW%^> Warning: WebUI SPA not deployed, placeholder UI will be served%ESC%%RESET%
-    echo [%DATE% %TIME%] WARN: WebUI index.html missing at %RGSX_WEBUI_DIR% >> "%LOG_FILE%"
+    echo [%DATE% %TIME%] WARN: WebUI index.html missing at %ROOT_DIR%\roms\ports\RGSX\webui >> "%LOG_FILE%"
 )
-if not exist "%RGSX_DATA_DIR%\systems_list.json" (
+if not exist "%ROOT_DIR%\saves\ports\rgsx\systems_list.json" (
     echo       %ESC%%YELLOW%^> Warning: native catalog data missing, catalog may be empty%ESC%%RESET%
     echo [%DATE% %TIME%] WARN: systems_list.json missing at %RGSX_DATA_DIR% >> "%LOG_FILE%"
 )
@@ -200,20 +190,9 @@ timeout /t 1 /nobreak >nul
 :: =============================================================================
 :: Environnement
 :: =============================================================================
-set "RGSX_ROOT=%ROOT_DIR%"
-set "RGSX_RUST_WEBUI=1"
-set "RGSX_MANAGER_BIN_PORT=%RGSX_MANAGER_PORT%"
-set "RGSX_NATIVE_CATALOG=1"
-set "RGSX_TORRENT_ENGINE=librqbit"
-set "RGSX_NO_AUTOSTART=1"
-set "RGSX_WEBUI_DIR=%RGSX_WEBUI_DIR%"
-set "RGSX_DATA_DIR=%RGSX_DATA_DIR%"
-set "RGSX_LANGUAGES_FOLDER=%RGSX_LANGUAGES_FOLDER%"
-set "RGSX_DOWNLOADS_FOLDER=%RGSX_DOWNLOADS_FOLDER%"
-set "RGSX_LOGS_FOLDER=%RGSX_LOGS_FOLDER%"
+:: Flag/path env'leri artik manager-bin tarafindan (gap-26/27) turetilir/varsayilanlanir — burada set EDILMEZ.
+:: Yalnizca runtime niyet flag'lari (.bat'ta) kalir:
 if defined DISPLAY_NUM set "RGSX_DISPLAY=!DISPLAY_NUM!"
-if not exist "%RGSX_DOWNLOADS_FOLDER%" mkdir "%RGSX_DOWNLOADS_FOLDER%" >nul 2>&1
-if not exist "%RGSX_LOGS_FOLDER%" mkdir "%RGSX_LOGS_FOLDER%" >nul 2>&1
 
 :: TVUI kiosk: varsayilan olarak acik; --windowed / --no-tvui ile kapatilir
 set "TVUI_MODE="
@@ -223,10 +202,7 @@ if not defined WINDOWED_MODE if not defined NO_TVUI (
 )
 
 echo [%DATE% %TIME%] Environment: >> "%LOG_FILE%"
-echo [%DATE% %TIME%]   RGSX_ROOT=%RGSX_ROOT% >> "%LOG_FILE%"
-echo [%DATE% %TIME%]   RGSX_RUST_WEBUI=1, RGSX_MANAGER_BIN_PORT=%RGSX_MANAGER_PORT% >> "%LOG_FILE%"
-echo [%DATE% %TIME%]   RGSX_NATIVE_CATALOG=1, RGSX_TORRENT_ENGINE=librqbit >> "%LOG_FILE%"
-echo [%DATE% %TIME%]   RGSX_NO_AUTOSTART=1 >> "%LOG_FILE%"
+echo [%DATE% %TIME%]   (path/flag env'leri manager-bin tarafindan turetilir - gap-26/27) >> "%LOG_FILE%"
 if defined RGSX_TVUI echo [%DATE% %TIME%]   RGSX_TVUI=1 >> "%LOG_FILE%"
 
 :: =============================================================================

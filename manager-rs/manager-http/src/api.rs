@@ -412,7 +412,8 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     // Faz 12e: native DDL çözümü + doğrudan HTTP indirme. Yalnız `RGSX_NATIVE_DOWNLOAD=1`
     // ile; debrid yapılandırılmamışsa `DownloadManager` DirectResolver'a düşer ve düz
     // HTTP kaynak doğrudan indirilir. Kapalıyken mevcut Python proxy korunur.
-    if std::env::var("RGSX_NATIVE_DOWNLOAD").map(|v| v == "1").unwrap_or(false) {
+    // gap-27: saf-Rust varsayılan = true (native DDL açık). Flag yine env ile override edilebilir.
+    if std::env::var("RGSX_NATIVE_DOWNLOAD").map(|v| v == "1").unwrap_or(true) {
         if let Some(direct) = direct_url {
             if !is_torrent_url(direct) {
                 if let Ok(manager_download::DownloadSource::DirectHttp(resolved)) =
