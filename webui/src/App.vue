@@ -2,6 +2,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { connectSSE, apiGet, apiPost } from './api.js'
 import { t as _t, getLocale, setLocale, STRINGS } from './i18n.js'
+import QBittorrent from './components/QBittorrent.vue'
 
 const connected = ref(false)
 const lastEvent = ref('')
@@ -633,6 +634,7 @@ async function switchTab(t) {
           <label>Sembolik bağ (symlink)</label>
           <input type="checkbox" v-model="settings.symlink.enabled" @change="saveSettings()" />
         </div>
+        <QBittorrent />
         <p v-if="saveMsg" class="saved">{{ saveMsg }}</p>
       </template>
       <p v-else class="muted">{{ tt('no_settings') }}</p>
