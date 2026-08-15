@@ -51,16 +51,17 @@ const DEFAULT_SETTINGS = {
   max_simultaneous_downloads: 3,
   sources: { mode: 'rgsx', custom_url: '' },
   symlink: { enabled: false, target_directory: '' },
-  accessibility: false,
+  accessibility: { font_scale: 1.0, footer_font_scale: 1.0 },
   roms_folder: ''
 }
 function normalizeSettings(s) {
   s = s || {}
   const d = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
-  Object.keys(d).forEach(k => { if (k !== 'display' && k !== 'sources' && k !== 'symlink' && s[k] !== undefined) d[k] = s[k] })
+  Object.keys(d).forEach(k => { if (k !== 'display' && k !== 'sources' && k !== 'symlink' && k !== 'accessibility' && s[k] !== undefined) d[k] = s[k] })
   d.display = Object.assign({}, DEFAULT_SETTINGS.display, s.display || {})
   d.sources = Object.assign({}, DEFAULT_SETTINGS.sources, s.sources || {})
   d.symlink = Object.assign({}, DEFAULT_SETTINGS.symlink, s.symlink || {})
+  d.accessibility = Object.assign({}, DEFAULT_SETTINGS.accessibility, s.accessibility || {})
   return d
 }
 const settings = ref(normalizeSettings(null))
@@ -416,7 +417,7 @@ async function switchTab(t) {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :style="{ '--font-scale': settings.accessibility ? settings.accessibility.font_scale : 1 }">
     <header>
       <h1>{{ tt('app_title') }}</h1>
       <span class="status" :class="{ on: connected }">{{ connected ? tt('status_connected') : tt('status_connecting') }}</span>
@@ -647,6 +648,10 @@ async function switchTab(t) {
           <input type="checkbox" v-model="settings.symlink.enabled" @change="saveSettings()" />
         </div>
         <div class="field">
+          <label>🔤 {{ tt('font_scale') }} ({{ settings.accessibility.font_scale }})</label>
+          <input type="range" min="0.5" max="2.0" step="0.1" v-model.number="settings.accessibility.font_scale" @change="saveSettings()" />
+        </div>
+        <div class="field">
           <label>{{ tt('roms_folder') }}</label>
           <div class="browse-row">
             <input type="text" v-model="settings.roms_folder" @change="saveSettings()" placeholder="varsayılan" />
@@ -661,6 +666,7 @@ async function switchTab(t) {
     </section>
 
     <footer class="muted">{{ tt('last_event') }}: {{ lastEvent }}</footer>
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ lastEvent }}</div>
   </div>
 </template>
 
@@ -759,4 +765,33 @@ small { color: #8b949e; font-weight: normal; }
 .browse-row input { flex: 1; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
 .browse-btn { background: #007bff; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .browse-btn:hover { background: #0069d9; }
+
+/* ===== Accessibility (mirrors Python static/css/accessibility.css) ===== */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+:focus-visible { outline: 3px solid #007bff; outline-offset: 2px; border-radius: 4px; }
+button, a[role="button"], input[type="button"], input[type="submit"] {
+  cursor: pointer; font-family: inherit; min-height: 44px; min-width: 44px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: #007bff; outline: none; }
+@media (prefers-contrast: more) {
+  button, input, select, textarea { border: 3px solid currentColor; font-weight: bold; }
+  :focus-visible { outline-width: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+/* Font scale — driven by --font-scale (settings.accessibility.font_scale) */
+.app { font-size: calc(14px * var(--font-scale, 1)); }
+header h1 { font-size: calc(20px * var(--font-scale, 1)); }
+.panel h2 { font-size: calc(15px * var(--font-scale, 1)); }
+h3 { font-size: calc(13px * var(--font-scale, 1)); }
+.name { font-size: calc(13px * var(--font-scale, 1)); }
+.field label { font-size: calc(12px * var(--font-scale, 1)); }
+.tabs button { font-size: calc(13px * var(--font-scale, 1)); }
+.muted, .err { font-size: calc(13px * var(--font-scale, 1)); }
+.searchbar input, .searchbar button { font-size: calc(13px * var(--font-scale, 1)); }
+.games li .size { font-size: calc(12px * var(--font-scale, 1)); }
 </style>

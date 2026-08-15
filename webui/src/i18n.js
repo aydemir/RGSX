@@ -62,6 +62,7 @@ const STRINGS = {
     browse_empty: "Alt klasör yok",
     browse_error: "Dizin listelenemedi: ",
     browse_restart_note: "ROM klasörü ayarlandı (uygulamak için yeniden başlatma gerekebilir)",
+    font_scale: "Yazı tipi ölçeği",
   },
   en: {
     app_title: "RGSX Manager",
@@ -123,6 +124,7 @@ const STRINGS = {
     browse_empty: "No subfolders",
     browse_error: "Could not list directory: ",
     browse_restart_note: "ROMs folder set (restart may be required to apply)",
+    font_scale: "Font scale",
   },
 };
 
