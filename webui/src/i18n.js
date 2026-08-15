@@ -46,6 +46,12 @@ const STRINGS = {
     search_failed: "Arama başarısız",
     game_list_failed: "Oyun listesi alınamadı",
     refresh_note: "refresh gerektirmez",
+    support: "Destek",
+    support_generating: "Destek paketi oluşturuluyor…",
+    support_title: "Destek Paketi",
+    support_message: "Destek ZIP indirildi. Lütfen bu dosyayı bir GitHub issue'su veya destek talebiyle paylaşın.",
+    support_error: "Destek paketi oluşturulamadı: ",
+    support_empty: "Destek paketi boş döndü. Sunucu bu modda tanılama verisi üretmiyor olabilir (RGSX_NATIVE_CATALOG=0 / librqbit modu).",
   },
   en: {
     app_title: "RGSX Manager",
@@ -91,6 +97,12 @@ const STRINGS = {
     search_failed: "Search failed",
     game_list_failed: "Game list could not be fetched",
     refresh_note: "no refresh needed",
+    support: "Support",
+    support_generating: "Generating support package…",
+    support_title: "Support Package",
+    support_message: "Support ZIP downloaded. Please share this file with a GitHub issue or support request.",
+    support_error: "Could not generate support package: ",
+    support_empty: "Support package came back empty. The server may not produce diagnostics in this mode (RGSX_NATIVE_CATALOG=0 / librqbit mode).",
   },
 };
 

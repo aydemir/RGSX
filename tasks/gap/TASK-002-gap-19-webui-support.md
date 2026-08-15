@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-19
 - **title:** WebUI Support / redaction ZIP UI (🆘 butonu)
-- **status:** todo
+- **status:** done
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ❌ **Hâlâ YOK.** Yeni App.vue'da 🆘 butonu / `/api/support` çağrısı yok (header ve tabs'da yok).
@@ -47,3 +47,10 @@ Renk otoritesi Python hex'leri (bkz. gap-18 Karar).
 
 - 🆘 butonu → `/api/support` çağrılır, redacted zip indirilir.
 - Hassas değerler (parola/API key/token) maskelenir — `gap-13` ile aynı kabul kriteri.
+
+## Done (2026-08-15, commit feat(webui): support/redaction ZIP butonu)
+- `webui/src/components/Support.vue` (yeni) — 🆘 butonu: `POST /api/support` (Content-Type application/json, gövde `{}`), yanıt blob -> `<a download>` ile Content-Disposition filename'ından indirir (Python `app.js:2553` davranışı birebir). Yükleniyor, hata (kırmızı #dc3545), boş-yanıt uyarısı (sarı #ffc107), başarı (#28a745) ayrık; sessiz başarısızlık yok (P0).
+- `webui/src/App.vue` — header'a `<Support />` bağlandı (Python `handlers_ui.py:288/300` konumuna sadık).
+- `webui/src/i18n.js` — tr/en support dizgeleri eklendi.
+- **Redaction (P0) doğrulaması:** Rust `api::support` (`api.rs:791`) redaction'ı kendisi yapmaz; `state.catalog` varsa Python `_api_support`'a proxy eder, orada `utils._redact_settings_file_text` ile `rgsx_settings.json` maskelenir. Redaction sunucu tarafında, frontend yalnız indirmeyi tetikler — atlanmadı.
+- **Mod notu:** librqbit / `RGSX_NATIVE_CATALOG=0` modunda backend `state.catalog` None -> boş ZIP (200, gövde boş) döner; frontend boş-yanıt uyarısıyla bildirir (sessiz kalmaz).

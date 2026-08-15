@@ -3,6 +3,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { connectSSE, apiGet, apiPost } from './api.js'
 import { t as _t, getLocale, setLocale, STRINGS } from './i18n.js'
 import QBittorrent from './components/QBittorrent.vue'
+import Support from './components/Support.vue'
 
 const connected = ref(false)
 const lastEvent = ref('')
@@ -411,6 +412,7 @@ async function switchTab(t) {
       <span class="status" :class="{ on: connected }">{{ connected ? tt('status_connected') : tt('status_connecting') }}</span>
       <span class="active" v-if="snapshot.active">● aktif indirme</span>
       <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" title="Ayarlar">⚙</button>
+      <Support />
     </header>
 
     <!-- Global search -->
