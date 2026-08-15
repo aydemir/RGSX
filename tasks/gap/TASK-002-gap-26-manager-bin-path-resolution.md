@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-26
 - **title:** manager-bin path-resolution (current_exe türetme + env override fallback)
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both
@@ -106,3 +106,21 @@ gerçek RetroBat kurulumu çalıştırılamadığından `gap-28` ŞİMDİLİK A�
 - `cargo build` + `RUST_LOG=info` ile `resolve_paths` logları türetilen yolları doğru basar.
 - Anchor tespiti zorlanmış senaryoda (yanlış exe konumu / taşınmış kurulum) `tracing::warn!` ile
   `path anchor (roms/ports/RGSX) bulunamadı, fallback (.parent×3) kullanılıyor: {path}` log'u basılır.
+
+## Done (2026-08-15, commit feat(manager-bin): path-resolution ...)
+- `manager-bin/src/paths.rs` (yeni) — `RgsxPaths` + `resolve_paths()`: anchor tabanlı `root` bulucu
+  (`roms/ports/RGSX` imzası; yoksa 3×`.parent()` fallback + `tracing::warn!`), env-override öncelikli
+  türetme, `apply()` (`unsafe set_var`, yalnız override yoksa). `RGSX_ROOT` set EDİLMEDİ (Rust'ta okunmuyor).
+- `manager-bin/src/main.rs` — `mod paths;` + senkron `fn main()` → manuel tokio runtime; `paths::resolve_paths()`
+  EN BAŞTA (runtime öncesi, tek thread). `resolve_script()` rgsx_dir'den türetir (CWD-göreli fallback kaldırıldı).
+  `static_root` `RGSX_WEBUI_DIR`'den (artık türetilmiş).
+- `windows/RGSX rust.bat` — path/flag env set'leri + mkdir düşürüldü; `RUST_MANAGER_BIN` (launcher'ın kendi
+  exe yolu, child'a env geçmez) ve runtime flag'ları (`RGSX_DISPLAY`/`RGSX_TVUI`) korundu; doğrulama/log
+  satırları ROOT_DIR'a göre güncellendi (env'siz de anlamlı kalır).
+- `cargo build -p manager-bin` temiz; launcher'sız binary port 5000'de ayağa kalktı, native catalog/download
+  default'ları aktif (OTA bootstrap girdi); `RGSX_WEBUI_DIR` override onurlandırıldı (GET / → override içeriği).
+- Geçici anchor-doğrulama: anchor vs legacy(.bat `SCRIPT_DIR\..\..`) karşılaştırması eklendi; normal
+  yerleşimde eşit (debug), yalnız relocate'de uyarı. Çift-roms (gap-28) bu ortamda doğrulanamadı → açılmadı.
+- Not: `manager-bin` lib.rs'siz binary crate → TASK'taki `manager_bin::resolve_paths()` yerine `mod paths;`
+  + `paths::resolve_paths()` kullanıldı (dosya `paths.rs` korundu). Build hedefi `C:/Users/lv/RGSX/rust-target`
+  (`.cargo/config.toml` `target-dir`), `manager-rs/target` DEĞİL.

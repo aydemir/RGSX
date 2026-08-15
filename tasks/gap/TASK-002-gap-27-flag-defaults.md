@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-27
 - **title:** manager-bin flag defaults (saf-Rust varsayılanları + bağımsızlık korunsun)
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both
@@ -86,3 +86,13 @@ eksik dosya gibi dolaylı belirtilerle geç ortaya çıkar.
 - `.bat` yalnız runtime flag'ları set eder; path/catalog/torrent env'leri artık yok.
 - `RGSX_NATIVE_CATALOG` default `true` + anchor-fallback `tracing::warn!` (gap-26) birlikte: yanlış
   dizin tespiti log'suz kalmaz; boş katalog/eksik dosya gibi geç belirtiler engellenir.
+
+## Done (2026-08-15, commit feat(manager-bin): ...)
+- `RGSX_RUST_WEBUI` default `true` (port 5000), `RGSX_NATIVE_CATALOG` default `true`, `RGSX_NATIVE_DOWNLOAD`
+  default `true` (`manager-http/src/api.rs:415`), `RGSX_TORRENT_ENGINE` değişmez (librqbit),
+  `RGSX_NO_AUTOSTART` default `false` (değişmez, yorum güncellendi). Hepsi env ile override edilebilir.
+- Flag'ler BAĞIMSIZ (tek `RGSX_STANDALONE`'a indirgenMEDİ) — hibrit mod (`RGSX_NATIVE_CATALOG=1` +
+  `RGSX_TORRENT_ENGINE=python`) korunur.
+- `windows/RGSX rust.bat` flag set satırları düşürüldü (varsayılanlar artık manager-bin içinde).
+- Doğrulama: launcher'sız binary port 5000, native catalog aktif (OTA bootstrap girdi), native download açık;
+  `RGSX_NATIVE_CATALOG=0` ile Python proxy yoluna düşer (override çalışır).
