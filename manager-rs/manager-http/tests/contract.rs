@@ -1514,6 +1514,37 @@ async fn test_support_redacted_offline() {
 }
 
 #[tokio::test]
+async fn test_clear_history_preserves_active() {
+    // TASK-002-gap-10 (B): clear_history aktif indirmeyi korumalı, biteni silmeli.
+    let mut data = StateData::empty();
+    data.history = json!([
+        { "game_name": "Active", "status": "Downloading", "url": "http://x/active", "task_id": "t-active" },
+        { "game_name": "Done", "status": "Download_OK", "url": "http://x/done", "task_id": "t-done" }
+    ])
+    .as_array()
+    .unwrap()
+    .clone();
+    data.queue = json!([
+        { "url": "http://x/active", "task_id": "t-active", "status": "Queued" }
+    ])
+    .as_array()
+    .unwrap()
+    .clone();
+
+    // AppState'i clone tutup clear sonrası state'i doğrudan inceleyelim
+    // (call_post Router'ı tüketir; Arc aynı kaldığı için `st` ile okuruz).
+    let st = AppState::with_data(data, manager_http::sse::channel());
+    let app = router(st.clone());
+    let (status, _, _) = call_post(app, "/api/clear-history", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let remaining = st.read().history.clone();
+    assert_eq!(remaining.len(), 1, "yalnızca aktif entry kalmalı");
+    assert_eq!(remaining[0]["game_name"], json!("Active"));
+    assert_eq!(remaining[0]["status"], json!("Downloading"));
+}
+
+#[tokio::test]
 async fn test_download_batch_proxied() {
     let (status, _, body) = call_post(app_with_catalog(), "/api/download/batch", json!({"games": []})).await;
     assert_eq!(status, StatusCode::OK);

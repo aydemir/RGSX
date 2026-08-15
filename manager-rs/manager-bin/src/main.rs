@@ -220,6 +220,24 @@ async fn run() {
 
     let mut data = StateData::empty();
     data.manager_state = ManagerState::Running;
+    // TASK-002-gap-10 (A): history.json diske kalıcılaştır. Varsayılan yol
+    // `RGSX_DATA_DIR/history.json` (paths.rs `RGSX_DATA_DIR`'i türetir); `RGSX_HISTORY_PATH`
+    // set ise ona öncelik ver. Startup'ta mevcut history'yi yükle (geçersiz entry filtreli).
+    let history_path = std::env::var("RGSX_HISTORY_PATH")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var("RGSX_DATA_DIR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|d| std::path::PathBuf::from(d).join("history.json"))
+        });
+    if let Some(ref hp) = history_path {
+        data.history = manager_http::persist::load_history(hp);
+        tracing::info!("history yüklendi: {} entry ({}", data.history.len(), hp.display());
+    }
+    data.history_path = history_path;
     // WebUI statik kökü: `RGSX_WEBUI_DIR` set ise onu kullan, yoksa bridge
     // script'inin yanındaki `static/` klasörü (varsa).
     // gap-26: RGSX_WEBUI_DIR artık resolve_paths() tarafından türetilir (roms/ports/RGSX/webui).

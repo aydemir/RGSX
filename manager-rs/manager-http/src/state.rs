@@ -30,6 +30,9 @@ pub struct StateData {
     pub progress: serde_json::Value,
     /// `config.downloaded_games` — tamamlanan oyunlar.
     pub downloaded: serde_json::Value,
+    /// TASK-002-gap-10 (A): history.json diske yazılacağı yol. `None` ise
+    /// kalıcılık kapalı (test modu / env set değil). Startup'ta `main.rs` tarafından set edilir.
+    pub history_path: Option<std::path::PathBuf>,
     /// `config.download_active` — aktif indirme bayrağı.
     pub active: bool,
     /// Manager durumu (watchdog state machine; varsayılan INIT).
@@ -59,6 +62,7 @@ impl StateData {
             queue: vec![],
             progress: serde_json::json!({}),
             downloaded: serde_json::json!({}),
+            history_path: None,
             active: false,
             manager_state: ManagerState::Init,
             pid: std::process::id(),

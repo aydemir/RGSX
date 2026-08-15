@@ -18,6 +18,7 @@ pub mod api;
 pub mod catalog;
 pub mod catalog_bootstrap;
 pub mod es_input;
+pub mod persist;
 pub mod sse;
 pub mod state;
 

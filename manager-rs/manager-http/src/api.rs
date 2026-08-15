@@ -8,7 +8,7 @@
 //! - Her yanıtta `Access-Control-Allow-Origin: *`
 //! - Başarı: `{"success": true, ...}` ; Hata: `{"success": false, "error": msg}`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -803,7 +803,42 @@ pub async fn clear_history(State(state): State<AppState>) -> Response {
             return ok(v);
         }
     }
-    state.write().history.clear();
+    // TASK-002-gap-10 (B): yalnızca aktif OLMAYAN entry'leri sil — Python
+    // `clear_history` `is_truly_active` parity'si (aktif indirme korunur).
+    let (preserved, path) = {
+        let mut data = state.write();
+        let queue_ids: HashSet<String> = data
+            .queue
+            .iter()
+            .filter_map(|e| e.get("task_id").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let queue_urls: HashSet<String> = data
+            .queue
+            .iter()
+            .filter_map(|e| e.get("url").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let retry_urls: HashSet<String> = data.retry_in_flight.iter().cloned().collect();
+        let progress_active_urls: HashSet<String> = match &data.progress {
+            Value::Object(m) => m
+                .iter()
+                .filter(|(_, v)| v.get("status").and_then(Value::as_str) == Some("Downloading"))
+                .map(|(k, _)| k.clone())
+                .collect(),
+            _ => HashSet::new(),
+        };
+        let preserved: Vec<Value> = data
+            .history
+            .iter()
+            .filter(|e| {
+                is_active_history_entry(e, &queue_ids, &queue_urls, &retry_urls, &progress_active_urls)
+            })
+            .cloned()
+            .collect();
+        data.history = preserved.clone();
+        (preserved, data.history_path.clone())
+    };
+    persist_history(&preserved, &path);
+    sse::publish(&state.events, "history", &json!(preserved));
     ok(contract::ok(Value::Null))
 }
 
@@ -1145,6 +1180,56 @@ pub fn data_arc(state: &AppState) -> Arc<std::sync::RwLock<crate::state::StateDa
 // İndirme sonuçlandırma yardımcıları (TASK-002f)
 // ---------------------------------------------------------------------------
 
+// --- TASK-002-gap-10 (A/B/D): history kalıcılık + clear koruma + timestamp ---
+
+/// D: Python `add_to_history` timestamp formatı (`%Y-%m-%d %H:%M:%S`, yerel saat).
+fn now_timestamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// B: Python `history.clear_history` `is_truly_active` parity'si — entry hâlâ
+/// aktif bir indirmeyi mi temsil ediyor? (status + aktif id/url eşleşmesi)
+fn is_active_history_entry(
+    entry: &Value,
+    queue_ids: &HashSet<String>,
+    queue_urls: &HashSet<String>,
+    retry_urls: &HashSet<String>,
+    progress_active_urls: &HashSet<String>,
+) -> bool {
+    let status = entry.get("status").and_then(Value::as_str).unwrap_or("");
+    let active_statuses = [
+        "Downloading",
+        "Téléchargement",
+        "downloading",
+        "Extracting",
+        "Converting",
+        "Queued",
+        "Seeding",
+    ];
+    if !active_statuses.contains(&status) {
+        return false;
+    }
+    let task_id = entry.get("task_id").and_then(Value::as_str).unwrap_or("");
+    let url = entry.get("url").and_then(Value::as_str).unwrap_or("");
+    if status == "Seeding" {
+        return true;
+    }
+    if status == "Queued" {
+        return queue_ids.contains(task_id) || queue_urls.contains(url);
+    }
+    queue_ids.contains(task_id)
+        || queue_urls.contains(url)
+        || retry_urls.contains(url)
+        || progress_active_urls.contains(url)
+}
+
+/// A: geçerli history'yi (varsa) diske atomik yazar.
+fn persist_history(history: &[Value], path: &Option<std::path::PathBuf>) {
+    if let Some(p) = path {
+        crate::persist::save_history(history, p);
+    }
+}
+
 /// Arka plan indirme tamamlanınca state'i sonuçlandırır: history status'unu
 /// `Download_OK`/`Erreur` yapar, kuyruktan çeker, başarılıysa `downloaded[platform]`
 /// listesine ekler ve `queue`/`history`/`progress`(+`downloaded`) SSE yayınlar.
@@ -1158,7 +1243,8 @@ pub async fn finalize_download_in_state(
     message: &str,
 ) {
     let status = if ok { "Download_OK" } else { "Erreur" };
-    let mut data = state.write();
+    let (history_snapshot, path) = {
+        let mut data = state.write();
     let retries_for_url = data.retries.get(game_url).copied().unwrap_or(0);
     let retry_at_for_url = data.retry_at.get(game_url).copied();
     if let Some(entry) = data
@@ -1168,6 +1254,7 @@ pub async fn finalize_download_in_state(
     {
         entry["status"] = json!(status);
         entry["message"] = json!(message);
+        entry["timestamp"] = json!(now_timestamp()); // D: tamamlanma zamanı
         if ok {
             entry["progress"] = json!(100);
             entry["entity_state"] = json!("COMPLETED");
@@ -1213,6 +1300,9 @@ pub async fn finalize_download_in_state(
         sse::publish(&state.events, "downloaded", &json!(data.downloaded));
     }
     sse::publish(&state.events, "progress", &json!(data.progress));
+        (data.history.clone(), data.history_path.clone())
+    };
+    persist_history(&history_snapshot, &path);
 }
 
 // --- TASK-002-gap-1: retry motoru yardımcıları (Python queue.py parity) ---
@@ -1263,7 +1353,8 @@ fn push_queued_history_entry(
     message: &str,
     retry_count: u32,
 ) {
-    let mut data = state.write();
+    let (history_snapshot, path) = {
+        let mut data = state.write();
     data.progress[url] = json!({ "status": "Downloading", "progress": 0 });
     data.queue.push(json!({
         "url": url,
@@ -1279,7 +1370,7 @@ fn push_queued_history_entry(
         "status": status,
         "progress": 0,
         "message": message,
-        "timestamp": "",
+        "timestamp": now_timestamp(),
         "downloaded_size": 0,
         "total_size": 0,
         "task_id": task_id,
@@ -1295,6 +1386,9 @@ fn push_queued_history_entry(
     );
     sse::publish(&state.events, "progress", &json!(data.progress));
     sse::publish(&state.events, "history", &json!(data.history));
+        (data.history.clone(), data.history_path.clone())
+    };
+    persist_history(&history_snapshot, &path);
 }
 
 fn classify_bridge_error(err: &BridgeError) -> ErrorClass {
@@ -1629,5 +1723,56 @@ pub async fn es_input(State(_state): State<AppState>) -> Response {
             }))
         }
         None => ok(json!({ "found": false })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn now_timestamp_non_empty_and_formatted() {
+        let ts = now_timestamp();
+        assert!(!ts.is_empty());
+        // "YYYY-MM-DD HH:MM:SS" — en az 19 karakter, iki tire.
+        assert!(ts.len() >= 19);
+        assert_eq!(ts.chars().filter(|c| *c == '-').count(), 2);
+    }
+
+    #[test]
+    fn active_entry_preserved_by_status_and_queued() {
+        let queue_ids: HashSet<String> = ["t1".to_string()].into_iter().collect();
+        let queue_urls: HashSet<String> = ["http://q".to_string()].into_iter().collect();
+        let retry_urls: HashSet<String> = HashSet::new();
+        let prog: HashSet<String> = HashSet::new();
+
+        let downloading = json!({ "status": "Downloading", "task_id": "t1", "url": "http://x" });
+        assert!(is_active_history_entry(
+            &downloading, &queue_ids, &queue_urls, &retry_urls, &prog
+        ));
+
+        let queued_active = json!({ "status": "Queued", "task_id": "t1", "url": "http://x" });
+        assert!(is_active_history_entry(
+            &queued_active, &queue_ids, &queue_urls, &retry_urls, &prog
+        ));
+
+        // Queued ama ne kuyrukta ne de aktif → korunmaz.
+        let queued_orphan = json!({ "status": "Queued", "task_id": "nope", "url": "http://orphan" });
+        assert!(!is_active_history_entry(
+            &queued_orphan, &queue_ids, &queue_urls, &retry_urls, &prog
+        ));
+
+        // Tamamlanmış → korunmaz.
+        let done = json!({ "status": "Download_OK", "task_id": "t1", "url": "http://x" });
+        assert!(!is_active_history_entry(
+            &done, &queue_ids, &queue_urls, &retry_urls, &prog
+        ));
+
+        // Seeding her zaman korunur.
+        let seeding = json!({ "status": "Seeding", "task_id": "x", "url": "http://y" });
+        assert!(is_active_history_entry(
+            &seeding, &queue_ids, &queue_urls, &retry_urls, &prog
+        ));
     }
 }
