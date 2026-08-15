@@ -617,6 +617,7 @@ fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
         bridge: Some(bridge),
         static_root: None,
         catalog: None,
+        shutdown: Arc::new(tokio::sync::Notify::new()),
     })
 }
 
@@ -1510,4 +1511,142 @@ async fn test_qb_regenerate_password_bridge_unavailable() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(body["success"], json!(false));
     assert!(body["message"].as_str().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// TASK-002-gap-1: job-level retry motoru contract testleri
+// ---------------------------------------------------------------------------
+
+/// İlk `fail_times` çağrıda transient (`Timeout`) hata döner, sonra başarılı olur.
+#[derive(Debug)]
+struct FlakyEngine {
+    calls: Arc<std::sync::Mutex<Vec<String>>>,
+    fail_times: usize,
+}
+
+#[async_trait::async_trait]
+impl manager_bridge::TorrentBackend for FlakyEngine {
+    fn engine(&self) -> &'static str {
+        "flaky"
+    }
+    async fn call(&self, _method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+        Err(manager_bridge::BridgeError::Rpc {
+            code: -32601,
+            message: "n/a".into(),
+        })
+    }
+    async fn shutdown(&self) {}
+    async fn download_torrent_progress(
+        &self,
+        _source_url: &str,
+        dest_path: &std::path::Path,
+        _task_id: Option<String>,
+        _on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>>,
+    ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
+        let n = self.calls.lock().unwrap().len();
+        self.calls.lock().unwrap().push("download".to_string());
+        if n < self.fail_times {
+            return Err(manager_bridge::BridgeError::Timeout(
+                "geçici ağ hatası".into(),
+            ));
+        }
+        Ok(dest_path.to_path_buf())
+    }
+}
+
+#[tokio::test]
+async fn test_download_retries_then_succeeds() {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let engine: Arc<dyn manager_bridge::TorrentBackend> =
+        Arc::new(FlakyEngine {
+            calls: calls.clone(),
+            fail_times: 2,
+        });
+    let data = Arc::new(std::sync::RwLock::new(StateData::empty()));
+    let mut state = AppState::empty();
+    state.bridge = Some(engine);
+    state.data = data.clone();
+    let app = router(state);
+
+    let (status, _, body) = call_post(
+        app,
+        "/api/download",
+        json!({"url": "magnet:?xt=urn:btih:abc123", "game_name": "Rom", "platform": "NES"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["queued"], json!(true));
+
+    // 1 başlangıç + 2 retry = 3 engine çağrısı (fail_times=2 → 3. çağrı başarı).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if calls.lock().unwrap().len() >= 3 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "retry motoru beklenen çağrı sayısına ulaşmadı"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    let entries = data.read().unwrap().history.clone();
+    // 1 initial + 2 retry = 3 entry (son deneme başarılı → yeni retry girişi açılmaz).
+    assert_eq!(entries.len(), 3, "retry sayısı (3 deneme) 3 history entry üretmeli");
+    let task_ids: Vec<&str> = entries
+        .iter()
+        .map(|e| e["task_id"].as_str().unwrap())
+        .collect();
+    let unique: std::collections::HashSet<&str> = task_ids.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        3,
+        "her deneme yeni task_id kullanmalı (Python queue.py:610 parity)"
+    );
+    // İlk iki entry transient başarısızlık sonrası RETRY_SCHEDULED olmalı.
+    assert_eq!(entries[0]["entity_state"], json!("RETRY_SCHEDULED"));
+    assert_eq!(entries[0]["retry_count"], json!(1));
+    assert_eq!(entries[1]["retry_count"], json!(2));
+    // Son entry başarılı → COMPLETED.
+    assert_eq!(entries[2]["entity_state"], json!("COMPLETED"));
+    assert_eq!(entries[2]["status"], json!("Download_OK"));
+}
+
+#[tokio::test]
+async fn test_history_includes_retry_fields_additive() {
+    // Mevcut sözleşme bozulmadan retry alanları eklendi (backward-compat).
+    let data = StateData {
+        history: vec![json!({
+            "game_name": "Rom",
+            "platform": "NES",
+            "url": "https://e.invalid/r.zip",
+            "status": "Download_OK",
+            "progress": 100,
+            "message": "Tamamlandı",
+            "timestamp": "",
+            "downloaded_size": 0,
+            "total_size": 0,
+            "task_id": "web_abc",
+            "entity_state": "COMPLETED",
+            "retry_count": 2,
+            "max_retries": 3,
+            "retry_at": 0,
+        })],
+        ..StateData::empty()
+    };
+    let app = app_with(data);
+    let (status, _, body) = call_get(app, "/api/history").await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = body["history"].as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    let e = &arr[0];
+    // Temel sözleşme alanları korunur.
+    assert_eq!(e["game_name"], json!("Rom"));
+    assert_eq!(e["status"], json!("Download_OK"));
+    assert_eq!(e["task_id"], json!("web_abc"));
+    // Yeni additive alanlar mevcut.
+    assert_eq!(e["entity_state"], json!("COMPLETED"));
+    assert_eq!(e["retry_count"], json!(2));
+    assert_eq!(e["max_retries"], json!(3));
+    assert_eq!(e["retry_at"], json!(0));
 }

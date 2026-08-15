@@ -4,8 +4,10 @@
 //! (`download_queue`, `download_progress`, `history`, `downloaded_games`).
 //! placeholder: gerçek persist/worker bağlantısı TASK-002c.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
+use tokio::sync::Notify;
 
 use manager_bridge::TorrentBackend;
 use manager_core::state::ManagerState;
@@ -38,6 +40,15 @@ pub struct StateData {
     pub settings: serde_json::Value,
     /// `/api/system_info` — cihaz bilgileri (placeholder).
     pub system_info: serde_json::Value,
+    /// TASK-002-gap-1: URL başına retry sayacı (failures). Key = `game_url`.
+    pub retries: HashMap<String, u32>,
+    /// TASK-002-gap-1: devam eden retry dizisini deduplike eden set. Key = `game_url`.
+    pub retry_in_flight: HashSet<String>,
+    /// TASK-002-gap-1: URL başına son `retry_at` (unix epoch saniye). Key = `game_url`.
+    pub retry_at: HashMap<String, f64>,
+    /// TASK-002-gap-1: URL başına iptal sinyali (retry sleep'ini kesmek için).
+    /// Key = `game_url` (veya cancel'da verilen `task_id`).
+    pub cancel_signals: HashMap<String, Arc<Notify>>,
 }
 
 impl StateData {
@@ -53,6 +64,10 @@ impl StateData {
             pid: std::process::id(),
             settings: serde_json::json!({}),
             system_info: serde_json::json!({}),
+            retries: HashMap::new(),
+            retry_in_flight: HashSet::new(),
+            retry_at: HashMap::new(),
+            cancel_signals: HashMap::new(),
         }
     }
 
@@ -95,6 +110,8 @@ pub struct AppState {
     /// Faz 10c/3/2 — katalog proxy kaynağı (`CatalogSource`). None ise handler'lar
     /// placeholder'a düşer (geriye uyumlu).
     pub catalog: Option<Arc<dyn CatalogSource>>,
+    /// TASK-002-gap-1: global shutdown sinyali (retry sleep'lerini keser).
+    pub shutdown: Arc<Notify>,
 }
 
 impl AppState {
@@ -106,6 +123,7 @@ impl AppState {
             bridge: None,
             static_root: None,
             catalog: None,
+            shutdown: Arc::new(Notify::new()),
         }
     }
 
@@ -117,6 +135,7 @@ impl AppState {
             bridge: None,
             static_root: None,
             catalog: None,
+            shutdown: Arc::new(Notify::new()),
         }
     }
 

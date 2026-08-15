@@ -10,16 +10,21 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
+use tokio::sync::Notify;
 
 use manager_core::contract;
+use manager_core::retry::{self, ErrorClass};
 use manager_core::state::ManagerState;
+use manager_bridge::BridgeError;
+use manager_download::http::stream::CancelFlag;
+use manager_download::http::DownloadError;
 
 use crate::sse;
 use crate::state::AppState;
@@ -509,89 +514,106 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
             let n = gname.clone();
             let p = platform.clone();
             let t = task_id.clone();
+            // TASK-002-gap-1: retry döngüsü (torrent + native DDL ortak envelope).
+            // Her transient başarısızlıkta yeni task_id + yeni history entry
+            // (Python queue.py:610 parity). retry_in_flight dedup + cancel/shutdown.
+            {
+                let mut d = state.write();
+                d.retry_in_flight.insert(game_url.clone());
+            }
+            let cancel: Arc<Notify> = {
+                let mut d = state.write();
+                let sig = Arc::new(Notify::new());
+                d.cancel_signals.insert(game_url.clone(), sig.clone());
+                sig
+            };
+            let shutdown = state.shutdown.clone();
             tokio::spawn(async move {
-                // TASK-002m: librqbit indirme sırasında canlı progress yayar.
-                // Closure, orijinal `state2`/`u`'yu tüketmemesi için klonlarını yakalar.
-                let cb_state = state2.clone();
-                let cb_url = u.clone();
-                let on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>> =
-                    Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
-                        let pct = if ev.total > 0 {
-                            ((ev.downloaded as f64 / ev.total as f64) * 100.0) as u64
-                        } else {
-                            0
-                        };
-                        let mut data = cb_state.write();
-                        if let Value::Object(map) = &mut data.progress {
-                            map.insert(
-                                cb_url.clone(),
-                                json!({
-                                    "status": if ev.finished {
-                                        "Download_OK"
-                                    } else if ev.paused {
-                                        "Paused"
-                                    } else {
-                                        "Downloading"
-                                    },
-                                    "progress": pct,
-                                    "downloaded": ev.downloaded,
-                                    "total": ev.total,
-                                    "speed": ev.speed,
-                                }),
-                            );
-                        }
-                        sse::publish(&cb_state.events, "progress", &json!(data.progress));
-                    }));
-                match bridge
-                    .download_torrent_progress(&u, &dest_path, Some(t.clone()), on_progress)
-                    .await
-                {
-                    Ok(src) => {
-                        tracing::info!(src = %src.display(), dest = %dest_path.display(), "torrent indirme tamamlandı");
-                        finalize_download_in_state(
-                            &state2, &t, &u, &n, &p, true, src.to_string_lossy().as_ref(),
-                        )
+                let mut current_task_id = t.clone();
+                let current_url = u.clone();
+                let mut aborted: Option<String> = None;
+                loop {
+                    let cb_state = state2.clone();
+                    let cb_url = current_url.clone();
+                    let on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>> =
+                        Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
+                            let pct = if ev.total > 0 {
+                                ((ev.downloaded as f64 / ev.total as f64) * 100.0) as u64
+                            } else {
+                                0
+                            };
+                            let mut data = cb_state.write();
+                            if let Value::Object(map) = &mut data.progress {
+                                map.insert(
+                                    cb_url.clone(),
+                                    json!({
+                                        "status": if ev.finished {
+                                            "Download_OK"
+                                        } else if ev.paused {
+                                            "Paused"
+                                        } else {
+                                            "Downloading"
+                                        },
+                                        "progress": pct,
+                                        "downloaded": ev.downloaded,
+                                        "total": ev.total,
+                                        "speed": ev.speed,
+                                    }),
+                                );
+                            }
+                            sse::publish(&cb_state.events, "progress", &json!(data.progress));
+                        }));
+                    let res = bridge
+                        .download_torrent_progress(&current_url, &dest_path, Some(current_task_id.clone()), on_progress)
                         .await;
-                    }
-                    Err(e) => {
-                        tracing::error!("torrent indirme hatası ({u}): {e}");
-                        finalize_download_in_state(&state2, &t, &u, &n, &p, false, &e.to_string())
-                            .await;
+                    match res {
+                        Ok(src) => {
+                            finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, true, src.to_string_lossy().as_ref()).await;
+                            break;
+                        }
+                        Err(e) => {
+                            let cls = classify_bridge_error(&e);
+                            match decide_retry(&state2, &current_url, &n, &p, &current_task_id, &e.to_string(), cls) {
+                                RetryDecision::Retry { new_task_id, delay } => {
+                                    let dur = Duration::from_secs_f64(delay.max(0.0));
+                                    tokio::select! {
+                                        _ = tokio::time::sleep(dur) => {}
+                                        _ = cancel.notified() => { aborted = Some("İptal edildi".to_string()); }
+                                        _ = shutdown.notified() => { aborted = Some("Sunucu kapatılıyor".to_string()); }
+                                    }
+                                    match aborted {
+                                        Some(ref msg) => {
+                                            finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, false, msg).await;
+                                            break;
+                                        }
+                                        None => { current_task_id = new_task_id; continue; }
+                                    }
+                                }
+                                RetryDecision::Stop => {
+                                    finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, false, &e.to_string()).await;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
+                let mut d = state2.write();
+                d.retry_in_flight.remove(&current_url);
+                d.cancel_signals.remove(&current_url);
             });
         }
 
-        // Kuyruğa `Queued` girişi + history (Python `_handle_download_worker` 1:1).
-        let mut data = state.write();
-        data.progress[&game_url] = json!({ "status": "Downloading", "progress": 0 });
-        data.queue.push(json!({
-            "url": game_url,
-            "platform": platform,
-            "game_name": gname,
-            "task_id": task_id,
-            "status": "Queued",
-        }));
-        let queue_position = data.queue.len();
-        data.history.push(json!({
-            "game_name": gname,
-            "platform": platform,
-            "url": game_url,
-            "status": "Queued",
-            "progress": 0,
-            "message": "Ajouté à la file d'attente",
-            "timestamp": "",
-            "downloaded_size": 0,
-            "total_size": 0,
-            "task_id": task_id,
-        }));
-        sse::publish(
-            &state.events,
-            "queue",
-            &json!({ "queue": data.queue, "active": data.active }),
+        push_queued_history_entry(
+            &state,
+            &task_id,
+            &game_url,
+            &gname,
+            &platform,
+            "Queued",
+            "Ajouté à la file d'attente",
+            0,
         );
-        sse::publish(&state.events, "progress", &json!(data.progress));
-        drop(data);
+        let queue_position = state.read().queue.len();
 
         return ok(contract::ok(json!({
             "queued": true,
@@ -632,6 +654,12 @@ pub async fn cancel(State(state): State<AppState>, Json(body): Json<Value>) -> R
     }
     let url = body.get("url").and_then(Value::as_str);
     let task_id = body.get("task_id").and_then(Value::as_str);
+    // TASK-002-gap-1: native DDL retry döngüsünü uyandır (retry motoru cancel).
+    if let Some(u) = url {
+        if let Some(sig) = state.write().cancel_signals.get(u).cloned() {
+            sig.notify_one();
+        }
+    }
     if let Some(bridge) = &state.bridge {
         let canceled = match task_id {
             Some(id) => bridge.cancel_torrent(id).await.unwrap_or(false),
@@ -836,6 +864,8 @@ pub async fn shutdown(State(state): State<AppState>) -> Response {
             return ok(v);
         }
     }
+    // TASK-002-gap-1: devam eden tüm retry döngülerini (torrent + native DDL) uyandır.
+    state.shutdown.notify_waiters();
     ok(contract::ok(Value::Null))
 }
 
@@ -1070,6 +1100,8 @@ pub async fn finalize_download_in_state(
 ) {
     let status = if ok { "Download_OK" } else { "Erreur" };
     let mut data = state.write();
+    let retries_for_url = data.retries.get(game_url).copied().unwrap_or(0);
+    let retry_at_for_url = data.retry_at.get(game_url).copied();
     if let Some(entry) = data
         .history
         .iter_mut()
@@ -1079,8 +1111,19 @@ pub async fn finalize_download_in_state(
         entry["message"] = json!(message);
         if ok {
             entry["progress"] = json!(100);
+            entry["entity_state"] = json!("COMPLETED");
+        } else {
+            entry["entity_state"] = json!("FAILED_PERMANENT");
+            entry["error"] = json!(message);
+        }
+        entry["retry_count"] = json!(retries_for_url);
+        entry["max_retries"] = json!(retry::DEFAULT_MAX_RETRIES);
+        if let Some(ra) = retry_at_for_url {
+            entry["retry_at"] = json!(ra);
         }
     }
+    data.retries.remove(game_url);
+    data.retry_at.remove(game_url);
     if let Some(pos) = data
         .queue
         .iter()
@@ -1113,6 +1156,169 @@ pub async fn finalize_download_in_state(
     sse::publish(&state.events, "progress", &json!(data.progress));
 }
 
+// --- TASK-002-gap-1: retry motoru yardımcıları (Python queue.py parity) ---
+
+enum RetryDecision {
+    Stop,
+    Retry { new_task_id: String, delay: f64 },
+}
+
+fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn retry_task_id(url: &str) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut h: u64 = 1469598103934665603;
+    for b in url.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(1099511628211);
+    }
+    let hash = (h & 0xFFFFFF) as u32;
+    format!("retry_{}_{:06x}", millis, hash)
+}
+
+fn retry_message(name: &str, count: u32, delay: f64) -> String {
+    format!(
+        "Retry {} (attempt {}/{}) in {}s",
+        name,
+        count,
+        retry::DEFAULT_MAX_RETRIES,
+        delay as u64
+    )
+}
+
+fn push_queued_history_entry(
+    state: &AppState,
+    task_id: &str,
+    url: &str,
+    name: &str,
+    platform: &str,
+    status: &str,
+    message: &str,
+    retry_count: u32,
+) {
+    let mut data = state.write();
+    data.progress[url] = json!({ "status": "Downloading", "progress": 0 });
+    data.queue.push(json!({
+        "url": url,
+        "platform": platform,
+        "game_name": name,
+        "task_id": task_id,
+        "status": "Queued",
+    }));
+    data.history.push(json!({
+        "game_name": name,
+        "platform": platform,
+        "url": url,
+        "status": status,
+        "progress": 0,
+        "message": message,
+        "timestamp": "",
+        "downloaded_size": 0,
+        "total_size": 0,
+        "task_id": task_id,
+        "entity_state": if status == "Queued" { "QUEUED" } else { "RETRY_SCHEDULED" },
+        "retry_count": retry_count,
+        "max_retries": retry::DEFAULT_MAX_RETRIES,
+        "retry_at": 0,
+    }));
+    sse::publish(
+        &state.events,
+        "queue",
+        &json!({ "queue": data.queue, "active": data.active }),
+    );
+    sse::publish(&state.events, "progress", &json!(data.progress));
+    sse::publish(&state.events, "history", &json!(data.history));
+}
+
+fn classify_bridge_error(err: &BridgeError) -> ErrorClass {
+    match err {
+        BridgeError::Timeout(_) => ErrorClass::Transient,
+        _ => {
+            let msg = err.to_string();
+            retry::classify_error(&msg, None)
+        }
+    }
+}
+
+fn classify_download_error(err: &DownloadError) -> ErrorClass {
+    match err {
+        DownloadError::Network(_) => ErrorClass::Transient,
+        DownloadError::Canceled => ErrorClass::Permanent,
+        DownloadError::BrowserChallenge
+        | DownloadError::HtmlInsteadOfPayload(_)
+        | DownloadError::InvalidArchive
+        | DownloadError::PartialArchiveRejected(_)
+        | DownloadError::EmptyResponse(_)
+        | DownloadError::InsufficientDiskSpace(_) => ErrorClass::Permanent,
+        DownloadError::Client(_) | DownloadError::Http(_) => {
+            retry::classify_error(&err.message(), None)
+        }
+    }
+}
+
+fn decide_retry(
+    state: &AppState,
+    url: &str,
+    name: &str,
+    platform: &str,
+    current_task_id: &str,
+    err_msg: &str,
+    err_class: ErrorClass,
+) -> RetryDecision {
+    let mut data = state.write();
+    let failures = *data.retries.get(url).unwrap_or(&0);
+    if err_class == ErrorClass::Transient && failures < retry::DEFAULT_MAX_RETRIES {
+        let new_failures = failures + 1;
+        data.retries.insert(url.to_string(), new_failures);
+        let delay = retry::retry_backoff_seconds(
+            new_failures,
+            retry::DEFAULT_BACKOFF_BASE_SEC,
+            retry::DEFAULT_BACKOFF_MAX_SEC,
+        );
+        let retry_at = now_secs() + delay;
+        data.retry_at.insert(url.to_string(), retry_at);
+        if let Some(e) = data
+            .history
+            .iter_mut()
+            .find(|e| e.get("task_id").and_then(Value::as_str) == Some(current_task_id))
+        {
+            e["status"] = json!("Téléchargement");
+            e["entity_state"] = json!("RETRY_SCHEDULED");
+            e["retry_count"] = json!(new_failures);
+            e["max_retries"] = json!(retry::DEFAULT_MAX_RETRIES);
+            e["retry_at"] = json!(retry_at);
+            e["message"] = json!(retry_message(name, new_failures, delay));
+        }
+        let new_task_id = retry_task_id(url);
+        drop(data);
+        push_queued_history_entry(
+            state,
+            &new_task_id,
+            url,
+            name,
+            platform,
+            "Queued",
+            &retry_message(name, new_failures, delay),
+            new_failures,
+        );
+        RetryDecision::Retry {
+            new_task_id,
+            delay,
+        }
+    } else {
+        let _ = err_msg;
+        RetryDecision::Stop
+    }
+}
+
 /// Faz 12e — native DDL indirme: çözülmüş doğrudan HTTP kaynağını reqwest ile indirir,
 /// `downloaded`/history/progress + SSE ile sonuçlanır (Python `one_fichier.py` DDL akışının
 /// librqbit'siz karşılığı). Torrent kaynakları buraya gelmez (download() bunları bridge'e yönlendirir).
@@ -1131,35 +1337,16 @@ async fn native_ddl_download(
     };
     let dest = dest_path_for(&downloads, &game_url, &game_name);
 
-    {
-        let mut data = state.write();
-        data.progress[&game_url] = json!({ "status": "Downloading", "progress": 0 });
-        data.queue.push(json!({
-            "url": game_url,
-            "platform": platform,
-            "game_name": game_name,
-            "task_id": task_id,
-            "status": "Queued",
-        }));
-        data.history.push(json!({
-            "game_name": game_name,
-            "platform": platform,
-            "url": game_url,
-            "status": "Queued",
-            "progress": 0,
-            "message": "Ajouté à la file d'attente (native DDL)",
-            "timestamp": "",
-            "downloaded_size": 0,
-            "total_size": 0,
-            "task_id": task_id,
-        }));
-        sse::publish(
-            &state.events,
-            "queue",
-            &json!({ "queue": data.queue, "active": data.active }),
-        );
-        sse::publish(&state.events, "progress", &json!(data.progress));
-    }
+    push_queued_history_entry(
+        &state,
+        &task_id,
+        &game_url,
+        &game_name,
+        &platform,
+        "Queued",
+        "Ajouté à la file d'attente (native DDL)",
+        0,
+    );
 
     // Closure'a taşınacak klonlar (yanıt `ok()` sahipleri kullanır).
     let c_state = state.clone();
@@ -1167,63 +1354,135 @@ async fn native_ddl_download(
     let c_name = game_name.clone();
     let c_plat = platform.clone();
     let c_task = task_id.clone();
+    {
+        let mut d = c_state.write();
+        d.retry_in_flight.insert(c_url.clone());
+    }
+    let cancel: Arc<Notify> = {
+        let mut d = c_state.write();
+        let sig = Arc::new(Notify::new());
+        d.cancel_signals.insert(c_url.clone(), sig.clone());
+        sig
+    };
+    let shutdown = c_state.shutdown.clone();
     tokio::spawn(async move {
         // Gap-4 4a — bellek içi `bytes()` yerine `HttpDownloader` stream motoru
         // (`.part` yazma, Range resume, challenge/HTML/arşiv guards, cancel).
-        let progress_state = c_state.clone();
-        let progress_url = c_url.clone();
-        let req = manager_download::http::DownloadRequest {
-            url: resolved.clone(),
-            dest_path: dest.clone(),
-            known_total_size: 0,
-            referer: None,
-            cookie: None,
-        };
-        let result = manager_download::http::HttpDownloader::new()
-            .with_progress(move |downloaded, total| {
-                let pct = if total > 0 {
-                    (downloaded * 100 / total) as u32
-                } else {
-                    0
-                };
-                let mut data = progress_state.write();
-                data.progress[&progress_url] =
-                    json!({ "status": "Downloading", "progress": pct });
-                sse::publish(
-                    &progress_state.events,
-                    "progress",
-                    &json!(data.progress),
-                );
-            })
-            .download_async(&req)
-            .await;
+        // TASK-002-gap-1: job-level retry envelope (torrent ile ortak).
+        let mut current_task_id = c_task.clone();
+        let current_url = c_url.clone();
+        let mut aborted: Option<String> = None;
+        loop {
+            let progress_state = c_state.clone();
+            let progress_url = current_url.clone();
+            let req = manager_download::http::DownloadRequest {
+                url: resolved.clone(),
+                dest_path: dest.clone(),
+                known_total_size: 0,
+                referer: None,
+                cookie: None,
+            };
+            let cancel_flag = CancelFlag::new();
+            let cf = cancel_flag.clone();
+            let result = manager_download::http::HttpDownloader::new()
+                .with_cancel(cancel_flag)
+                .with_retry(1, Duration::from_secs(5))
+                .with_progress(move |downloaded, total| {
+                    let pct = if total > 0 {
+                        (downloaded * 100 / total) as u32
+                    } else {
+                        0
+                    };
+                    let mut data = progress_state.write();
+                    data.progress[&progress_url] =
+                        json!({ "status": "Downloading", "progress": pct });
+                    sse::publish(
+                        &progress_state.events,
+                        "progress",
+                        &json!(data.progress),
+                    );
+                })
+                .download_async(&req)
+                .await;
 
-        match result {
-            Ok(path) => {
-                finalize_download_in_state(
-                    &c_state,
-                    &c_task,
-                    &c_url,
-                    &c_name,
-                    &c_plat,
-                    true,
-                    &path.display().to_string(),
-                )
-                .await;
-            }
-            Err(e) => {
-                finalize_download_in_state(
-                    &c_state,
-                    &c_task,
-                    &c_url,
-                    &c_name,
-                    &c_plat,
-                    false,
-                    &e.message(),
-                )
-                .await;
+            match result {
+                Ok(path) => {
+                    finalize_download_in_state(
+                        &c_state,
+                        &current_task_id,
+                        &current_url,
+                        &c_name,
+                        &c_plat,
+                        true,
+                        &path.display().to_string(),
+                    )
+                    .await;
+                    break;
+                }
+                Err(e) => {
+                    let cls = classify_download_error(&e);
+                    match decide_retry(
+                        &c_state,
+                        &current_url,
+                        &c_name,
+                        &c_plat,
+                        &current_task_id,
+                        &e.message(),
+                        cls,
+                    ) {
+                        RetryDecision::Retry { new_task_id, delay } => {
+                            let dur = Duration::from_secs_f64(delay.max(0.0));
+                            tokio::select! {
+                                _ = tokio::time::sleep(dur) => {}
+                                _ = cancel.notified() => {
+                                    cf.set();
+                                    aborted = Some("İptal edildi".to_string());
+                                }
+                                _ = shutdown.notified() => {
+                                    cf.set();
+                                    aborted = Some("Sunucu kapatılıyor".to_string());
+                                }
+                            }
+                            match aborted {
+                                Some(ref msg) => {
+                                    finalize_download_in_state(
+                                        &c_state,
+                                        &current_task_id,
+                                        &current_url,
+                                        &c_name,
+                                        &c_plat,
+                                        false,
+                                        msg,
+                                    )
+                                    .await;
+                                    break;
+                                }
+                                None => {
+                                    current_task_id = new_task_id;
+                                    continue;
+                                }
+                            }
+                        }
+                        RetryDecision::Stop => {
+                            finalize_download_in_state(
+                                &c_state,
+                                &current_task_id,
+                                &current_url,
+                                &c_name,
+                                &c_plat,
+                                false,
+                                &e.message(),
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                }
             }
         }
+        let mut d = c_state.write();
+        d.retry_in_flight.remove(&current_url);
+        d.cancel_signals.remove(&current_url);
     });
 
     ok(contract::ok(json!({
