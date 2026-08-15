@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-4
 - **title:** HTTP-direct download path (vimm/archive.org/lolroms/1fichier, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri)
-- **status:** in_progress
+- **status:** completed
 - **priority:** P0
 - **created:** 2026-08-14
 - **environment:** both
@@ -72,11 +72,27 @@ Mimari karar (onaylı): yeni `manager-http-dl` crate AÇILMADI; HTTP motoru
   yönlendirilir; bu fonksiyon (4a'da) artık `HttpDownloader`'ı kullanır. Flag kapalıyken
   mevcut Python proxy korunur → contract baseline (105) bozulmaz.
 
-- **4f ⏳**: lolroms external-tool (`_download_lolroms_with_external_tool`: curl/wget
-  subprocess) — **sonraki sprint out-of-scope**; reqwest fallback ile. Rust'ta ayrı bir
-  tokio `Command` alt modülü gerektirir, ayrı görev olarak açılacak.
-- **4e ⏳**: rust_daemon.py / WebUI delegasyonu (native_ddl_download çağrı noktası + flag).
-- **4f ⏳**: lolroms external-tool — **sonraki sprint out-of-scope**, reqwest fallback ile.
+- **4f ✅ TAMAM**: lolroms reqwest fallback `manager-download/src/http/lolroms.rs`'te.
+  - `is_lolroms_url`, `normalize_lolroms_url` (lolroms SAFE set ile percent-encode,
+    idempotent), `parent_url`, `lolroms_headers(referer)` (browser UA + Accept +
+    Accept-Language + Referer).
+  - `download_async` içine lolroms dalı: URL `lolroms.com` ise normalize edilir, **önce
+    parent sayfa GET edilir** (cookie jar ısınması, Referer `https://lolroms.com/`),
+    sonra dosya `Referer: parent_url` ile indirilir. Mevcut retry/stream/guards hattı
+    kullanılır (yeni motor yazılmadı).
+  - Workspace `reqwest` features'a `cookies` eklendi; `HttpDownloader::client()` varsayılan
+    istemci artık `cookie_store(true)` (Python `requests.Session` eşleniği — parent fetch
+    cookie'yi ısıtır).
+  - Post-download guard'ları uygulanır: HTML/challenge (`HtmlInsteadOfPayload`) + arşiv
+    imza (`InvalidArchive`) — `guards.rs`'te zaten mevcut.
+  - Testler: lolroms unit (is_url normalize parent headers) + integration
+    `lolroms_parent_warms_then_downloads` (mock parent GET → dosya Referer ile iner, ≥2
+    istek) + `lolroms_html_guard_rejects_parentless` (HTML dönüşü guard reddeder).
+    manager-download 27 lib + 14 integration = 41 test yeşil; manager-http 105 contract
+    korundu. **Not:** Python external-tool (curl/wget subprocess, resume/partial-accept
+    detayları) bilinçli olarak out-of-scope; reqwest fallback ile parity sağlandı.
+- **(kapatıldı) 4e/4f çelişkili ⏳ notları**: 4e (WebUI→native DDL delegasyonu) zaten ✅;
+  4f yukarıda ✅. External-tool (curl/wget) ayrı görev olarak out-of-scope.
 
 ## Kaynak
 

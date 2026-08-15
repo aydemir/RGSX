@@ -2,7 +2,7 @@
 
 - **id:** TASK-002k
 - **title:** Faz 10c/3 — Rust `manager-http` placeholder handler'larını doldur ve Python Web UI sunucusunu Rust'e göç ettir (alt görev planı)
-- **status:** todo
+- **status:** completed
 - **priority:** P1
 - **created:** 2026-08-12
 - **environment:** both

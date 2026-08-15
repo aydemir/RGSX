@@ -313,24 +313,30 @@ flowchart TD
 Aşağıdaki düğüm kümelerinin Rust'ta (ne `manager-core`, ne `manager-torrent`, ne `manager-bin`)
 henüz bir karşılığı yok. Nadir/hatalı dallar özellikle işaretlendi.
 
-| # | Eksik düğüm(ler) | Kritiklik | Görev dosyası |
-|---|---|---|---|
-| 1 | `F1→F2→R0..R3` — transient hata sınıflandırma, `_retry_backoff`, `_schedule_download_retry`, `_retry_in_flight` dedup | P1 | `tasks/gap/TASK-002-gap-1-retry-engine.md` |
-| 2 | `P0..P2`, `P7` — pause/resume orkestrasyonu (toggle, pause_all, resume_all, pause_ev → backend) | **P0** | `tasks/gap/TASK-002-gap-2-pause-resume.md` |
-| 3 | `P3..P6`, `Q9`, `Q8` (kısmi) — cancel + yarım kalan dosya/torrent temp-root/seeder artifact temizliği | **P0** | `tasks/gap/TASK-002-gap-3-cancel-cleanup.md` |
-| 4 | `H0..H12` (tüm HTTP-alt ağacı) — vimm/archive.org/lolroms, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri | **P0** | `tasks/gap/TASK-002-gap-4-http-direct.md` |
-| 5 | `D5`, `H8` — disk alanı ön-kontrolü (`InsufficientDiskSpaceError`) | P1 | `tasks/gap/TASK-002-gap-5-disk-space.md` |
-| 6 | `H12`, `H12e`, `OF17`, `OF17e` — arşiv auto-extract / post-process (BIOS, PS3 redump force) | P2 | `tasks/gap/TASK-002-gap-6-extract.md` |
-| 7 | `Q6ok→Q7→Q8`, `Q6c` — seed lifecycle (promote-to-seed, `_seed_status_worker`, `has_active_seed`, `stop_seed`) + password migration | P1 | `tasks/gap/TASK-002-gap-7-seed-lifecycle.md` |
-| 8 | `Q9` — stray torrent temp-root temizliği (`_find_stray_torrent_temp_roots`) | P2 | `tasks/gap/TASK-002-gap-8-stray-temp.md` |
-| 9 | `M0` — restart sonrası yarıda kalan indirmeyi sürdürme (Rust librqbit session ephemral → torrent resume kaybolur) | P1 | `tasks/gap/TASK-002-gap-9-resume-interrupted.md` |
-| 10 | `F0` (mark_game_as_downloaded, emit_state_event, bulk history), `D2/D7` history kayıtları — daemon içinde history/SSE sonlandırma | P1 | `tasks/gap/TASK-002-gap-10-history-sse.md` |
-| 11 | `OF0..OF18` (tüm 1fichier provider zinciri) — 1F→AD→DL→RD→TB→FREE sıralı fallback, debrid unlock/poll, Range resume, 10x retry, provider_used history yazımı | **P0** | `tasks/gap/TASK-002-gap-11-1fichier-provider.md` |
+| # | Eksik düğüm(ler) | Kritiklik | Görev dosyası | Durum (2026-08-14) |
+|---|---|---|---|---|
+| 1 | `F1→F2→R0..R3` — transient hata sınıflandırma, `_retry_backoff`, `_schedule_download_retry`, `_retry_in_flight` dedup | P1 | `tasks/gap/TASK-002-gap-1-retry-engine.md` | ❌ **EKSİK** (yalnız HTTP-içi 429 retry var) |
+| 2 | `P0..P2`, `P7` — pause/resume orkestrasyonu (toggle, pause_all, resume_all, pause_ev → backend) | **P0** | `tasks/gap/TASK-002-gap-2-pause-resume.md` | ✅ **TAMAM** (manager-torrent `active_handles` + `Paused` state) |
+| 3 | `P3..P6`, `Q9`, `Q8` (kısmi) — cancel + yarım kalan dosya/torrent temp-root/seeder artifact temizliği | **P0** | `tasks/gap/TASK-002-gap-3-cancel-cleanup.md` | ✅ **TAMAM** |
+| 4 | `H0..H12` (tüm HTTP-alt ağacı) — vimm/archive.org/lolroms, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri | **P0** | `tasks/gap/TASK-002-gap-4-http-direct.md` | ✅ **TAMAM** (4a–4f: vimm/archive/lolroms + guards) |
+| 5 | `D5`, `H8` — disk alanı ön-kontrolü (`InsufficientDiskSpaceError`) | P1 | `tasks/gap/TASK-002-gap-5-disk-space.md` | ❌ **EKSİK** (yalnız error tipi var, kontrol yok) |
+| 6 | `H12`, `H12e`, `OF17`, `OF17e` — arşiv auto-extract / post-process (BIOS, PS3 redump force) | P2 | `tasks/gap/TASK-002-gap-6-extract.md` | ❌ **EKSİK** |
+| 7 | `Q6ok→Q7→Q8`, `Q6c` — seed lifecycle (promote-to-seed, `_seed_status_worker`, `has_active_seed`, `stop_seed`) + password migration | P1 | `tasks/gap/TASK-002-gap-7-seed-lifecycle.md` | ❌ **EKSİK** (librqbit seed takibi out-of-scope) |
+| 8 | `Q9` — stray torrent temp-root temizliği (`_find_stray_torrent_temp_roots`) | P2 | `tasks/gap/TASK-002-gap-8-stray-temp.md` | ❌ **EKSİK** |
+| 9 | `M0` — restart sonrası yarıda kalan indirmeyi sürdürme (Rust librqbit session ephemral → torrent resume kaybolur) | P1 | `tasks/gap/TASK-002-gap-9-resume-interrupted.md` | ❌ **EKSİK** |
+| 10 | `F0` (mark_game_as_downloaded, emit_state_event, bulk history), `D2/D7` history kayıtları — daemon içinde history/SSE sonlandırma | P1 | `tasks/gap/TASK-002-gap-10-history-sse.md` | ✅ **TAMAM** (`finalize_download_in_state` + `queue/history/downloaded/progress` SSE) |
+| 11 | `OF0..OF18` (tüm 1fichier provider zinciri) — 1F→AD→DL→RD→TB→FREE sıralı fallback, debrid unlock/poll, Range resume, 10x retry, provider_used history yazımı | **P0** | `tasks/gap/TASK-002-gap-11-1fichier-provider.md` | ❌ **STUB** (resolver'lar `NotConfigured` döndürüyor) |
 
 > Not: Orkestratörün kendisi (`W0..W3`, `D0..D8` dış sarmalayıcı, `MW3/MW4`) şu an Python'da
 > kalıyor ve Rust'a yalnızca *torrent byte indirme* (`T4r`/`RD4`) devrediliyor. Yukarıdaki
 > 11 madde, Python kaldırıldığında/doğrulanırken **davranışsal olarak kaybolacak**
 > düğümlerdir; refaktör bu düğümleri ya Rust'a taşımalı ya da daemon sözleşmesine eklemelidir.
+>
+> **2026-08-14 güncellemesi:** Gap-2 (pause/resume), Gap-3 (cancel+cleanup), Gap-4
+> (HTTP-alt ağacı: vimm/archive.org/lolroms + guards), Gap-10 (history/SSE finalize)
+> Rust'a taşındı → ✅. Kalan boşluklar: **Gap-1** (retry engine), **Gap-5** (disk alanı),
+> **Gap-6** (arşiv extract), **Gap-7** (seed lifecycle), **Gap-8** (stray temp), **Gap-9**
+> (interrupted resume), **Gap-11** (1fichier provider zinciri, şu an stub).
 
 ---
 
@@ -358,5 +364,5 @@ henüz bir karşılığı yok. Nadir/hatalı dallar özellikle işaretlendi.
 - [ ] `Q9` stray temp-root temizliği — **Rust yok**
 - [ ] `M0` restart sonrası resume — **Rust session ephemral, torrent resume kaybolur**
 - [ ] `Q6ok→Q7` seed sonrası temizlik/iptal — **Rust yok**
-- [ ] `H0..H12` HTTP-direct tüm alt ağaç — **Rust yok**
+- [x] `H0..H12` HTTP-direct tüm alt ağaç — **Rust ✅ (Gap-4: vimm/archive.org/lolroms + guards)**
 - [ ] `OF0..OF18` 1fichier provider zinciri — **Rust yok**
