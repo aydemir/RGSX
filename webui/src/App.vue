@@ -4,6 +4,7 @@ import { connectSSE, apiGet, apiPost } from './api.js'
 import { t as _t, getLocale, setLocale, STRINGS } from './i18n.js'
 import QBittorrent from './components/QBittorrent.vue'
 import Support from './components/Support.vue'
+import BrowseDirectories from './components/BrowseDirectories.vue'
 
 const connected = ref(false)
 const lastEvent = ref('')
@@ -50,7 +51,8 @@ const DEFAULT_SETTINGS = {
   max_simultaneous_downloads: 3,
   sources: { mode: 'rgsx', custom_url: '' },
   symlink: { enabled: false, target_directory: '' },
-  accessibility: false
+  accessibility: false,
+  roms_folder: ''
 }
 function normalizeSettings(s) {
   s = s || {}
@@ -66,6 +68,7 @@ const systemInfo = ref(null)
 const languages = ref([])
 const dataLang = ref('')
 const saveMsg = ref('')
+const openBrowse = ref(false)
 
 // ===================== SSE =====================
 let es = null
@@ -394,6 +397,13 @@ function changeDataLang(l) {
   apiGet('/api/translations?lang=' + encodeURIComponent(l)).catch(() => {})
   if (settings.value) { settings.value.language = l; saveSettings() }
 }
+async function onBrowseSelect(p) {
+  if (settings.value) settings.value.roms_folder = p
+  openBrowse.value = false
+  await saveSettings()
+  saveMsg.value = tt('browse_restart_note')
+  setTimeout(() => { if (saveMsg.value === tt('browse_restart_note')) saveMsg.value = '' }, 6000)
+}
 
 // ===================== Tab switching =====================
 async function switchTab(t) {
@@ -636,6 +646,14 @@ async function switchTab(t) {
           <label>Sembolik bağ (symlink)</label>
           <input type="checkbox" v-model="settings.symlink.enabled" @change="saveSettings()" />
         </div>
+        <div class="field">
+          <label>{{ tt('roms_folder') }}</label>
+          <div class="browse-row">
+            <input type="text" v-model="settings.roms_folder" @change="saveSettings()" placeholder="varsayılan" />
+            <button class="browse-btn" @click="openBrowse = true">📂 {{ tt('browse') }}</button>
+          </div>
+        </div>
+        <BrowseDirectories v-if="openBrowse" :current-path="settings.roms_folder" @select="onBrowseSelect" @close="openBrowse = false" />
         <QBittorrent />
         <p v-if="saveMsg" class="saved">{{ saveMsg }}</p>
       </template>
@@ -737,4 +755,8 @@ small { color: #8b949e; font-weight: normal; }
 .field label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
 .field select, .field input[type=text], .field input[type=number] { background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
 .saved { color: #66ff66; font-size: 13px; }
+.browse-row { display: flex; gap: 8px; }
+.browse-row input { flex: 1; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
+.browse-btn { background: #007bff; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+.browse-btn:hover { background: #0069d9; }
 </style>

@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-21
 - **title:** WebUI Browse-directories UI (Roms klasörü seçici)
-- **status:** todo
+- **status:** done
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ❌ **Hâlâ YOK.** Yeni App.vue'da `/api/browse-directories` çağrısı / klasör seçici modalı yok.
@@ -46,3 +46,17 @@ Settings sekmesi içinde "Roms klasörü seç" modalı olarak entegre edilir. Re
 
 - Ayarlar'da klasör seçici modal açılır; path `/api/browse-directories` ile gezilebilir (parent/drive/seç).
 - Seçim Settings'e yazılır.
+
+## Done (2026-08-15, commit feat(webui): browse-directories klasör seçici)
+- `webui/src/components/BrowseDirectories.vue` (yeni) — klasör ağacı modalı: başlık + mevcut path gösterimi,
+  dizin listesi (tıkla -> içine gir), üst dizin/Sürücüler butonu, "Bu klasörü seç" (yeşil #28a745),
+  İptal (kırmızı #dc3545). Python `app.js:2611/2622` akışı birebir (aç -> gez -> seç -> kapat).
+- Backend kontratı (`api.rs:297` `browse_directories`): `GET /api/browse-directories?path=...`. Saf-Rust modunda
+  `{success:true, current_path, directories:[{name,path}]}`; katalog varsa Python proxy'si `parent_path`/`is_drive`
+  de döndürür. Geçersiz path -> 400 `{success:false, error}`. Frontend her iki şekli de işler; `parent_path`
+  yoksa client-side `deriveParent()` ile üst dizin hesaplanır.
+- `webui/src/App.vue` — `roms_folder` ayarı DEFAULT_SETTINGS'e eklendi; Settings sekmesinde metin input +
+  "📂 Gözat" butonu (`#007bff`) modalı açar. Seçim `settings.roms_folder`'a yazılır, kaydedilir, yeniden başlatma
+  notu gösterilir (Python `app.js:2676` restart uyarısı paraleli).
+- `webui/src/i18n.js` — tr/en browse/roms_folder dizgeleri eklendi.
+- **Hata durumu:** erişilemez/geçersiz dizin (400) veya ağ hatası -> kırmızı `#dc3545` net mesaj; sessiz başarısızlık yok.
