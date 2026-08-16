@@ -180,7 +180,7 @@ echo [%DATE% %TIME%] manager-bin verified >> "%LOG_FILE%"
 :: =============================================================================
 :: Arret de l'instance existante (evite conflit de port / fichier verrouille)
 :: =============================================================================
-taskkill /F /IM manager-bin.exe >nul 2>&1
+taskkill /F /IM manager-bin.exe /T 2>nul
 if !ERRORLEVEL! EQU 0 (
     echo       %ESC%%YELLOW%^> Existing manager-bin.exe stopped%ESC%%RESET%
     echo [%DATE% %TIME%] Previous manager-bin.exe terminated >> "%LOG_FILE%"
