@@ -47,6 +47,20 @@ sürekli tut.
 Harita ile codegraph çelişirse HER ZAMAN codegraph'e güven, harita
 sadece hız için bir özet, gerçek kaynak değil.
 
+## Cross-Platform Standartları (Windows/Linux)
+
+Rust workspace (`manager-rs/`) hem Linux (proot/CI) hem Windows (manager-windows, NSIS) hedeflerinde derlenmelidir. Aşağıdaki kurallar zorunludur:
+
+1. **Platform izolasyonu:** Linux/POSIX özel kodlar (sinyaller, `/proc` okumaları, Unix socketler, `fork`, `nix` çağrıları) mutlaka `#[cfg(unix)]` veya `#[cfg(target_os = "linux")]` bloğuna alınmalıdır.
+2. **Windows izolasyonu:** Windows özel kodlar `#[cfg(windows)]` altına yazılmalı, mümkünse platform bağımsız alternatif (`std::path`, `std::fs`) tercih edilmelidir.
+3. **Yol birleştirme:** `Path` birleştirmelerinde asla elle `/` veya `\` string formatlaması yapılmamalı; `std::path::PathBuf` ve `.join()` kullanılmalıdır. Hardcoded POSIX yolları (`/var`, `/tmp`, `/proc`) Windows derlemesini kırar.
+4. **Cargo.toml ayrımı:** Platform bağımlı crate'ler (`nix`, `signal-hook`, `procfs` vb.) `[target.'cfg(unix)'.dependencies]` ve `[target.'cfg(windows)'.dependencies]` altında ayrıştırılmalıdır; workspace ortak `[dependencies]`'e konmamalıdır.
+5. **Çapraz derleme kontrolü:** Windows'a özgü bir değişiklik yapıldığında en azından `cargo check --target x86_64-pc-windows-gnu` (veya `cargo build` cross) ile doğrulanmalı; yalnız Linux testi geçti demek yeterli değildir.
+
+## Yarım İş Bırakma Yasağı
+
+Kod yazılırken "sonraki faza bırakıldı", `TODO`, ya da canlı akıştan kopuk bırakma yapılmayacaktır. Tüm modüller çağıran katmanlara (caller chain) bizzat bağlanacaktır; yarım imza, stub fonksiyon veya bağlanmamış public API kabul edilmez. Bir modülün gerçek bir tüketicisi yoksa o modül görev tamamlanmış sayılmaz.
+
 ## Analitik Problem Çözme & Yanıt Metodolojisi
 
 Her görevde aşağıdaki disiplin uygulanır:
