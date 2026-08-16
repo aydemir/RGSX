@@ -31,6 +31,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
+pub use manager_core::extract::ExtractHint;
+
 /// İndirme ilerleme olayı — engine'den WebUI'ye canlı akış için.
 ///
 /// `downloaded`/`total` bayt cinsinden; `speed` MiB/s; `finished` torrent'in
@@ -64,6 +66,8 @@ pub enum BridgeError {
     DiskSpace(String),
     /// Hedef dizine yazma izni yok (indirme öncesi ön-kontrol).
     PermissionDenied(String),
+    /// GAP-6 — indirme sonrası arşiv açma hatası (bozuk arşiv → FAILED_PERMANENT).
+    Extract(String),
 }
 
 impl std::fmt::Display for BridgeError {
@@ -76,6 +80,7 @@ impl std::fmt::Display for BridgeError {
             BridgeError::Timeout(m) => write!(f, "bridge timeout: {m}"),
             BridgeError::DiskSpace(m) => write!(f, "bridge disk space: {m}"),
             BridgeError::PermissionDenied(m) => write!(f, "bridge permission denied: {m}"),
+            BridgeError::Extract(m) => write!(f, "bridge extract: {m}"),
         }
     }
 }
@@ -443,13 +448,25 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
         &self,
         source_url: &str,
         dest_path: &std::path::Path,
+        extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
+        let hint = extract_hint
+            .map(|h| {
+                json!({
+                    "auto_extract": h.auto_extract,
+                    "is_zip_non_supported": h.is_zip_non_supported,
+                    "platform_folder": h.platform_folder,
+                    "platform": h.platform,
+                })
+            })
+            .unwrap_or(Value::Null);
         let v = self
             .call(
                 "download_torrent",
                 json!({
                     "source_url": source_url,
                     "dest_path": dest_path.to_string_lossy().to_string(),
+                    "extract_hint": hint,
                 }),
             )
             .await?;
@@ -474,9 +491,10 @@ pub trait TorrentBackend: Send + Sync + std::fmt::Debug {
         dest_path: &std::path::Path,
         _task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
+        extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         let _ = on_progress;
-        self.download_torrent(source_url, dest_path).await
+        self.download_torrent(source_url, dest_path, extract_hint).await
     }
 }
 

@@ -102,6 +102,15 @@ fn has_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str
     headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
 }
 
+/// Bridge/placeholder/proxy sözleşme testleri için native DDL yolunu kapatır
+/// (`RGSX_NATIVE_DOWNLOAD=0`): isteklerin `native_ddl_download`'a sapmasını önler,
+/// böylece non-torrent doğrudan URL'ler bridge/placeholder/katalog-proxy yoluna düşer.
+/// Idempotent: değeri "0" yapar; hiçbir test sonunda kaldırmaz (paralel koşumda diğer
+/// testleri etkilememek ve env yarışını önlemek için). Tüm bu testler aynı değeri ister.
+fn disable_native_download() {
+    std::env::set_var("RGSX_NATIVE_DOWNLOAD", "0");
+}
+
 // ---------------------------------------------------------------------------
 // GET / — page d'accueil
 // ---------------------------------------------------------------------------
@@ -447,10 +456,14 @@ async fn test_settings_post() {
 /// Faz 12f — `RGSX_NATIVE_SETTINGS=1` ile native ayar round-trip'i.
 #[tokio::test]
 async fn test_settings_native_roundtrip() {
-    let dir = std::env::temp_dir().join("rgsx_settings_native_test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("rgsx_settings.json");
-    let _ = std::fs::remove_file(&path);
+    // Sahte (izole) ayar dosyası — diske bağımlı kalıcı yol yerine TempDir kullanılır.
+    // Paralel testlerle çakışmaması ve artık dosya bırakmaması için.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("rgsx_settings.json");
+
+    // Mevcut env değerlerini koru (paralel koşumda diğer testleri etkilememek için).
+    let prev_native = std::env::var("RGSX_NATIVE_SETTINGS").ok();
+    let prev_path = std::env::var("RGSX_SETTINGS_PATH").ok();
     std::env::set_var("RGSX_NATIVE_SETTINGS", "1");
     std::env::set_var("RGSX_SETTINGS_PATH", &path);
 
@@ -484,10 +497,15 @@ async fn test_settings_native_roundtrip() {
     assert_eq!(v["music_enabled"], json!(false));
     assert!(v.get("api_keys").is_none());
 
-    // Temizlik.
-    let _ = std::fs::remove_file(&path);
-    std::env::remove_var("RGSX_NATIVE_SETTINGS");
-    std::env::remove_var("RGSX_SETTINGS_PATH");
+    // Env'i önceki haline döndür (TempDir drop'ta kendi dizinini siler).
+    match prev_native {
+        Some(v) => std::env::set_var("RGSX_NATIVE_SETTINGS", v),
+        None => std::env::remove_var("RGSX_NATIVE_SETTINGS"),
+    }
+    match prev_path {
+        Some(v) => std::env::set_var("RGSX_SETTINGS_PATH", v),
+        None => std::env::remove_var("RGSX_SETTINGS_PATH"),
+    }
 }
 
 #[tokio::test]
@@ -554,6 +572,7 @@ async fn test_download_direct_url_success() {
 
 #[tokio::test]
 async fn test_download_direct_url_missing_game_name() {
+    disable_native_download();
     let (status, _, body) =
         call_post(empty_app(), "/api/download", json!({"url": "https://exemple.invalid/rom.zip", "platform": "NES"})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -594,6 +613,7 @@ impl manager_bridge::TorrentBackend for FakeEngine {
         &self,
         source_url: &str,
         dest_path: &std::path::Path,
+        _extract_hint: Option<manager_bridge::ExtractHint>,
     ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
         self.calls
             .lock()
@@ -651,6 +671,7 @@ fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
 
 #[tokio::test]
 async fn test_download_with_bridge_forwards_to_engine() {
+    disable_native_download();
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
     let bridge: Arc<dyn manager_bridge::TorrentBackend> =
         Arc::new(FakeEngine { calls: calls.clone() });
@@ -760,6 +781,7 @@ impl manager_bridge::TorrentBackend for FakeProgressEngine {
         dest_path: &std::path::Path,
         _task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>>,
+        _extract_hint: Option<manager_bridge::ExtractHint>,
     ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
         let _ = _task_id;
         if let Some(cb) = &on_progress {
@@ -835,6 +857,7 @@ async fn test_download_streams_progress_callback() {
 /// Python'a proxy edilmeli — engine'e DÜŞMEMELİ (TASK-002l davranış kuralı).
 #[tokio::test]
 async fn test_download_non_torrent_url_still_proxies_with_catalog() {
+    disable_native_download();
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
     let bridge: Arc<dyn manager_bridge::TorrentBackend> =
         Arc::new(FakeEngine { calls: calls.clone() });
@@ -859,6 +882,7 @@ async fn test_download_non_torrent_url_still_proxies_with_catalog() {
 
 #[tokio::test]
 async fn test_download_bridge_none_keeps_placeholder() {
+    disable_native_download();
     let (status, _, body) =
         call_post(empty_app(), "/api/download", json!({"url": "https://exemple.invalid/rom.zip", "game_name": "Rom", "platform": "NES"})).await;
     assert_eq!(status, StatusCode::OK);
@@ -1644,6 +1668,7 @@ impl manager_bridge::TorrentBackend for FlakyEngine {
         dest_path: &std::path::Path,
         _task_id: Option<String>,
         _on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>>,
+        _extract_hint: Option<manager_bridge::ExtractHint>,
     ) -> Result<std::path::PathBuf, manager_bridge::BridgeError> {
         let n = self.calls.lock().unwrap().len();
         self.calls.lock().unwrap().push("download".to_string());

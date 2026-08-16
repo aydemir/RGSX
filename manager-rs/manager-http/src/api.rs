@@ -420,7 +420,12 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     // ile; debrid yapılandırılmamışsa `DownloadManager` DirectResolver'a düşer ve düz
     // HTTP kaynak doğrudan indirilir. Kapalıyken mevcut Python proxy korunur.
     // gap-27: saf-Rust varsayılan = true (native DDL açık). Flag yine env ile override edilebilir.
-    if std::env::var("RGSX_NATIVE_DOWNLOAD").map(|v| v == "1").unwrap_or(true) {
+    // `native_download` her iki native DDL kesiğinde de kullanılır (aşağıdaki ikinci blok dahil)
+    // böylece flag kapalıyken istekler bridge/placeholder/proxy yoluna düşer.
+    let native_download = std::env::var("RGSX_NATIVE_DOWNLOAD")
+        .map(|v| v == "1")
+        .unwrap_or(true);
+    if native_download {
         if let Some(direct) = direct_url {
             if !is_torrent_url(direct) {
                 if let Ok(manager_download::DownloadSource::DirectHttp(resolved)) =
@@ -482,8 +487,9 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
 
         // DÜZELTME: archive.org gibi düz HTTP (.zip) kaynakları torrent engine'ine
         // (librqbit) GÖNDERİLMEMELİ — aksi halde "error decoding torrent" hatası verir.
-        // Katalog yoksa (native mod) doğrudan HTTP indirme yapılır.
-        if !is_torrent_url(&game_url) {
+        // Katalog yoksa (native mod) doğrudan HTTP indirme yapılır. Native DDL kapalıyken
+        // bu blok atlanır ve istek bridge/placeholder yoluna düşer (flag parity + test izolasyonu).
+        if !is_torrent_url(&game_url) && native_download {
             match manager_download::DownloadManager::new().resolve(&game_url) {
                 Ok(manager_download::DownloadSource::DirectHttp(resolved)) => {
                     return native_ddl_download(state, game_url, resolved, platform, gname).await;
@@ -565,8 +571,31 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                             }
                             sse::publish(&cb_state.events, "progress", &json!(data.progress));
                         }));
+                    // GAP-6: indirme sonrası otomatik çıkarma ipucu üret.
+                    // `platform` + `get_auto_extract()` + URL uzantısından türetilir
+                    // (Python `should_force_extract` parity: BIOS/PS3 zorunlu, ya da
+                    // zip/rar + auto_extract). Catalog yoksa (native) URL uzantısı
+                    // `is_zip_non_supported` için makul bir heuristik'tir.
+                    let auto_extract = manager_core::settings::Settings::load().get_auto_extract();
+                    let is_zip = std::path::Path::new(&current_url)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("zip") || e.eq_ignore_ascii_case("rar"))
+                        .unwrap_or(false);
+                    let extract_hint = manager_core::extract::ExtractHint {
+                        auto_extract,
+                        is_zip_non_supported: is_zip,
+                        platform_folder: p.to_ascii_lowercase(),
+                        platform: p.clone(),
+                    };
                     let res = bridge
-                        .download_torrent_progress(&current_url, &dest_path, Some(current_task_id.clone()), on_progress)
+                        .download_torrent_progress(
+                            &current_url,
+                            &dest_path,
+                            Some(current_task_id.clone()),
+                            on_progress,
+                            Some(extract_hint),
+                        )
                         .await;
                     match res {
                         Ok(src) => {
@@ -1394,7 +1423,9 @@ fn push_queued_history_entry(
 fn classify_bridge_error(err: &BridgeError) -> ErrorClass {
     match err {
         BridgeError::Timeout(_) => ErrorClass::Transient,
-        BridgeError::DiskSpace(_) | BridgeError::PermissionDenied(_) => ErrorClass::Permanent,
+        BridgeError::DiskSpace(_)
+        | BridgeError::PermissionDenied(_)
+        | BridgeError::Extract(_) => ErrorClass::Permanent,
         _ => {
             let msg = err.to_string();
             retry::classify_error(&msg, None)

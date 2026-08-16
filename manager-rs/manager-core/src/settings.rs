@@ -111,6 +111,11 @@ pub struct Settings {
     pub platform_custom_paths: HashMap<String, String>,
     #[serde(default = "default_max_dl")]
     pub max_simultaneous_downloads: u32,
+    /// GAP-6 (Madde A): indirme sonrası otomatik arşiv açma ayarı. Python
+    /// `rgsx_settings.auto_extract` parity — native modda persist edilir
+    /// (eskiden `extra`'dan siliniyordu). Varsayılan: açık.
+    #[serde(default = "default_true")]
+    pub auto_extract: bool,
     /// `game_filters` ve bilinmeyen ek alanlar (round-trip koruması).
     #[serde(flatten, default)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -189,6 +194,7 @@ impl Default for Settings {
             nintendo_layout: false,
             roms_folder: String::new(),
             web_service_at_boot: false,
+            auto_extract: true,
             last_gamelist_update: None,
             last_gamelist_prompt_remote_update: None,
             global_sort_option: default_sort(),
@@ -225,7 +231,7 @@ impl Settings {
         let mut v = serde_json::to_value(self)?;
         if let Some(obj) = v.as_object_mut() {
             // Python `_api_settings_post` bu alanları save öncesi `del` eder.
-            obj.remove("auto_extract");
+            // NOT: `auto_extract` GAP-6 (Madde A) ile native'de persist edilir.
             obj.remove("api_keys");
             obj.remove("web_service_at_boot");
             obj.remove("custom_dns_at_boot");
@@ -235,10 +241,14 @@ impl Settings {
 
     /// Geçici/ayrı-mekanizma alanlarını `extra`'dan düşür (dosyadan okunmuşsa).
     fn normalize_transient(&mut self) {
-        self.extra.remove("auto_extract");
         self.extra.remove("api_keys");
         self.extra.remove("web_service_at_boot");
         self.extra.remove("custom_dns_at_boot");
+    }
+
+    /// GAP-6 (Madde A): `auto_extract` ayarını oku (Python `get_auto_extract` parity).
+    pub fn get_auto_extract(&self) -> bool {
+        self.auto_extract
     }
 
     /// Tip/invariant doğrulaması. Python'ın yapmadığı ama native'nin garanti ettiği

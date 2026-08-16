@@ -4,6 +4,7 @@
 
 pub mod contract;
 pub mod disk;
+pub mod extract;
 pub mod retry;
 pub mod secrets;
 pub mod state;

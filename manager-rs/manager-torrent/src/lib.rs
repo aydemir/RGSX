@@ -22,6 +22,7 @@ use std::sync::Arc;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session, TorrentStatsState};
 use manager_bridge::{BridgeError, ProgressEvent, TorrentBackend};
+use manager_core::extract::ExtractHint;
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
@@ -114,8 +115,9 @@ impl LibrqbitEngine {
         &self,
         source: AddTorrent<'_>,
         dest_path: &std::path::Path,
+        extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
-        self.download_torrent_source_with_progress(source, dest_path, None, None).await
+        self.download_torrent_source_with_progress(source, dest_path, None, None, extract_hint).await
     }
 
     /// `download_torrent_source`'un canlı progress yayınlayan hali (TASK-002m).
@@ -132,6 +134,7 @@ impl LibrqbitEngine {
         dest_path: &std::path::Path,
         task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
+        extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         let handle = self.add_torrent(source).await?;
 
@@ -212,6 +215,14 @@ impl LibrqbitEngine {
             code: -32000,
             message: format!("dosya sonlandırılamadı ({found:?} → {dest_path:?}): {e}"),
         })?;
+
+        // GAP-6: indirme sonrası zorunlu arşiv açma (BIOS/PS3 redump /
+        // is_zip_non_supported parity). `extract_hint` yoksa atlanır — API
+        // katmanı platform bilgisini geçirir.
+        if let Some(hint) = &extract_hint {
+            run_post_download_extract(dest_path, dest_dir, hint).await?;
+        }
+
         if let Some(cb) = &on_progress {
             cb(ProgressEvent {
                 downloaded: last_total,
@@ -385,6 +396,60 @@ pub fn link_or_copy(src: &std::path::Path, dst: &std::path::Path) -> std::io::Re
     std::fs::hard_link(src, dst).or_else(|_| std::fs::copy(src, dst).map(|_| ()))
 }
 
+/// GAP-6 — indirme sonrası arşiv açma kararı + uygulaması (unit-test edilebilir).
+///
+/// `extract_hint` `None` ise veya `should_force_extract` false ise extract
+/// atlanır (indirme başarılı sayılır). Zorunlu extract durumunda:
+/// - Başarılı açma → bilgi logu.
+/// - PS3 ISO decrypt / desteklenmeyen format (RAR) → indirme başarısız sayılmaz,
+///   uyarı ile atlanır (kapsam dışı parity).
+/// - Bozuk arşiv → `BridgeError::Extract` (BadZipFile parity, `FAILED_PERMANENT`).
+pub(crate) async fn run_post_download_extract(
+    dest_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+    hint: &ExtractHint,
+) -> Result<(), BridgeError> {
+    let force = manager_core::extract::should_force_extract(
+        hint.auto_extract,
+        hint.is_zip_non_supported,
+        &hint.platform_folder,
+        &hint.platform,
+    );
+    if !force {
+        return Ok(());
+    }
+    match manager_core::extract::extract_archive(dest_path, dest_dir) {
+        Ok(outcome) => {
+            tracing::info!(
+                files = outcome.extracted_files,
+                dst = %dest_path.display(),
+                "GAP-6: arşiv otomatik açıldı"
+            );
+            Ok(())
+        }
+        // Bilinçli kapsam dışı → indirme başarısız sayılmaz, uyarı ile atlanır.
+        Err(manager_core::extract::ExtractError::Ps3DecryptUnsupported) => {
+            tracing::warn!(
+                dst = %dest_path.display(),
+                "GAP-6: PS3 ISO şifre çözme Rust'ta desteklenmiyor; extract atlandı"
+            );
+            Ok(())
+        }
+        Err(manager_core::extract::ExtractError::UnsupportedFormat { ext }) => {
+            tracing::warn!(
+                dst = %dest_path.display(),
+                "GAP-6: desteklenmeyen arşiv formatı ({ext}); extract atlandı"
+            );
+            Ok(())
+        }
+        // Bozuk arşiv → gerçek hata (BadZipFile parity, FAILED_PERMANENT).
+        Err(e) => Err(BridgeError::Extract(format!(
+            "arşiv açılamadı ({}): {e}",
+            dest_path.display()
+        ))),
+    }
+}
+
 #[async_trait::async_trait]
 impl TorrentBackend for LibrqbitEngine {
     fn engine(&self) -> &'static str {
@@ -424,7 +489,27 @@ impl TorrentBackend for LibrqbitEngine {
                 // method'una aynı parametrelerle proxy eder.
                 let source = params.get("source_url").and_then(Value::as_str).unwrap_or_default();
                 let dest = params.get("dest_path").and_then(Value::as_str).unwrap_or_default();
-                match self.download_torrent(source, std::path::Path::new(dest)).await {
+                let hint = params
+                    .get("extract_hint")
+                    .and_then(Value::as_object)
+                    .map(|o| ExtractHint {
+                        auto_extract: o.get("auto_extract").and_then(Value::as_bool).unwrap_or(false),
+                        is_zip_non_supported: o
+                            .get("is_zip_non_supported")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        platform_folder: o
+                            .get("platform_folder")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        platform: o
+                            .get("platform")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    });
+                match self.download_torrent(source, std::path::Path::new(dest), hint).await {
                     Ok(p) => Ok(json!(p.to_string_lossy().to_string())),
                     Err(e) => Err(e),
                 }
@@ -474,9 +559,14 @@ impl TorrentBackend for LibrqbitEngine {
         &self,
         source_url: &str,
         dest_path: &std::path::Path,
+        extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
-        self.download_torrent_source(AddTorrent::from_url(source_url.to_string()), dest_path)
-            .await
+        self.download_torrent_source(
+            AddTorrent::from_url(source_url.to_string()),
+            dest_path,
+            extract_hint,
+        )
+        .await
     }
 
     /// TASK-002m: canlı progress akışı — `download_torrent_source_with_progress`
@@ -488,12 +578,14 @@ impl TorrentBackend for LibrqbitEngine {
         dest_path: &std::path::Path,
         task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
+        extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
         self.download_torrent_source_with_progress(
             AddTorrent::from_url(source_url.to_string()),
             dest_path,
             task_id,
             on_progress,
+            extract_hint,
         )
         .await
     }
@@ -533,5 +625,138 @@ impl TorrentBackend for LibrqbitEngine {
     /// Gap-3: tüm aktif indirmeleri iptal eder; iptal edilen sayıyı döner.
     async fn cancel_all(&self) -> Result<usize, BridgeError> {
         self.cancel_all_tasks().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use manager_core::extract::ExtractHint;
+    use std::io::Write;
+
+    fn tmp_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rgsx_gap6_{}_{}_{}",
+            label,
+            std::process::id(),
+            uuid_part()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn uuid_part() -> u64 {
+        // Çakışmayı önlemek için basit bir NS sayaç (testler paralel koşabilir).
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static C: AtomicU64 = AtomicU64::new(0);
+        C.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn write_file(path: &std::path::Path, bytes: &[u8]) {
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let mut f = std::fs::File::create(path).unwrap();
+        f.write_all(bytes).unwrap();
+    }
+
+    fn make_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        use zip::write::SimpleFileOptions;
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in entries {
+            writer.start_file(*name, opts).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    /// `ExtractHint` gönderildiğinde (force=true) arşiv hedef dizine açılır.
+    #[tokio::test]
+    async fn gap6_hint_forces_archive_extraction_to_target() {
+        let dir = tmp_dir("extract");
+        let zip = dir.join("game.zip");
+        make_zip(&zip, &[("roms/foo.bin", b"AAAA"), ("readme.txt", b"BBBB")]);
+        let dest_dir = dir.join("out");
+        let hint = ExtractHint {
+            auto_extract: true,
+            is_zip_non_supported: true,
+            platform_folder: "snes".to_string(),
+            platform: "Super Nintendo".to_string(),
+        };
+        assert!(manager_core::extract::should_force_extract(
+            hint.auto_extract,
+            hint.is_zip_non_supported,
+            &hint.platform_folder,
+            &hint.platform,
+        ));
+
+        let res = run_post_download_extract(&zip, &dest_dir, &hint).await;
+        assert!(res.is_ok(), "force extract hata vermemeli: {res:?}");
+        assert!(
+            dest_dir.join("roms/foo.bin").is_file(),
+            "arşiv hedef dizine açılmalı"
+        );
+        assert!(dest_dir.join("readme.txt").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `ExtractHint` yoksa / force=false ise extract atlanır (indirme başarılı).
+    #[tokio::test]
+    async fn gap6_no_hint_or_no_force_skips_extraction() {
+        let dir = tmp_dir("skip");
+        let zip = dir.join("game.zip");
+        make_zip(&zip, &[("a.bin", b"X")]);
+        let dest_dir = dir.join("out");
+
+        // hint yok → atlanır
+        let res = run_post_download_extract(&zip, &dest_dir, &ExtractHint::default()).await;
+        assert!(res.is_ok());
+        assert!(
+            !dest_dir.join("a.bin").exists(),
+            "force=false iken extract atlanmalı"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Desteklenmeyen format (RAR) → indirme başarısız sayılmaz, uyarı ile atlanır.
+    #[tokio::test]
+    async fn gap6_unsupported_format_does_not_fail_download() {
+        let dir = tmp_dir("unsupported");
+        let rar = dir.join("game.rar");
+        write_file(&rar, b"rar-data");
+        let dest_dir = dir.join("out");
+        let hint = ExtractHint {
+            auto_extract: true,
+            is_zip_non_supported: true,
+            platform_folder: "snes".to_string(),
+            platform: "Super Nintendo".to_string(),
+        };
+        let res = run_post_download_extract(&rar, &dest_dir, &hint).await;
+        assert!(res.is_ok(), "RAR desteklenmiyor ama indirme başarısız olmamalı");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Çıkarılamaz/kötü arşiv → `BridgeError::Extract` (FAILED_PERMANENT) döner.
+    #[tokio::test]
+    async fn gap6_corrupt_archive_returns_extract_error() {
+        let dir = tmp_dir("corrupt");
+        let zip = dir.join("bad.zip");
+        write_file(&zip, b"this is not a zip");
+        let dest_dir = dir.join("out");
+        let hint = ExtractHint {
+            auto_extract: true,
+            is_zip_non_supported: true,
+            platform_folder: "snes".to_string(),
+            platform: "Super Nintendo".to_string(),
+        };
+        let res = run_post_download_extract(&zip, &dest_dir, &hint).await;
+        assert!(
+            matches!(res, Err(BridgeError::Extract(_))),
+            "bozuk arşiv Extract hatası vermeli, geldi: {res:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
