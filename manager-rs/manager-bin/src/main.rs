@@ -188,21 +188,24 @@ fn open_folder(path: &str) {
 }
 
 fn main() {
+    // gap-26: tracing İLK (path-resolution logları görünsün), ardından single-thread
+    // resolve_paths() + tokio runtime. std::env::set_var thread-safe DEĞİL (Rust 1.80+
+    // unsafe) — run() öncesi tek thread'de güvenli.
+    tracing_subscriber::fmt()
+        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
+        .init();
+
     // gap-26 ZORUNLU SIRA: path-resolution TEK thread'de, tokio runtime BAŞLAMADAN ÖNCE.
-    // std::env::set_var thread-safe DEĞİL (Rust 1.80+ unsafe) — burada güvenli.
-    paths::resolve_paths();
+    let paths = paths::resolve_paths();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
-    rt.block_on(run());
+    rt.block_on(run(paths));
 }
 
-async fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
-        .init();
+async fn run(paths: paths::RgsxPaths) {
 
     let port: u16 = {
         // gap-27: saf-Rust varsayılan = true (port 5000). Flag yine env ile override edilebilir.
@@ -238,13 +241,11 @@ async fn run() {
         tracing::info!("history yüklendi: {} entry ({}", data.history.len(), hp.display());
     }
     data.history_path = history_path;
-    // WebUI statik kökü: `RGSX_WEBUI_DIR` set ise onu kullan, yoksa bridge
-    // script'inin yanındaki `static/` klasörü (varsa).
-    // gap-26: RGSX_WEBUI_DIR artık resolve_paths() tarafından türetilir (roms/ports/RGSX/webui).
-    let static_root = std::env::var("RGSX_WEBUI_DIR")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from);
+    // WebUI statik kökü: gap-26 — resolve_paths()'in türettinceği `webui_dir` doğrudan
+    // kullanılır. `RGSX_WEBUI_DIR` env'den tekrar okumak set_var→var zincirinde hata
+    // vermişti (placeholder "<h1>RGSX Manager" servisi). env_or() override (RGSX_WEBUI_DIR
+    // set ise) paths.rs'de hâlâ geçerlidir; fakat static_root env'ye bağlanmaz.
+    let static_root = Some(paths.webui_dir.clone());
     // Faz 12c — native catalog: `RGSX_NATIVE_CATALOG=1` ise Python'sız local
     // dosyalardan üretir (systems_list.json, games/, languages/, images/). Komut
     // POST'ları için yine de Python'a proxy edebilir (`RGSX_PYTHON_MANAGER_URL`).

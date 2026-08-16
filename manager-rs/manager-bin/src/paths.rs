@@ -115,6 +115,9 @@ pub fn resolve_paths() -> RgsxPaths {
     let (root, rgsx_dir) = find_anchor();
 
     let webui_dir = env_or(&rgsx_dir.join("webui"), "RGSX_WEBUI_DIR");
+    if !webui_dir.is_dir() {
+        tracing::warn!("WebUI dizini bulunamadi; placeholder UI servisi: {}", webui_dir.display());
+    }
     let data_dir = env_or(
         &root.join("saves").join("ports").join("rgsx"),
         "RGSX_DATA_DIR",
