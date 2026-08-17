@@ -7,12 +7,63 @@
 //! portunu (dış ROM kaynak istemcileri) ayrı bir alt faz'a erteletir. `catalog`
 //! `None` ise handler'lar mevcut placeholder davranışına düşer (geriye uyumlu).
 
+use std::collections::{HashMap, HashSet};
+
 use async_trait::async_trait;
+use manager_core::settings::Settings;
 use serde_json::Value;
 
 /// Katalog kaynağı hatası (proxy çökmesi → handler placeholder'a düşer).
 #[derive(Debug)]
 pub struct CatalogError(pub String);
+
+/// Oyun adını karşılaştırma için normalize eder (küçük harf + alfanümerik only).
+/// Python `normalize_game_name` eşleniği.
+pub fn norm_game_name(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
+/// Vue `stem(name)` ile birebir aynı: küçük harf + son soneki soy.
+/// `gameStatusOf` bu anahtarla bakar; `game_statuses` haritası da bu formda
+/// (ve tam küçük harfli adla) anahtarlanmalı ki ön yüz yeşil rozeti görsün.
+fn vue_stem(s: &str) -> String {
+    let lower = s.to_lowercase();
+    match lower.rfind('.') {
+        Some(i) if i > 0 => lower[..i].to_string(),
+        _ => lower,
+    }
+}
+
+/// Verilen dizindeki (özyinelemeli) dosyaların normalize stem'lerini toplar.
+/// Metadata/görsel uzantılarını atlar (oyun dosyası değil).
+fn collect_disk_stems(dir: &Path, out: &mut HashSet<String>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_disk_stems(&p, out);
+        } else if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+            let ext = p
+                .extension()
+                .and_then(|x| x.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(
+                ext.as_str(),
+                "json" | "txt" | "md" | "db" | "log" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp"
+            ) {
+                continue;
+            }
+            out.insert(norm_game_name(stem));
+        }
+    }
+}
 
 /// Katalog veri kaynağı — test'te `FakeCatalog` ile enjekte edilebilir.
 #[async_trait]
@@ -25,6 +76,25 @@ pub trait CatalogSource: Send + Sync {
     async fn post_binary(&self, route: &str, body: &Value) -> Result<(Vec<u8>, String), CatalogError>;
     /// Box-art görselini (ham bayt + content-type) proxy'ler.
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError>;
+
+    /// Faz 12.6a — diskte kurulu/indirilmiş oyunların taramayla bulunmuş listesi.
+    /// Dönüş: `platform_name ->` o platformda diskte bulunan oyun adları.
+    /// Varsayılan (Python proxy) boş döner; `NativeCatalog` gerçek taramayı yapar.
+    fn installed_list(&self) -> HashMap<String, Vec<String>> {
+        HashMap::new()
+    }
+
+    /// Faz 12.6a — `/api/game-status` yanıtı: `stem -> {status, platform, name}`.
+    /// Varsayılan boş `statuses` döner.
+    fn game_statuses(&self) -> Value {
+        serde_json::json!({ "statuses": {} })
+    }
+
+    /// Faz 12.6d — batch indirme için `platform + game_name` → oyun URL'i çözümü.
+    /// NativeCatalog katalogdan bulur; Python proxy varsayılanı `None` döner.
+    fn game_url(&self, _platform: &str, _game_name: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Python `ManagerHandler` (HTTP port `RGSX_PYTHON_MANAGER_URL`) proxy'si.
@@ -216,6 +286,17 @@ impl NativeCatalog {
         }
     }
 
+    /// Faz 12.6e — efektif ROM kökü: kullanıcı `settings.roms_folder` ayarladıysa
+    /// onu kullan, yoksa env `RGSX_ROMS_FOLDER` (self.roms_folder) fallback.
+    fn effective_roms_folder(&self) -> Option<PathBuf> {
+        let s = Settings::load();
+        let rf = s.roms_folder.trim();
+        if !rf.is_empty() {
+            return Some(PathBuf::from(rf));
+        }
+        self.roms_folder.clone()
+    }
+
     /// `systems_list.json` → normalize + runtime game-file filtresi (Python `load_sources`).
     fn load_sources(&self) -> Vec<Value> {
         let mut sources: Vec<Value> = match std::fs::read_to_string(&self.sources_file) {
@@ -263,14 +344,46 @@ impl NativeCatalog {
             .into_iter()
             .filter(|s| {
                 let name = s.get("platform_name").and_then(|v| v.as_str()).unwrap_or("");
-                name.is_empty() || existing_files.contains(&name.to_ascii_lowercase())
+                let folder = s.get("folder").and_then(|v| v.as_str()).unwrap_or("");
+                let ok_name = !name.is_empty() && existing_files.contains(&name.to_ascii_lowercase());
+                let ok_folder =
+                    !folder.is_empty() && existing_files.contains(&folder.to_ascii_lowercase());
+                name.is_empty() || ok_name || ok_folder
             })
             .collect()
     }
 
     /// `games/<platform>.json` → [{name,url,size}] (Python `load_games` sadeleştirilmiş).
+    /// Bir platformın oyun dosyasını çözer: önce `games/<platform_name>.json`,
+    /// yoksa `games/<folder>.json` (hem orijinal ad hem küçük harf). OTA katalog
+    /// verisi bazen klasör adını, bazen platform adını kullanır; her ikisini de
+    /// kabul ederiz ki `platform_name != folder` olan platformlar (ör. "Game Boy")
+    /// drop olmasın (Faz 12.1 — platform yükleme eksik veri sorunu).
+    fn games_file_for(&self, platform: &str) -> Option<PathBuf> {
+        let mut candidates: Vec<String> =
+            vec![platform.to_string(), platform.to_ascii_lowercase()];
+        if let Some(folder) = self
+            .load_sources()
+            .iter()
+            .find(|s| s.get("platform_name").and_then(|x| x.as_str()) == Some(platform))
+            .and_then(|s| s.get("folder").and_then(|x| x.as_str()))
+        {
+            candidates.push(folder.to_string());
+            candidates.push(folder.to_ascii_lowercase());
+        }
+        candidates
+            .iter()
+            .find_map(|c| {
+                let p = self.games_folder.join(format!("{c}.json"));
+                p.is_file().then_some(p)
+            })
+    }
+
     fn load_games(&self, platform: &str) -> Vec<(String, Option<String>, Option<String>)> {
-        let file = self.games_folder.join(format!("{platform}.json"));
+        let file = match self.games_file_for(platform) {
+            Some(f) => f,
+            None => return vec![],
+        };
         let data: Value = match std::fs::read_to_string(&file) {
             Ok(txt) => serde_json::from_str(&txt).unwrap_or(Value::Null),
             Err(_) => return vec![],
@@ -532,6 +645,114 @@ impl CatalogSource for NativeCatalog {
         }
         Err(CatalogError(format!("image bulunamadı: {platform}")))
     }
+
+    /// Faz 12.6a — diskte kurulu oyunların taraması.
+    ///
+    /// `RGSX_ROMS_FOLDER` (ya da data_dir altındaki olası ROM kökleri) içinde her
+    /// platformun `folder` (veya `platform_name`) dizinini özyinelemeli tarar;
+    /// katalogdaki oyun adıyla normalize stem eşleşen dosyaları "indirilmiş" sayar.
+    /// Python `history.scan_roms_for_downloaded_games` / `game_list.is_game_downloaded`
+    /// eşleniği.
+    fn installed_list(&self) -> HashMap<String, Vec<String>> {
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+
+        let data_dir = self
+            .sources_file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if let Some(r) = self.effective_roms_folder() {
+            roots.push(r);
+        }
+        for cand in [
+            data_dir.join("downloads"),
+            data_dir.join("roms").join("ports").join("RGSX"),
+            data_dir.join("roms"),
+            data_dir.join("ports").join("RGSX"),
+        ] {
+            if cand.is_dir() {
+                roots.push(cand);
+            }
+        }
+        if roots.is_empty() {
+            return out;
+        }
+
+        for s in self.load_sources() {
+            let name = s
+                .get("platform_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let folder = s
+                .get("folder")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&name)
+                .to_string();
+
+            let mut disk_stems: HashSet<String> = HashSet::new();
+            for root in &roots {
+                collect_disk_stems(&root.join(&folder), &mut disk_stems);
+                collect_disk_stems(&root.join(&name), &mut disk_stems);
+            }
+            if disk_stems.is_empty() {
+                continue;
+            }
+
+            let mut found: Vec<String> = Vec::new();
+            for (gname, _, _) in self.load_games(&name) {
+                // Katalog oyun adındaki soneki (".chd", ".zip"...) disk stem'i ile
+                // aynı şekilde soyup normalize et (Python `is_game_downloaded`).
+                let gstem = std::path::Path::new(&gname)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(gname.as_str())
+                    .to_string();
+                if disk_stems.contains(&norm_game_name(&gstem)) {
+                    found.push(gname);
+                }
+            }
+            if !found.is_empty() {
+                out.insert(name, found);
+            }
+        }
+        out
+    }
+
+    /// Vue `stem(name)` ile birebir aynı: küçük harf + son soneki soy.
+    /// Faz 12.6a — `/api/game-status` yanıtı. `installed_list` sonucunu
+    /// `stem -> {status:"downloaded", platform, name}` eşlemesine dönüştürür.
+    fn game_statuses(&self) -> Value {
+        let installed = self.installed_list();
+        let mut statuses: HashMap<String, Value> = HashMap::new();
+        for (platform, names) in &installed {
+            for name in names {
+                let val = serde_json::json!({
+                    "status": "downloaded",
+                    "platform": platform,
+                    "name": name,
+                });
+                // Vue `gameStatusOf` `s[stem(g.name)]` ve `s[g.name.toLowerCase()]`
+                // bakar; her ikisini de anahtarla.
+                statuses.insert(vue_stem(name), val.clone());
+                statuses.insert(name.to_lowercase(), val);
+            }
+        }
+        serde_json::json!({ "statuses": statuses })
+    }
+
+    /// Faz 12.6d — `platform + game_name` → katalogdaki oyun URL'i.
+    fn game_url(&self, platform: &str, game_name: &str) -> Option<String> {
+        self.load_games(platform)
+            .into_iter()
+            .find(|(n, u, _)| n == game_name && u.is_some())
+            .and_then(|(_, u, _)| u)
+    }
 }
 
 fn env_path(key: &str, default: PathBuf) -> PathBuf {
@@ -612,6 +833,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn platforms_resolve_by_folder() {
+        // Faz 12.1: `platform_name != folder` olan bir platformun oyun dosyası
+        // klasör adıyla (`gb.json`) isimlenmişse bile yüklenmeli (drop olmamalı).
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        write(
+            &root.join("systems_list.json"),
+            r#"[{"platform_name":"Game Boy","folder":"gb","platform_image":"gb.png"},{"platform_name":"NES","folder":"nes"}]"#,
+        );
+        // Oyun dosyası platform ADIYLA değil KLASÖR adıyla isimli:
+        write(
+            &root.join("games").join("gb.json"),
+            r#"[{"game_name":"Tetris","url":"http://x/tetris.zip","size":"0.5M"}]"#,
+        );
+        write(&root.join("games").join("nes.json"), r#"{"games":[]}"#);
+        let cat = NativeCatalog {
+            sources_file: root.join("systems_list.json"),
+            games_folder: root.join("games"),
+            images_folder: root.join("images"),
+            languages_folder: root.join("languages"),
+            roms_folder: None,
+            show_unsupported: true,
+            default_language: "en".into(),
+            python: None,
+        };
+        let v = cat.get_json("/api/platforms").await.unwrap();
+        assert_eq!(v["count"], 2, "tüm platformlar (name!=folder dahil) yüklenmeli");
+        let plats = v["platforms"].as_array().unwrap();
+        let gb = plats
+            .iter()
+            .find(|p| p["platform_name"] == "Game Boy")
+            .expect("Game Boy drop olmamalı");
+        assert_eq!(gb["games_count"], 1, "gb.json (folder ile isimli) çözülmeli");
+    }
+
+    #[tokio::test]
     async fn translations_shape() {
         let (_d, cat) = fixture();
         let v = cat.get_json("/api/translations").await.unwrap();
@@ -626,6 +883,54 @@ mod tests {
         let (bytes, ct) = cat.get_image("NES").await.unwrap();
         assert!(ct.starts_with("image/png"));
         assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn installed_list_detects_disk_roms() {
+        // Faz 12.6a: roms kökünde (RGSX_ROMS_FOLDER) bir platform klasörüne
+        // koyulan ROM dosyası, katalogdaki oyunla eşleşmeli ve `installed_list`
+        // içinde `downloaded` olarak görünmeli.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        write(
+            &root.join("systems_list.json"),
+            r#"[{"platform_name":"NES","folder":"nes"},{"platform_name":"SNES","folder":"snes"}]"#,
+        );
+        write(
+            &root.join("games").join("NES.json"),
+            r#"[["Super Mario Bros","http://x/mario.zip","1.2M"],["Zelda","http://x/zelda.zip","2.0M"]]"#,
+        );
+        write(&root.join("games").join("snes.json"), r#"{"games":[]}"#);
+
+        // Diskte kurulu bir ROM: normalize("Super Mario Bros") == "supermariobros".
+        write(&root.join("roms").join("nes").join("Super Mario Bros.nes"), b"ROM");
+
+        let cat = NativeCatalog {
+            sources_file: root.join("systems_list.json"),
+            games_folder: root.join("games"),
+            images_folder: root.join("images"),
+            languages_folder: root.join("languages"),
+            roms_folder: Some(root.join("roms")),
+            show_unsupported: true,
+            default_language: "en".into(),
+            python: None,
+        };
+
+        let installed = cat.installed_list();
+        assert_eq!(
+            installed.get("NES").map(|v| v.as_slice()),
+            Some(&["Super Mario Bros".to_string()][..]),
+            "diskteki ROM kurulu oyun olarak bulunmalı"
+        );
+        assert!(installed.get("SNES").is_none(), "ROM'suz platform boş olmalı");
+
+        let statuses = cat.game_statuses();
+        let st = statuses["statuses"].as_object().unwrap();
+        // Vue `stem("Super Mario Bros")` -> "super mario bros" (son ek soyulur).
+        let entry = &st["super mario bros"];
+        assert_eq!(entry["status"], "downloaded");
+        assert_eq!(entry["platform"], "NES");
+        assert_eq!(entry["name"], "Super Mario Bros");
     }
 }
 

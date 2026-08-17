@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
+use axum::body::to_bytes;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
@@ -290,9 +291,20 @@ pub async fn system_info(State(state): State<AppState>) -> Response {
     ok(contract::ok(json!({ "system_info": info })))
 }
 
-/// GET `/api/game-status` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
+/// GET `/api/game-status` — Faz 12.6a: native katalog disk taramasını döndürür
+/// (kurulu oyunlar `status:"downloaded"`), yoksa Python proxy'ye düşer.
 pub async fn game_status(State(state): State<AppState>) -> Response {
     if let Some(c) = &state.catalog {
+        let native = c.game_statuses();
+        let non_empty = native
+            .get("statuses")
+            .and_then(|s| s.as_object())
+            .map(|m| !m.is_empty())
+            .unwrap_or(false);
+        if non_empty {
+            return ok(contract::ok(native));
+        }
+        // Python proxy geriye uyum (NativeCatalog boş döndüyse de denenir).
         if let Ok(v) = c.get_json("/api/game-status").await {
             return ok(v);
         }
@@ -515,7 +527,12 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         // eski davranış — `downloads_folder` + türetilen dosya adı (geriye uyumlu).
         let dest_path = match body.get("dest_path").and_then(Value::as_str) {
             Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
-            _ => dest_path_for(&downloads, &game_url, &gname),
+            _ => match effective_roms_folder() {
+                Some(rf) => rf
+                    .join(platform_folder_for(&platform))
+                    .join(sanitize_file_name(&gname)),
+                None => dest_path_for(&downloads, &game_url, &gname),
+            },
         };
             let state2 = state.clone();
             let u = game_url.clone();
@@ -537,6 +554,12 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
             };
             let shutdown = state.shutdown.clone();
             tokio::spawn(async move {
+                // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
+                // Semaphore izni task sonuna kadar tutulur → concurrency kontrolü.
+                let _dl_permit = {
+                    let sem = state2.read().download_semaphore.clone();
+                    sem.acquire_owned().await.unwrap()
+                };
                 let mut current_task_id = t.clone();
                 let current_url = u.clone();
                 let mut aborted: Option<String> = None;
@@ -664,14 +687,109 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     json_err(format!("Index de jeu invalide: {idx}"), StatusCode::BAD_REQUEST)
 }
 
-/// POST `/api/download/batch` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa 400.
+/// POST `/api/download/batch` — Faz 12.6d: native modda `platform + game_names`
+/// listesini katalogdan çözüp tek tek kuyruğa ekler; eşzamanlı indirme `download_semaphore`
+/// ile sınırlıdır (ayar: `max_simultaneous_downloads`). `catalog` varsa (Python) eski proxy
+/// davranışı korunur.
 pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/download/batch", &body).await {
             return ok(v);
         }
     }
-    json_err("Batch indirme devre dışı (RGSX_PYTHON_MANAGER_URL gerekli)", StatusCode::BAD_REQUEST)
+    let platform = body
+        .get("platform")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let Some(names) = body.get("game_names").and_then(|v| v.as_array()) else {
+        return json_err("Paramètre 'game_names' manquant", StatusCode::BAD_REQUEST);
+    };
+    if platform.is_empty() {
+        return json_err("Paramètre 'platform' manquant", StatusCode::BAD_REQUEST);
+    }
+
+    // Dedupe: aktif kuyruk (retry_in_flight) ve kurulu oyunlar (snapshot.downloaded).
+    let active: HashSet<String> = state.read().retry_in_flight.clone();
+    let downloaded: HashSet<String> = state
+        .read()
+        .downloaded
+        .get(&platform)
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    let mut queued = 0u32;
+    let mut skipped = 0u32;
+    let mut already_downloaded = 0u32;
+    let mut errors: Vec<String> = Vec::new();
+    let mut results: Vec<Value> = Vec::new();
+
+    for n in names {
+        let name = n.as_str().unwrap_or("").to_string();
+        if name.is_empty() {
+            skipped += 1;
+            continue;
+        }
+        // URL çözümü (katalog).
+        let url = state.catalog.as_ref().and_then(|c| c.game_url(&platform, &name));
+        let Some(url) = url else {
+            skipped += 1;
+            errors.push(format!("Jeu introuvable: {name}"));
+            results.push(json!({ "ok": false, "game_name": name, "error": "not_found" }));
+            continue;
+        };
+        // Dedupe.
+        if active.contains(&url) {
+            skipped += 1;
+            results.push(json!({ "ok": false, "game_name": name, "error": "already_queued" }));
+            continue;
+        }
+        if downloaded.contains(&name) {
+            already_downloaded += 1;
+            skipped += 1;
+            results.push(json!({ "ok": false, "game_name": name, "error": "already_downloaded" }));
+            continue;
+        }
+        // Tekil indirme akışını başlat (semaphore içeride edinilir).
+        let single = json!({
+            "url": url,
+            "platform": platform,
+            "game_name": name,
+            "mode": "queue",
+        });
+        let resp = download(State(state.clone()), Json(single)).await;
+        let bytes = match to_bytes(resp.into_body(), usize::MAX).await {
+            Ok(b) => b,
+            Err(_) => {
+                errors.push(format!("Erreur IO: {name}"));
+                results.push(json!({ "ok": false, "game_name": name, "error": "io" }));
+                continue;
+            }
+        };
+        let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        let ok = v.get("queued").and_then(|x| x.as_bool()).unwrap_or(false);
+        if ok {
+            queued += 1;
+        } else {
+            skipped += 1;
+            errors.push(format!("Échec file d'attente: {name}"));
+        }
+        results.push(json!({
+            "ok": ok,
+            "game_name": name,
+            "task_id": v.get("task_id").cloned().unwrap_or(Value::Null),
+        }));
+    }
+
+    ok(contract::ok(json!({
+        "queued": queued,
+        "skipped": skipped,
+        "already_downloaded": already_downloaded,
+        "total": names.len(),
+        "errors": errors,
+        "results": results,
+    })))
 }
 
 /// POST `/api/cancel` — Faz 10c/3/4 + Gap-3: `catalog` varsa Python'a proxy;
@@ -786,10 +904,25 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
     };
     if manager_core::settings::native_enabled() {
         match serde_json::from_value::<manager_core::settings::Settings>(settings.clone()) {
-            Ok(s) => match s.validate() {
-                Ok(()) => match s.save() {
-                    Ok(()) => return ok(contract::ok(Value::Null)),
-                    Err(e) => {
+                Ok(s) => match s.validate() {
+                    Ok(()) => match s.save() {
+                        Ok(()) => {
+                            // Faz 12.6d: eşzamanlı indirme sınırını güncelle.
+                            let cap = (s.max_simultaneous_downloads.max(1)) as usize;
+                            {
+                                let mut data = state.write();
+                                data.download_semaphore =
+                                    Arc::new(tokio::sync::Semaphore::new(cap));
+                            }
+                            // Faz 12.6e: `roms_folder` değişmiş olabilir → kurulu oyun
+                            // snapshot'ını (İndirilenler sekmesi + yeşil rozetler) tazele.
+                            if let Some(c) = &state.catalog {
+                                let installed = c.installed_list();
+                                state.write().downloaded = serde_json::json!(installed);
+                            }
+                            return ok(contract::ok(Value::Null));
+                        }
+                        Err(e) => {
                         return json_err(
                             format!("Sauvegarde des paramètres échouée: {e}"),
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -815,12 +948,42 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
     ok(contract::ok(Value::Null))
 }
 
-/// POST `/api/save_filters` — Faz 10c/3/3: `catalog` varsa Python'a proxy, yoksa placeholder.
+/// POST `/api/save_filters` — Faz 10c/3/3: `catalog` varsa Python'a proxy; native modda
+/// gövdedeki filtre alanlarını `Settings.game_filters` (`extra`) içine kalıcılaştırır.
+///
+/// Frontend `saveFilters()` `{region_filters, hide_non_release, one_rom_per_game,
+/// hide_downloaded, regex_mode, region_priority}` gönderir; eski Python
+/// `_api_save_filters` parity'siyle `rgsx_settings.json`'a yazar.
 pub async fn save_filters(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/save_filters", &body).await {
             return ok(v);
         }
+    }
+    if manager_core::settings::native_enabled() {
+        let mut s = manager_core::settings::Settings::load();
+        let mut game_filters = serde_json::Map::new();
+        for key in [
+            "region_filters",
+            "hide_non_release",
+            "one_rom_per_game",
+            "hide_downloaded",
+            "regex_mode",
+            "region_priority",
+        ] {
+            if let Some(v) = body.get(key) {
+                game_filters.insert(key.to_string(), v.clone());
+            }
+        }
+        s.extra
+            .insert("game_filters".to_string(), Value::Object(game_filters));
+        if let Err(e) = s.save() {
+            return json_err(
+                format!("Filtre kaydetme başarısız: {e}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            );
+        }
+        return ok(contract::ok(json!({ "message": "Filtres sauvegardés" })));
     }
     ok(contract::ok(json!({ "message": "Filtres sauvegardés" })))
 }
@@ -1315,6 +1478,8 @@ pub async fn finalize_download_in_state(
                 }
             }
         }
+        // Faz 12.6e — indirilen dosyaya symlink oluştur (settings.symlink etkinse).
+        apply_symlink(message);
     }
     if let Value::Object(prog) = &mut data.progress {
         if ok {
@@ -1521,7 +1686,15 @@ async fn native_ddl_download(
     } else {
         std::env::var("RGSX_DOWNLOADS_FOLDER").unwrap_or_else(|_| "downloads".to_string())
     };
-    let dest = dest_path_for(&downloads, &game_url, &game_name);
+    // Faz 12 download-parity: ROMS_FOLDER ayarlıysa dosya doğrudan
+    // `ROMS_FOLDER/<platform>/<game>` altına düşer (Python queue.py davranışı).
+    // Aksi halde geriye uyumlu `downloads_dir` kullanılır.
+    let dest = match effective_roms_folder() {
+        Some(rf) => rf
+            .join(platform_folder_for(&platform))
+            .join(sanitize_file_name(&game_name)),
+        None => dest_path_for(&downloads, &game_url, &game_name),
+    };
 
     push_queued_history_entry(
         &state,
@@ -1552,6 +1725,11 @@ async fn native_ddl_download(
     };
     let shutdown = c_state.shutdown.clone();
     tokio::spawn(async move {
+        // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
+        let _dl_permit = {
+            let sem = c_state.read().download_semaphore.clone();
+            sem.acquire_owned().await.unwrap()
+        };
         // Gap-4 4a — bellek içi `bytes()` yerine `HttpDownloader` stream motoru
         // (`.part` yazma, Range resume, challenge/HTML/arşiv guards, cancel).
         // TASK-002-gap-1: job-level retry envelope (torrent ile ortak).
@@ -1698,6 +1876,44 @@ pub fn dest_path_for(downloads_folder: &str, url: &str, game_name: &str) -> std:
     base.join(from_url)
 }
 
+/// Faz 12.6e — indirme tamamlandığında, `settings.symlink` etkinse nihai dosyayı
+/// `symlink.target_directory` içine sembolik bağ (symlink) olarak oluşturur.
+/// Unix/Windows için ayrı syscall; hedef dizin yoksa oluşturulur, mevcut link
+/// varsa yenilenir. Hata sessizce yutulur (indirme başarısını etkilemez).
+fn apply_symlink(src_path: &str) {
+    let s = manager_core::settings::Settings::load();
+    if !s.symlink.enabled {
+        return;
+    }
+    let target = s.symlink.target_directory.trim();
+    if target.is_empty() {
+        return;
+    }
+    let src = std::path::Path::new(src_path);
+    if !src.exists() {
+        return;
+    }
+    let file_name = match src.file_name() {
+        Some(n) => std::path::PathBuf::from(n),
+        None => return,
+    };
+    let target_dir = std::path::Path::new(target);
+    if let Err(_) = std::fs::create_dir_all(target_dir) {
+        return;
+    }
+    let link = target_dir.join(file_name);
+    let _ = std::fs::remove_file(&link);
+    #[cfg(unix)]
+    let res = std::os::unix::fs::symlink(src, &link);
+    #[cfg(windows)]
+    let res = std::os::windows::fs::symlink_file(src, &link);
+    #[cfg(not(any(unix, windows)))]
+    let res = Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "symlink unsupported"));
+    if let Err(e) = res {
+        tracing::warn!("symlink oluşturulamadı ({} → {}): {}", src.display(), link.display(), e);
+    }
+}
+
 /// TASK-002l: doğrudan çözülmüş bir URL'in torrent indirme şeması olup olmadığı.
 /// `magnet:`, `rgsx+torrent:` ve `.torrent` (sorgu dizesi sonrası) kabul edilir.
 /// Bu şemalar librqbit engine'ine yönlendirilir; diğer URL'ler (düz http dosya)
@@ -1731,6 +1947,60 @@ fn known_torrent_extension(seg: &str) -> bool {
 /// Dosya adı olarak kullanılacak metni temizler (path ayracı yasak).
 fn sanitize_file_name(name: &str) -> String {
     name.replace(['/', '\\', ':'], "_")
+}
+
+/// Faz 12 download-parity: Python `resolve_platform_folder` (utils/files.py) eşiti.
+/// `systems_list.json`'dan platform'un `folder`/`dossier` alanını bulur, yoksa
+/// `normalize_platform_name` (lower + boşluk sil) fallback uygular.
+fn platform_folder_for(platform: &str) -> String {
+    let sources = std::env::var("RGSX_SOURCES_FILE").unwrap_or_default();
+    let sources = if sources.is_empty() {
+        let data = std::env::var("RGSX_DATA_DIR").unwrap_or_default();
+        if data.is_empty() {
+            String::new()
+        } else {
+            format!("{}/systems_list.json", data)
+        }
+    } else {
+        sources
+    };
+    if !sources.is_empty() {
+        if let Ok(txt) = std::fs::read_to_string(&sources) {
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&txt) {
+                for e in &arr {
+                    if e.get("platform_name").and_then(|v| v.as_str()) == Some(platform) {
+                        if let Some(f) = e.get("folder").and_then(|v| v.as_str()) {
+                            if !f.is_empty() {
+                                return f.to_string();
+                            }
+                        }
+                        if let Some(f) = e.get("dossier").and_then(|v| v.as_str()) {
+                            if !f.is_empty() {
+                                return f.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    platform.to_lowercase().replace(' ', "")
+}
+
+/// Faz 12 download-parity: efektif ROM kökü (env `RGSX_ROMS_FOLDER` > `settings.roms_folder`).
+/// Boşsa `None` → geriye uyumlu `downloads_dir` davranışına düşülür.
+fn effective_roms_folder() -> Option<std::path::PathBuf> {
+    if let Ok(e) = std::env::var("RGSX_ROMS_FOLDER") {
+        if !e.trim().is_empty() {
+            return Some(std::path::PathBuf::from(e));
+        }
+    }
+    let s = manager_core::settings::Settings::load();
+    let rf = s.roms_folder.trim();
+    if !rf.is_empty() {
+        return Some(std::path::PathBuf::from(rf));
+    }
+    None
 }
 
 /// TASK-005 — ES (EmulationStation) gamepad map'ini sunar.

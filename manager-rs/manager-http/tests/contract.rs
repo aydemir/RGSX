@@ -491,11 +491,12 @@ async fn test_settings_native_roundtrip() {
     .await;
     assert!(ok_body["success"].as_bool().unwrap_or(false));
 
-    // Kalıcı dosya: language YOK, music_enabled=false, geçici alanlar YOK.
+    // Kalıcı dosya: language YOK, music_enabled=false, api_keys Faz 12.6e ile artık
+    // kalıcı (eskiden `extra`'dan siliniyordu) — boş nesne olarak yazılır.
     let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(v.get("language").is_none());
     assert_eq!(v["music_enabled"], json!(false));
-    assert!(v.get("api_keys").is_none());
+    assert_eq!(v.get("api_keys"), Some(&json!({})));
 
     // Env'i önceki haline döndür (TempDir drop'ta kendi dizinini siler).
     match prev_native {

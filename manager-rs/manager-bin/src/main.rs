@@ -265,6 +265,26 @@ async fn run(paths: paths::RgsxPaths) {
             .map(|base| Arc::new(manager_http::catalog::PythonCatalog::new(base)) as Arc<dyn manager_http::catalog::CatalogSource>)
     };
 
+    // Faz 12.6a — startup'ta diskteki kurulu oyunları tara; snapshot `downloaded`
+    // (İndirilenler sekmesi) bununla dolar. `/api/game-status` ise isteğe bağlı
+    // canlı tarama yapar (aynı mantık, NativeCatalog.installed_list üzerinden).
+    if let Some(c) = &catalog {
+        let installed = c.installed_list();
+        data.downloaded = serde_json::json!(installed);
+        let total: usize = installed.values().map(|v| v.len()).sum();
+        tracing::info!(
+            "disk taraması: {} platformda {} kurulu oyun bulundu",
+            installed.len(),
+            total
+        );
+    }
+
+    // Faz 12.6d — eşzamanlı indirme sınırı semaphore kapasitesi (ayar'dan türet).
+    let max_dl = manager_core::settings::Settings::load()
+        .max_simultaneous_downloads
+        .max(1) as usize;
+    data.download_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_dl));
+
     let events = manager_http::sse::channel();
     // TASK-002-gap-1 (BELİRSİZ-2): global shutdown sinyali — retry döngülerinin
     // `tokio::select!` ile dinlediği `AppState.shutdown` Notify'ı. Aynı Arc hem
@@ -301,9 +321,17 @@ async fn run(paths: paths::RgsxPaths) {
         });
     }
 
-    let addr = format!("127.0.0.1:{port}");
+    // Faz 12.6d — tüm arayüzlere bağlan (0.0.0.0) ki konteyner IP'si
+    // (örn. 192.168.1.6) üzerinden uzak tarayıcıdan erişilebilsin.
+    let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!("manager-bin listening on http://{addr}");
+    // LAN IP'sini UDP-socket numarasıyla bul (veri göndermeden) — uzak
+    // tarayıcı erişimi için gerçek adresi de logla (Python server.py ile parite).
+    match local_lan_ip() {
+        Some(ip) => tracing::info!("Ağ erişimi: http://{ip}:{port}"),
+        None => tracing::warn!("LAN IP belirlenemedi; yalnız 0.0.0.0:{port} görünür"),
+    }
     tracing::info!("GET /api/health, /api/queue, /api/events (SSE), qbittorrent proxy");
 
     // Windows: tray + autostart + firewall; eylemler ana döngüde beslenir.
@@ -386,4 +414,13 @@ async fn run_with_tray(
         .unwrap();
 
     let _ = tray_task.abort();
+}
+
+/// UDP-socket numarasıyla gerçek LAN IP'sini bulur (veri göndermeden).
+/// Başarısızsa None döner. Platform bağımsızdır (std::net).
+fn local_lan_ip() -> Option<String> {
+    use std::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    sock.local_addr().ok().map(|a| a.ip().to_string())
 }

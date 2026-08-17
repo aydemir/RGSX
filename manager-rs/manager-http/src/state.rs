@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
+use tokio::sync::Semaphore;
 use tokio::sync::Notify;
 
 use manager_bridge::TorrentBackend;
@@ -52,6 +53,9 @@ pub struct StateData {
     /// TASK-002-gap-1: URL başına iptal sinyali (retry sleep'ini kesmek için).
     /// Key = `game_url` (veya cancel'da verilen `task_id`).
     pub cancel_signals: HashMap<String, Arc<Notify>>,
+    /// Faz 12.6d — eşzamanlı indirme sayısını sınırlayan semaphore. Kapasite
+    /// `Settings.max_simultaneous_downloads`'tan türetilir (startup + ayar kaydı).
+    pub download_semaphore: Arc<Semaphore>,
 }
 
 impl StateData {
@@ -72,6 +76,7 @@ impl StateData {
             retry_in_flight: HashSet::new(),
             retry_at: HashMap::new(),
             cancel_signals: HashMap::new(),
+            download_semaphore: Arc::new(Semaphore::new(5)),
         }
     }
 

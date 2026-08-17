@@ -6,7 +6,7 @@
 //! Davranış kuralları (Python ile birebir):
 //! - `language` key'i dosyada yoksa **enjekte edilmez** ("key yok = kullanıcı seçimi yok").
 //!   Bu yüzden `Option<String>` + `skip_serializing_if = "none"`.
-//! - `auto_extract` / `api_keys` / `web_service_at_boot` / `custom_dns_at_boot` ayrı
+//! - `auto_extract` / `web_service_at_boot` / `custom_dns_at_boot` ayrı
 //!   mekanizmalardır (ayrı dosya / systemd); native save'de dosyaya yazılmaz.
 //! - `game_filters` ve bilinmeyen ek alanlar `extra` ile korunur (round-trip).
 
@@ -14,10 +14,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Native persist aç/kapa (`RGSX_NATIVE_SETTINGS=1`). Kapalı → handler'lar Python
-/// proxy / placeholder davranışına düşer (kesintisiz göç, risk sıfır).
+/// Native persist aç/kapa. Faz 12.6e sonrası **varsayılan açık**: ayarlar
+/// `rgsx_settings.json`'a kalıcı yazılır. `RGSX_NATIVE_SETTINGS=0` ile kapatılabilir
+/// (handler'lar Python proxy / placeholder'a düşer). Kullanıcının bayrağı hatırlaması
+/// gerekmez.
 pub fn native_enabled() -> bool {
-    std::env::var("RGSX_NATIVE_SETTINGS").map(|v| v == "1").unwrap_or(false)
+    match std::env::var("RGSX_NATIVE_SETTINGS") {
+        Ok(v) => v != "0",
+        Err(_) => true,
+    }
 }
 
 /// `rgsx_settings.json` yolu: `RGSX_SETTINGS_PATH` > `RGSX_DATA_DIR/rgsx_settings.json`.
@@ -116,6 +121,11 @@ pub struct Settings {
     /// (eskiden `extra`'dan siliniyordu). Varsayılan: açık.
     #[serde(default = "default_true")]
     pub auto_extract: bool,
+    /// Faz 12.6e — harici servis API anahtarları (archive.org, realdebrid, ...).
+    /// Native modda `rgsx_settings.json`'a kalıcı yazılır (eskiden `extra`'dan
+    /// siliniyordu). Anahtarlar yerel tek-kullanıcılı sunucuda saklanır.
+    #[serde(default)]
+    pub api_keys: HashMap<String, String>,
     /// `game_filters` ve bilinmeyen ek alanlar (round-trip koruması).
     #[serde(flatten, default)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -195,6 +205,7 @@ impl Default for Settings {
             roms_folder: String::new(),
             web_service_at_boot: false,
             auto_extract: true,
+            api_keys: HashMap::new(),
             last_gamelist_update: None,
             last_gamelist_prompt_remote_update: None,
             global_sort_option: default_sort(),
@@ -231,8 +242,7 @@ impl Settings {
         let mut v = serde_json::to_value(self)?;
         if let Some(obj) = v.as_object_mut() {
             // Python `_api_settings_post` bu alanları save öncesi `del` eder.
-            // NOT: `auto_extract` GAP-6 (Madde A) ile native'de persist edilir.
-            obj.remove("api_keys");
+            // NOT: `auto_extract` ve `api_keys` GAP-6 / Faz 12.6e ile native'de persist edilir.
             obj.remove("web_service_at_boot");
             obj.remove("custom_dns_at_boot");
         }
@@ -241,7 +251,6 @@ impl Settings {
 
     /// Geçici/ayrı-mekanizma alanlarını `extra`'dan düşür (dosyadan okunmuşsa).
     fn normalize_transient(&mut self) {
-        self.extra.remove("api_keys");
         self.extra.remove("web_service_at_boot");
         self.extra.remove("custom_dns_at_boot");
     }
@@ -341,18 +350,21 @@ mod tests {
     }
 
     #[test]
-    fn transient_keys_not_persisted() {
+    fn api_keys_persisted() {
         let dir = std::env::temp_dir().join("rgsx_settings_test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("rgsx_settings.json");
         std::env::set_var("RGSX_SETTINGS_PATH", &p);
         let mut s = Settings::default();
-        s.extra
-            .insert("api_keys".into(), serde_json::json!({"realdebrid": "x"}));
+        s.api_keys
+            .insert("archive.org".into(), "test-key".into());
         s.save().unwrap();
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
-        assert!(v.get("api_keys").is_none());
-        // Bilinen alanlar korunur.
+        // Faz 12.6e: api_keys artık kalıcı (eskiden `extra`'dan siliniyordu).
+        assert_eq!(
+            v.get("api_keys").and_then(|x| x.get("archive.org")).and_then(|x| x.as_str()),
+            Some("test-key")
+        );
         assert_eq!(v.get("language").and_then(|x| x.as_str()), Some("en"));
     }
 

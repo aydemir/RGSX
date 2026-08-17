@@ -1,8 +1,7 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { connectSSE, apiGet, apiPost } from './api.js'
 import { t as _t, getLocale, setLocale, STRINGS } from './i18n.js'
-import QBittorrent from './components/QBittorrent.vue'
 import Support from './components/Support.vue'
 import BrowseDirectories from './components/BrowseDirectories.vue'
 
@@ -11,7 +10,11 @@ const lastEvent = ref('')
 const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {} })
 const progress = reactive({})
 
-const tt = (k) => (STRINGS[locale.value] && STRINGS[locale.value][k]) || STRINGS.tr[k] || k
+const tt = (k, vars) => {
+  let s = (STRINGS[locale.value] && STRINGS[locale.value][k]) || STRINGS.tr[k] || k
+  if (vars) for (const [kk, vv] of Object.entries(vars)) s = s.replace(new RegExp('\\{' + kk + '\\}', 'g'), vv)
+  return s
+}
 const locale = ref(getLocale())
 function changeUiLang(l) { setLocale(l); locale.value = l }
 
@@ -52,7 +55,9 @@ const DEFAULT_SETTINGS = {
   sources: { mode: 'rgsx', custom_url: '' },
   symlink: { enabled: false, target_directory: '' },
   accessibility: { font_scale: 1.0, footer_font_scale: 1.0 },
-  roms_folder: ''
+  roms_folder: '',
+  auto_extract: true,
+  api_keys: {}
 }
 function normalizeSettings(s) {
   s = s || {}
@@ -68,11 +73,44 @@ const settings = ref(normalizeSettings(null))
 const systemInfo = ref(null)
 const languages = ref([])
 const dataLang = ref('')
-const saveMsg = ref('')
 const openBrowse = ref(false)
+
+// ===================== Toasts =====================
+const toasts = ref([])
+let toastSeq = 0
+function pushToast(msg, type = 'info') {
+  const id = ++toastSeq
+  toasts.value.push({ id, msg, type })
+  setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id) }, 4000)
+}
+
+// ===================== Confirm modal =====================
+const confirmModal = reactive({ open: false, title: '', message: '', onConfirm: null })
+const confirmOkBtn = ref(null)
+function openConfirm(title, message, onConfirm) {
+  confirmModal.title = title
+  confirmModal.message = message
+  confirmModal.onConfirm = onConfirm
+  confirmModal.open = true
+  nextTick(() => { if (confirmOkBtn.value) confirmOkBtn.value.focus() })
+}
+function confirmOk() {
+  const f = confirmModal.onConfirm
+  confirmModal.open = false
+  confirmModal.onConfirm = null
+  if (f) f()
+}
+function confirmCancel() {
+  confirmModal.open = false
+  confirmModal.onConfirm = null
+}
+function onKeydown(e) {
+  if (e.key === 'Escape' && confirmModal.open) confirmCancel()
+}
 
 // ===================== SSE =====================
 let es = null
+let seenHistory = new Set()
 function applySnapshot(data) {
   connected.value = true
   if (data.history) snapshot.history = data.history
@@ -99,7 +137,17 @@ onMounted(async () => {
     },
     history: (data) => {
       lastEvent.value = 'history'
-      snapshot.history = Array.isArray(data) ? data : (data && data.history) || snapshot.history
+      const list = Array.isArray(data) ? data : (data && data.history) || snapshot.history
+      snapshot.history = list
+      for (const h of (list || [])) {
+        const key = h.task_id || h.url || h.name
+        if (seenHistory.has(key)) continue
+        seenHistory.add(key)
+        const s = String(h.status || '').toUpperCase()
+        const nm = h.name || h.game_name || (h.url ? String(h.url).split('/').pop() : '')
+        if (s === 'COMPLETED' || s === 'DOWNLOAD_OK' || s === 'ALREADY_PRESENT') pushToast(tt('download_complete', { n: nm }), 'success')
+        else if (s === 'FAILED' || s === 'FAILED_PERMANENT') pushToast(tt('download_failed_item', { n: nm }), 'error')
+      }
     },
     downloaded: (data) => {
       lastEvent.value = 'downloaded'
@@ -109,8 +157,9 @@ onMounted(async () => {
   await loadPlatforms()
   loadFiltersFromSettings()
   loadSettings()
+  window.addEventListener('keydown', onKeydown)
 })
-onUnmounted(() => { es && es.close() })
+onUnmounted(() => { es && es.close(); window.removeEventListener('keydown', onKeydown) })
 
 // ===================== Catalog =====================
 async function loadPlatforms() {
@@ -119,6 +168,16 @@ async function loadPlatforms() {
     const p = await apiGet('/api/platforms')
     platforms.value = (p.platforms || []).slice(0, 200)
   } catch (e) { catalogError.value = tt('catalog_error') }
+}
+
+async function updateGamesList() {
+  try {
+    await apiPost('/api/update-cache', {})
+  } catch (e) { /* sessiz */ }
+  // Katalog yenilendikten sonra görünümü tazele
+  await loadPlatforms()
+  if (selectedPlatform.value) await selectPlatform(selectedPlatform.value)
+  pushToast(tt('catalog_refreshed'), 'success')
 }
 
 async function selectPlatform(name) {
@@ -275,17 +334,19 @@ async function downloadGame(g, mode) {
       game_name: g.name || g.game_name || '',
       mode: mode || 'queue',
     })
-  } catch (e) { /* kuyruk SSE ile güncellenir */ }
+    pushToast(tt('download_started'), 'info')
+  } catch (e) { pushToast(tt('download_failed'), 'error') }
 }
 async function downloadAll() {
   const names = filteredGames.value.map((g) => g.name)
   if (!names.length) return
-  if (!confirm(`"${selectedPlatform.value}" için görünen ${names.length} oyun indirilsin mi?`)) return
-  try {
-    const r = await apiPost('/api/download/batch', { platform: selectedPlatform.value, game_names: names })
-    saveMsg.value = (r && r.success) ? `Kuyruğa eklendi: ${r.queued || names.length}` : (r && r.error) || 'Hata'
-    setTimeout(() => (saveMsg.value = ''), 4000)
-  } catch (e) { saveMsg.value = 'Toplu indirme başarısız' }
+  openConfirm(tt('confirm_download_all_title'), tt('confirm_download_all_msg', { platform: selectedPlatform.value, n: names.length }), async () => {
+    try {
+      const r = await apiPost('/api/download/batch', { platform: selectedPlatform.value, game_names: names })
+      if (r && r.success) pushToast(tt('download_queued', { n: r.queued || names.length }), 'success')
+      else pushToast((r && r.error) || 'Hata', 'error')
+    } catch (e) { pushToast(tt('download_failed'), 'error') }
+  })
 }
 
 // ===================== Queue / Progress =====================
@@ -306,8 +367,9 @@ async function removeFromQueue(taskId) {
   try { await apiPost('/api/queue/remove', { task_id: taskId }) } catch (e) {}
 }
 async function clearQueue() {
-  if (!confirm('Kuyruk tamamen temizlensin mi?')) return
-  try { await apiPost('/api/queue/clear', {}) } catch (e) {}
+  openConfirm(tt('confirm_clear_queue_title'), tt('confirm_clear_queue_msg'), async () => {
+    try { await apiPost('/api/queue/clear', {}) } catch (e) {}
+  })
 }
 async function cancelDownload(item) {
   try { await apiPost('/api/cancel', item.task_id ? { task_id: item.task_id } : { url: item.url }) } catch (e) {}
@@ -317,26 +379,51 @@ async function resumeAll() { try { await apiPost('/api/resume', {}) } catch (e) 
 
 // ===================== History =====================
 const historyItems = computed(() => snapshot.history || [])
-function historyStatusClass(s) {
-  s = String(s || '').toLowerCase()
-  if (s === 'erreur' || s === 'error' || s === 'failed') return 'st-err'
-  if (s === 'canceled' || s === 'cancelled') return 'st-cancel'
-  if (s === 'already_present') return 'st-info'
-  if (['queued', 'downloading', 'connecting', 'extracting'].includes(s) || s.startsWith('try ')) return 'st-run'
-  return 'st-ok'
+
+// Rust backend durum dizgeleri (büyük/küçük harf + entity_state) -> rozet eşlemesi.
+// Eski Python tasarımının renkleri birebir korunur (app.js 1966-1989):
+//   DOWNLOADING/EXTRACTING -> #007bff (mavi)
+//   COMPLETED              -> #28a745 (yeşil)
+//   FAILED                 -> #dc3545 (kırmızı)
+//   QUEUED                 -> #6c757d (gri)
+//   CANCELED               -> #ffc107 (turuncu)
+//   ALREADY_PRESENT/SEEDING-> #17a2b8 (camgöbeği)
+function statusMeta(raw) {
+  const s = String(raw || '')
+  const up = s.toUpperCase()
+  if (up === 'COMPLETED' || up === 'DOWNLOAD_OK' || s === 'Completed' || s === 'Download_OK' || s === 'downloaded')
+    return { label: 'COMPLETED', color: '#28a745', cls: 'st-ok' }
+  if (up === 'FAILED' || up === 'FAILED_PERMANENT' || s === 'Erreur' || s === 'error' || s === 'failed')
+    return { label: 'FAILED', color: '#dc3545', cls: 'st-err' }
+  if (up === 'CANCELED' || s === 'Canceled')
+    return { label: 'CANCELED', color: '#ffc107', cls: 'st-cancel' }
+  if (up === 'QUEUED' || s === 'Queued')
+    return { label: 'QUEUED', color: '#6c757d', cls: 'st-queue' }
+  if (s === 'Already_Present')
+    return { label: 'ALREADY PRESENT', color: '#17a2b8', cls: 'st-info' }
+  if (s === 'Extracting')
+    return { label: 'EXTRACTING', color: '#ffcc00', cls: 'st-run' }
+  if (s === 'Seeding')
+    return { label: 'SEEDING', color: '#17a2b8', cls: 'st-run' }
+  if (s === 'Downloading' || s === 'Connecting' || s === 'Verifying' || s.startsWith('Try') || s === 'downloading')
+    return { label: 'DOWNLOADING', color: '#ffcc00', cls: 'st-run' }
+  return { label: s || 'UNKNOWN', color: '#6c757d', cls: 'st-info' }
 }
-function historyStatusText(s) {
-  s = String(s || '')
-  if (s === 'Erreur' || s === 'error' || s === 'failed') return 'Hata'
-  if (s === 'Canceled') return 'İptal'
-  if (s === 'Already_Present') return 'Zaten var'
-  if (s === 'Queued') return 'Kuyrukta'
-  if (['Downloading', 'Connecting', 'Extracting'].includes(s) || s.startsWith('Try ')) return 'İndiriliyor'
-  return 'Tamamlandı'
+
+// Kuyruk öğesinin canlı durumu: SSE progress haritasından türet (indirme sırasında
+// kuyruk kaydı hâlâ "Queued" olabilir; ilerleme olayı bunu DOWNLOADING yapar).
+function queueStatus(item) {
+  const p = progress[item.url]
+  if (p && typeof p.status === 'string' &&
+      ['Downloading', 'Extracting', 'Connecting', 'Verifying'].includes(p.status)) {
+    return p.status
+  }
+  return item.status || 'Queued'
 }
 async function clearHistory() {
-  if (!confirm('Geçmiş temizlensin mi? (geri alınamaz)')) return
-  try { await apiPost('/api/clear-history', {}) } catch (e) {}
+  openConfirm(tt('confirm_clear_history_title'), tt('confirm_clear_history_msg'), async () => {
+    try { await apiPost('/api/clear-history', {}) } catch (e) {}
+  })
 }
 
 // ===================== Downloaded (İndirilenler) =====================
@@ -370,7 +457,9 @@ async function doSearch() {
 function clearSearch() { searchResults.value = null; searchTerm.value = '' }
 function searchDownload(g) {
   if (!g.url) return
-  apiPost('/api/download', { url: g.url, platform: g.platform || '', game_name: g.game_name || g.name || '', mode: 'queue' }).catch(() => {})
+  apiPost('/api/download', { url: g.url, platform: g.platform || '', game_name: g.game_name || g.name || '', mode: 'queue' })
+    .then(() => pushToast(tt('download_started'), 'info'))
+    .catch(() => pushToast(tt('download_failed'), 'error'))
 }
 
 // ===================== Settings =====================
@@ -385,13 +474,11 @@ async function loadSettings() {
 }
 async function saveSettings() {
   if (!settings.value) return
-  saveMsg.value = ''
   try {
     await apiPost('/api/settings', { settings: settings.value })
-    saveMsg.value = 'Ayarlar kaydedildi'
+    pushToast(tt('saved'), 'success')
     await loadSettings()
-  } catch (e) { saveMsg.value = 'Kaydetme başarısız' }
-  setTimeout(() => (saveMsg.value = ''), 3000)
+  } catch (e) { pushToast(tt('save_failed'), 'error') }
 }
 function changeDataLang(l) {
   dataLang.value = l
@@ -402,8 +489,14 @@ async function onBrowseSelect(p) {
   if (settings.value) settings.value.roms_folder = p
   openBrowse.value = false
   await saveSettings()
-  saveMsg.value = tt('browse_restart_note')
-  setTimeout(() => { if (saveMsg.value === tt('browse_restart_note')) saveMsg.value = '' }, 6000)
+  pushToast(tt('browse_restart_note'), 'info')
+}
+function onApiKey(service, val) {
+  if (!settings.value) return
+  if (!settings.value.api_keys) settings.value.api_keys = {}
+  if (val) settings.value.api_keys[service] = val
+  else delete settings.value.api_keys[service]
+  saveSettings()
 }
 
 // ===================== Tab switching =====================
@@ -422,7 +515,8 @@ async function switchTab(t) {
       <h1>{{ tt('app_title') }}</h1>
       <span class="status" :class="{ on: connected }">{{ connected ? tt('status_connected') : tt('status_connecting') }}</span>
       <span class="active" v-if="snapshot.active">● aktif indirme</span>
-      <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" title="Ayarlar">⚙</button>
+      <button class="gear" @click="updateGamesList" title="Oyun listesini güncelle" aria-label="Oyun listesini güncelle">🔄</button>
+      <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" title="Ayarlar" aria-label="Ayarlar">⚙</button>
       <Support />
     </header>
 
@@ -512,13 +606,11 @@ async function switchTab(t) {
 
         <ul class="games">
           <li v-for="(g, i) in filteredGames" :key="g.name || g.url || i">
-            <span class="st" :class="'s-' + (gameStatusOf(g) ? gameStatusOf(g).status : '')">
-              {{ gameStatusOf(g) ? (gameStatusOf(g).status === 'downloaded' ? '✓' : gameStatusOf(g).status === 'downloading' ? '~' + (gameStatusOf(g).progress || 0) + '%' : gameStatusOf(g).status === 'failed' ? '✗' : '') : '' }}
-            </span>
+            <span class="badge sm" :style="{ background: gameStatusOf(g) ? statusMeta(gameStatusOf(g).status).color : '#6c757d' }">{{ gameStatusOf(g) ? statusMeta(gameStatusOf(g).status).label : '' }}</span>
             <div class="row"><span class="name">{{ g.name }}</span><span class="size">{{ g.size || '' }}</span></div>
             <div class="dlgrp">
-              <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g, 'now')" title="Şimdi indir">⬇️</button>
-              <button class="dlbtn q" :disabled="!g.url" @click="downloadGame(g, 'queue')" title="Kuyruğa ekle">➕</button>
+              <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g, 'now')" title="Şimdi indir" aria-label="Şimdi indir">⬇️</button>
+              <button class="dlbtn q" :disabled="!g.url" @click="downloadGame(g, 'queue')" title="Kuyruğa ekle" aria-label="Kuyruğa ekle">➕</button>
             </div>
           </li>
         </ul>
@@ -551,7 +643,8 @@ async function switchTab(t) {
         <li v-for="(item, i) in queueItems" :key="item.task_id || item.url || i">
           <div class="row">
             <span class="name">{{ item.game_name || item.name || item.url }}</span>
-            <span class="pct">{{ queuePct(item) != null ? queuePct(item) + '%' : (item.status || '') }}</span>
+            <span class="badge" :style="{ background: statusMeta(queueStatus(item)).color }">{{ statusMeta(queueStatus(item)).label }}</span>
+            <span class="pct" v-if="queuePct(item) != null">{{ queuePct(item) }}%</span>
           </div>
           <div class="bar" v-if="queuePct(item) != null"><div class="fill" :style="{ width: queuePct(item) + '%' }"></div></div>
           <div class="qmeta">
@@ -570,10 +663,10 @@ async function switchTab(t) {
       </h2>
       <p v-if="!historyItems.length" class="muted">Geçmiş boş.</p>
       <ul class="hist">
-        <li v-for="(item, i) in historyItems" :key="item.task_id || i" :class="historyStatusClass(item.status)">
+        <li v-for="(item, i) in historyItems" :key="item.task_id || i" :class="statusMeta(item.status).cls">
           <div class="row">
             <span class="name">{{ item.game_name || item.name }}</span>
-            <span class="pct">{{ historyStatusText(item.status) }}</span>
+            <span class="badge" :style="{ background: statusMeta(item.status).color }">{{ statusMeta(item.status).label }}</span>
           </div>
           <div class="qmeta">
             <span class="muted">{{ item.platform }}</span>
@@ -647,6 +740,21 @@ async function switchTab(t) {
           <label>Sembolik bağ (symlink)</label>
           <input type="checkbox" v-model="settings.symlink.enabled" @change="saveSettings()" />
         </div>
+        <div class="field" v-if="settings.symlink.enabled">
+          <label>🔗 {{ tt('symlink_target') }}</label>
+          <input type="text" v-model="settings.symlink.target_directory" @change="saveSettings()" placeholder="/mnt/roms" />
+        </div>
+        <div class="field">
+          <label>{{ tt('auto_extract') }}</label>
+          <input type="checkbox" v-model="settings.auto_extract" @change="saveSettings()" />
+        </div>
+        <div class="field">
+          <label>🔑 {{ tt('api_keys') }}</label>
+          <div class="browse-row">
+            <input type="text" :value="settings.api_keys['archive.org'] || ''" @input="onApiKey('archive.org', $event.target.value)" :placeholder="tt('archive_org_key')" />
+            <input type="text" :value="settings.api_keys['realdebrid'] || ''" @input="onApiKey('realdebrid', $event.target.value)" :placeholder="tt('realdebrid_key')" />
+          </div>
+        </div>
         <div class="field">
           <label>🔤 {{ tt('font_scale') }} ({{ settings.accessibility.font_scale }})</label>
           <input type="range" min="0.5" max="2.0" step="0.1" v-model.number="settings.accessibility.font_scale" @change="saveSettings()" />
@@ -659,110 +767,160 @@ async function switchTab(t) {
           </div>
         </div>
         <BrowseDirectories v-if="openBrowse" :current-path="settings.roms_folder" @select="onBrowseSelect" @close="openBrowse = false" />
-        <QBittorrent />
-        <p v-if="saveMsg" class="saved">{{ saveMsg }}</p>
       </template>
       <p v-else class="muted">{{ tt('no_settings') }}</p>
     </section>
 
     <footer class="muted">{{ tt('last_event') }}: {{ lastEvent }}</footer>
     <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ lastEvent }}</div>
+
+    <!-- Toasts -->
+    <div class="toasts" role="region" aria-label="Bildirimler" aria-live="polite">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type" role="status">{{ t.msg }}</div>
+    </div>
+
+    <!-- Confirm modal -->
+    <div v-if="confirmModal.open" class="modal-overlay" @click.self="confirmCancel" @keydown.esc="confirmCancel">
+      <div class="modal" role="dialog" aria-modal="true" :aria-label="confirmModal.title">
+        <h3 class="modal-title">{{ confirmModal.title }}</h3>
+        <p class="modal-msg">{{ confirmModal.message }}</p>
+        <div class="modal-actions">
+          <button ref="confirmOkBtn" class="btn primary" @click="confirmOk">{{ tt('confirm_ok') }}</button>
+          <button class="btn" @click="confirmCancel">{{ tt('confirm_cancel') }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style>
-:root { color-scheme: dark; }
+:root { color-scheme: light; }
 * { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, sans-serif; background: #0e1116; color: #e6edf3; }
-.app { max-width: 960px; margin: 0 auto; padding: 24px; }
-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+body {
+  margin: 0; padding: 20px; min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #333;
+}
+/* Eski Python WebUI konteyner görünümü (static/css/app.css) */
+.app {
+  max-width: 960px; margin: 0 auto;
+  background: #fff; border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  overflow: hidden; padding: 24px;
+}
+header {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff; padding: 18px 20px; border-radius: 12px; margin-bottom: 12px;
+}
 h1 { font-size: 20px; margin: 0; }
-.status { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #30363d; }
-.status.on { background: #1f6f3f; }
-.active { color: #58a6ff; font-size: 12px; }
-.gear { margin-left: auto; background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: inherit; font-size: 16px; width: 32px; height: 32px; cursor: pointer; }
-.gear.on { background: #1f6feb; border-color: #1f6feb; }
+.status { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: rgba(255,255,255,0.25); color: #fff; }
+.status.on { background: rgba(255,255,255,0.45); }
+.active { color: #fff; font-size: 12px; opacity: 0.9; }
+.gear {
+  background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 6px; color: #fff; font-size: 16px; width: 32px; height: 32px; cursor: pointer;
+}
+.gear:hover { background: rgba(255,255,255,0.32); }
+.gear.on { background: #fff; color: #667eea; }
 
 .searchbar { display: flex; gap: 8px; margin: 16px 0; }
-.searchbar input { flex: 1; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; color: inherit; font-size: 13px; }
-.searchbar button { background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 6px 14px; color: inherit; cursor: pointer; }
+.searchbar input { flex: 1; background: #fff; border: 2px solid #ddd; border-radius: 8px; padding: 8px 12px; color: #333; font-size: 13px; }
+.searchbar input:focus { outline: none; border-color: #667eea; }
+.searchbar button { background: #667eea; border: 0; border-radius: 8px; padding: 6px 16px; color: #fff; cursor: pointer; }
+.searchbar button:hover { background: #5568d3; }
 
-.tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid #21262d; padding-bottom: 8px; }
-.tabs button { background: #161b22; border: 1px solid #21262d; color: #8b949e; border-radius: 8px 8px 0 0; padding: 8px 14px; cursor: pointer; font-size: 13px; }
-.tabs button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; background: #f5f5f5; border-radius: 8px; padding: 4px; }
+.tabs button { background: #f5f5f5; border: none; color: #333; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+.tabs button:hover { background: #e0e0e0; }
+.tabs button.active { background: #fff; border-bottom: 3px solid #667eea; font-weight: bold; }
 
 .panel { margin-top: 12px; }
-h2 { font-size: 15px; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-h3 { font-size: 13px; color: #8b949e; margin: 12px 0 4px; }
-small { color: #8b949e; font-weight: normal; }
-.muted { color: #8b949e; font-size: 13px; }
-.err { color: #ff7b72; background: #2d1418; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+h2 { font-size: 15px; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: #333; }
+h3 { font-size: 13px; color: #666; margin: 12px 0 4px; }
+small { color: #666; font-weight: normal; }
+.muted { color: #666; font-size: 13px; }
+.err { color: #dc3545; background: #f8d7da; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
-.card { display: flex; flex-direction: column; align-items: center; gap: 6px; background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 10px; cursor: pointer; color: inherit; }
-.card:hover { border-color: #1f6feb; background: #15233b; }
-.card .box { width: 64px; height: 64px; object-fit: contain; border-radius: 6px; background: #0e1116; }
-.card .pname { font-size: 12px; text-align: center; }
-.card .count { font-size: 10px; color: #8b949e; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+.card { display: flex; flex-direction: column; align-items: center; gap: 10px; background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); padding: 20px; border: none; border-radius: 12px; cursor: pointer; color: #fff; transition: transform 0.3s, box-shadow 0.3s; text-align: center; }
+.card:hover { transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+.card .box { width: 200px; height: 200px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,0.05); filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3)); }
+.card .pname { font-size: 15px; text-align: center; color: #fff; min-height: 2.5em; display: flex; align-items: center; justify-content: center; }
+.card .count { font-size: 13px; color: #fff; background: #667eea; padding: 5px 15px; border-radius: 20px; display: inline-block; margin-top: 10px; }
+@media (max-width: 900px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
+  .card { padding: 15px; }
+  .card .box { width: 80px; height: 80px; }
+  .card .pname { font-size: 13px; min-height: 2em; }
+}
+@media (max-width: 480px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .card { padding: 10px; }
+  .card .box { width: 60px; height: 60px; }
+  .card .pname { font-size: 12px; }
+  .card .count { font-size: 11px; padding: 3px 10px; }
+}
 
 .games { list-style: none; padding: 0; margin: 0; }
-.games li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #21262d; }
+.games li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
 .games li .row { flex: 1; display: flex; justify-content: space-between; gap: 12px; }
-.name { font-size: 13px; }
-.size { color: #8b949e; font-size: 12px; white-space: nowrap; }
-.dlbtn { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
-.dlbtn:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
-.dlbtn.q { background: #30363d; }
+.name { font-size: 13px; color: #333; }
+.size { color: #666; font-size: 12px; white-space: nowrap; }
+.dlbtn { background: #28a745; color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.dlbtn:hover { background: #218838; }
+.dlbtn:disabled { background: #c6c6c6; color: #fff; cursor: not-allowed; }
+.dlbtn.q { background: #6c757d; }
 .dlgrp { display: flex; gap: 4px; }
 
-.back { font-size: 11px; color: #58a6ff; cursor: pointer; margin-left: 8px; }
+.back { font-size: 11px; color: #667eea; cursor: pointer; margin-left: 8px; }
 
 /* Filters */
-.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 10px; }
-.filters .gfilt { flex: 1; min-width: 160px; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; background: #f5f5f5; border-radius: 8px; padding: 10px; }
+.filters .gfilt { flex: 1; min-width: 160px; background: #fff; border: 2px solid #ccc; border-radius: 5px; padding: 6px 10px; color: #333; font-size: 13px; }
 .regions { display: flex; flex-wrap: wrap; gap: 4px; }
-.rbtn { font-size: 11px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
-.rbtn.include { background: #1f6f3f; color: #fff; border-color: #1f6f3f; }
-.rbtn.exclude { background: #6e2b2b; color: #fff; border-color: #6e2b2b; }
-.chk { font-size: 12px; color: #c9d1d9; display: flex; align-items: center; gap: 4px; }
-.filters select { background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px; color: inherit; font-size: 12px; }
-.reset { background: #21262d; border: 1px solid #30363d; color: inherit; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+.rbtn { font-size: 11px; background: #e0e0e0; border: 2px solid #999; color: #333; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.rbtn.include { background: #28a745; color: #fff; border-color: #28a745; }
+.rbtn.exclude { background: #dc3545; color: #fff; border-color: #dc3545; }
+.chk { font-size: 12px; color: #333; display: flex; align-items: center; gap: 4px; }
+.filters select { background: #fff; border: 2px solid #ccc; border-radius: 5px; padding: 6px; color: #333; font-size: 12px; }
+.reset { background: #e0e0e0; border: 2px solid #999; color: #333; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
 .dlall { background: #2f8f46; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
 
-/* Status badges */
-.st { font-weight: bold; margin-right: 6px; min-width: 28px; display: inline-block; text-align: center; }
-.s-downloaded { color: #66ff66; }
-.s-downloading { color: #ffcc00; }
-.s-failed { color: #ff5555; }
+/* Status badges — exact colors from old Python app.js (1966-1989) */
+.badge { display: inline-block; color: #fff; padding: 2px 10px; border-radius: 5px; font-size: 0.8em; font-weight: bold; white-space: nowrap; }
+.badge.sm { padding: 1px 7px; font-size: 0.72em; }
 
 /* Queue / downloads */
 .dl { list-style: none; padding: 0; margin: 0; }
-.dl li { padding: 10px 0; border-bottom: 1px solid #21262d; }
-.dl .row { display: flex; justify-content: space-between; font-size: 13px; }
-.pct { color: #58a6ff; font-variant-numeric: tabular-nums; }
-.bar { height: 8px; background: #21262d; border-radius: 6px; margin-top: 6px; overflow: hidden; }
-.fill { height: 100%; background: linear-gradient(90deg, #1f6feb, #58a6ff); transition: width .3s ease; }
+.dl li { padding: 10px 0; border-bottom: 1px solid #eee; }
+.dl .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.pct { color: #007bff; font-variant-numeric: tabular-nums; font-weight: bold; }
+.bar { height: 8px; background: #e0e0e0; border-radius: 6px; margin-top: 6px; overflow: hidden; }
+.fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width .3s ease; }
 .qmeta { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
 .qacts { margin-left: auto; display: flex; gap: 6px; }
-.danger { background: #6e2b2b; color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
-.danger:hover { background: #8a3535; }
+.danger { background: #dc3545; color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.danger:hover { background: #c82333; }
 
 /* History */
 .hist { list-style: none; padding: 0; margin: 0; }
-.hist li { padding: 10px 0; border-bottom: 1px solid #21262d; }
-.hist li.st-ok { border-left: 3px solid #2f8f46; padding-left: 8px; }
-.hist li.st-err { border-left: 3px solid #ff5555; padding-left: 8px; }
-.hist li.st-cancel { border-left: 3px solid #d29922; padding-left: 8px; }
-.hist li.st-info { border-left: 3px solid #58a6ff; padding-left: 8px; }
-.hist li.st-run { border-left: 3px solid #1f6feb; padding-left: 8px; }
+.hist li { padding: 10px; margin-bottom: 8px; background: #f9f9f9; border-radius: 8px; border-left: 4px solid #28a745; }
+.hist li.st-err { border-left-color: #dc3545; }
+.hist li.st-cancel { border-left-color: #ffc107; }
+.hist li.st-info { border-left-color: #17a2b8; }
+.hist li.st-queue { border-left-color: #6c757d; }
+.hist li.st-run { border-left-color: #007bff; }
 
 /* Settings */
 .field { margin: 12px 0; }
-.field label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
-.field select, .field input[type=text], .field input[type=number] { background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
-.saved { color: #66ff66; font-size: 13px; }
+.field label { display: block; font-size: 12px; color: #333; font-weight: bold; margin-bottom: 4px; }
+.field select, .field input[type=text], .field input[type=number] { background: #f8f8f8; border: 2px solid #ccc; border-radius: 5px; padding: 8px 10px; color: #000; font-size: 13px; }
+.field select:focus, .field input:focus { outline: none; border-color: #667eea; }
+.saved { color: #28a745; font-size: 13px; }
 .browse-row { display: flex; gap: 8px; }
-.browse-row input { flex: 1; background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: inherit; font-size: 13px; }
+.browse-row input { flex: 1; background: #f8f8f8; border: 2px solid #ccc; border-radius: 5px; padding: 8px 10px; color: #000; font-size: 13px; }
 .browse-btn { background: #007bff; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .browse-btn:hover { background: #0069d9; }
 
@@ -794,4 +952,34 @@ h3 { font-size: calc(13px * var(--font-scale, 1)); }
 .muted, .err { font-size: calc(13px * var(--font-scale, 1)); }
 .searchbar input, .searchbar button { font-size: calc(13px * var(--font-scale, 1)); }
 .games li .size { font-size: calc(12px * var(--font-scale, 1)); }
+
+/* ===== Toasts ===== */
+.toasts {
+  position: fixed; top: 16px; right: 16px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px; max-width: 320px;
+}
+.toast {
+  background: #333; color: #fff; padding: 10px 14px; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3); font-size: 13px; word-break: break-word;
+  border-left: 4px solid #6c757d; cursor: default;
+}
+.toast-info { border-left-color: #007bff; }
+.toast-success { border-left-color: #28a745; }
+.toast-error { border-left-color: #dc3545; }
+
+/* ===== Confirm modal ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 1100;
+}
+.modal {
+  background: #fff; color: #333; border-radius: 12px; padding: 20px 24px;
+  max-width: 90%; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.modal-title { margin: 0 0 8px; font-size: 16px; }
+.modal-msg { margin: 0 0 16px; font-size: 14px; line-height: 1.4; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-actions .btn { min-height: 40px; padding: 8px 16px; border: 1px solid #ccc; background: #f1f1f1; border-radius: 8px; }
+.modal-actions .btn.primary { background: #007bff; border-color: #007bff; color: #fff; }
+.modal-actions .btn:focus-visible { outline: 3px solid #007bff; outline-offset: 2px; }
 </style>
