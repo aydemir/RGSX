@@ -566,6 +566,10 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                 loop {
                     let cb_state = state2.clone();
                     let cb_url = current_url.clone();
+                    // TASK-002-gap-10 (E): SSE progress selini önle — yayın en fazla
+                    // ~250ms'de bir (terminal durumlarda her zaman). Python
+                    // `_broadcaster_loop` ~250ms parity'si.
+                    let last_progress_emit = std::sync::atomic::AtomicU64::new(0);
                     let on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>> =
                         Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
                             let pct = if ev.total > 0 {
@@ -592,7 +596,13 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                                     }),
                                 );
                             }
-                            sse::publish(&cb_state.events, "progress", &json!(data.progress));
+                            // E: yalnızca ~250ms aralıkla (veya terminal durumda) yayınla.
+                            let now_ms = (now_secs() * 1000.0) as u64;
+                            let last = last_progress_emit.load(std::sync::atomic::Ordering::Relaxed);
+                            if ev.finished || ev.paused || now_ms.saturating_sub(last) >= 250 {
+                                sse::publish(&cb_state.events, "progress", &json!(data.progress));
+                                last_progress_emit.store(now_ms, std::sync::atomic::Ordering::Relaxed);
+                            }
                         }));
                     // GAP-6: indirme sonrası otomatik çıkarma ipucu üret.
                     // `platform` + `get_auto_extract()` + URL uzantısından türetilir

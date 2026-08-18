@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-10
 - **title:** History & state-emitter / SSE finalization in daemon (mark_game_as_downloaded, emit, bulk status)
-- **status:** todo
+- **status:** in-progress
 - **priority:** P1
 - **created:** 2026-08-14
 - **environment:** both
@@ -78,6 +78,18 @@ Parity denetimi bu TASK'ın kapsamını genişletti. Aşağıdaki maddelere de b
   throttle), SSE `_broadcaster_loop` ~250ms.
 - Rust: `manager-http/src/api.rs:517-543` her bridge event'inde SSE yayar, açık throttle yok
   (librqbit event hızına bağımlı — SSE seli riski).
+
+### Kod Durumu — 2026-08-18 (yeniden denetim)
+
+Görev belgesi bayat; kodda şunlar ZATEN mevcut:
+
+- **A (history disk kalıcılığı):** `persist.rs` `load_history`/`save_history` (atomik temp+fsync+rename) + `api.rs::persist_history` `finalize_download_in_state`/`push_queued_history_entry` içinde çağrılıyor.
+- **B (clear_history aktif koruma):** `api.rs::clear_history` + `is_active_history_entry` (active status + queue/retry/progress eşleşmesi) uygulanmış; contract test `test_clear_history_preserves_active` var.
+- **D (timestamp):** `api.rs::now_timestamp` (`%Y-%m-%d %H:%M:%S`, yerel saat) her history yazımında üretiliyor.
+- **Retry motoru (gap-1):** `decide_retry`/`classify_*`/`retry::*` uygulanmış.
+- **E (SSE progress throttle):** `api.rs` indirme `on_progress` callback'inde ~250ms throttle (`AtomicU64` tabanlı; terminal durumda her zaman yayın) eklendi. Birim testler yeşil.
+
+**KALAN:** **C** — `downloaded_games.json` diske kalıcılığı (şu an `state.downloaded` yalnız bellek; startup'ta yüklenmiyor) + ROM klasörü taraması (`catalog.rs:665` `scan_roms_for_downloaded_games` referansı). Bu madde daha büyük kapsam; ayrı bir fazda ele alınacak.
 
 ### Bağımlılık
 
