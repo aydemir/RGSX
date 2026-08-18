@@ -6,10 +6,11 @@
 import { STRINGS } from './i18n.strings.js'
 
 const FALLBACK = 'tr';
-let current =
+const explicitLocale =
   localStorage.getItem('rgsx_locale') ||
   new URLSearchParams(location.search).get('lang') ||
-  FALLBACK;
+  '';
+let current = explicitLocale || FALLBACK;
 
 export function getLocale() {
   return current;
@@ -17,6 +18,14 @@ export function getLocale() {
 export function setLocale(l) {
   current = l;
   localStorage.setItem('rgsx_locale', l);
+}
+// Sunucu veri-dili bind'i: kullanici acikca secmediyse sunucu dilini uygular
+// (localStorage'a KALICI YAZMAZ — yalniz oturum icin gecerli).
+export function applyLocale(l) {
+  if (l && STRINGS[l]) current = l;
+}
+export function hasExplicitLocale() {
+  return !!explicitLocale;
 }
 export { STRINGS };
 

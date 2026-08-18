@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { connectSSE, apiGet, apiPost } from './api.js'
-import { t as _t, getLocale, setLocale, STRINGS } from './i18n.js'
+import { t as _t, getLocale, setLocale, applyLocale, hasExplicitLocale, STRINGS } from './i18n.js'
 import Support from './components/Support.vue'
 import BrowseDirectories from './components/BrowseDirectories.vue'
 
@@ -558,7 +558,15 @@ async function loadSettings() {
     settings.value = normalizeSettings(s && s.settings ? s.settings : null)
     systemInfo.value = s && s.system_info
   } catch (e) { settings.value = null }
-  try { const tr = await apiGet('/api/translations'); dataLang.value = tr.language || 'en' } catch (e) { dataLang.value = 'en' }
+  try {
+    const tr = await apiGet('/api/translations')
+    dataLang.value = tr.language || 'en'
+    // gap-25 (b): kullanici acikca dil secmediyse UI dilini sunucu veri-diline bagla
+    if (!hasExplicitLocale() && tr.language && STRINGS[tr.language]) {
+      applyLocale(tr.language)
+      locale.value = tr.language
+    }
+  } catch (e) { dataLang.value = 'en' }
 }
 async function saveSettings() {
   if (!settings.value) return

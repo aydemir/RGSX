@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-25
 - **title:** WebUI Misc P2 (update-cache butonu, i18n tam entegrasyon, renk paleti hizası, SSE kontrat)
-- **status:** partial
+- **status:** done
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ⚠️ **KISMEN.** SSE kontratı zaten ✅ (önceki tur, bu alt-madde TAMAM).
@@ -76,3 +76,19 @@ AÇIK kalanlar: (b) i18n sunucu veri-dili bind'i (`data-translate` eşdeğeri Ap
 `tt()` fallback kullanılıyor) ve (c) renk paleti hizası (Rust sapmaları `#2f8f46`/`#d29922`/
 `#58a6ff` hâlâ Python hex otoritesine `#28a745`/`#dc3545`/`#ffc107`/`#17a2b8`/`#007bff`
 göre hizalanmadı). `status: partial` korunur.
+
+## Done (2026-08-18)
+
+- (c) Renk paleti hizası TAMAM: Kalan 2 Rust sapması Python hex otoritesine alındı —
+  `.dlall` `#2f8f46` -> `#28a745`, `BrowseDirectories.vue` font `#58a6ff` -> `#007bff`.
+  (Doc'un bayrak ettiği `#d29922`/`#66ff66`/`#6e2b2b` zaten temizlenmişti.) Tüm renkler
+  artık `#28a745/#dc3545/#ffc107/#17a2b8/#007bff` ile uyumlu.
+- (b) i18n sunucu veri-dili bind'i TAMAM (`webui/src/i18n.js` + `App.vue`):
+  - `i18n.js`: `explicitLocale` (localStorage/URL) ayrıldı; `applyLocale(l)` (kalıcı YAZMAZ,
+    yalnız oturum için) ve `hasExplicitLocale()` eklendi. `t()` modül-seviyesi `current`'ı kullanır.
+  - `App.vue`: `/api/translations` fetch'inde, kullanıcı AÇIKÇA dil seçmediyse (`!hasExplicitLocale()`)
+    sunucunun döndürdüğü `language` değerini UI diline bağlar (`applyLocale` + `locale.value`).
+    Kullanıcı daha önce dil seçtiyse (localStorage/URL) ona saygı duyulur; sunucu bind'i ezmez.
+  - Not: Bu yalnız İLK yükleme bind'idir; `changeDataLang` (sunucu veri-dili değişimi) UI dilini
+    canlı değiştirmez — istenirse sonradan eklenebilir. SSE kontratı zaten 2026-08-15'te doğrulanmıştı.
+- `status: done`.
