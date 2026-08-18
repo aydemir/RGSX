@@ -17,7 +17,7 @@ const parentPath = ref(null)
 
 function loc(key) {
   const table = STRINGS[locale.value] || STRINGS.tr
-  return (table && table[key]) || STRINGS.tr[key] || key
+  return (table && table[key]) || (STRINGS.en && STRINGS.en[key]) || STRINGS.tr[key] || key
 }
 
 function deriveParent(p) {

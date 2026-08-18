@@ -11,7 +11,7 @@ const snapshot = reactive({ history: [], queue: [], active: false, progress: {},
 const progress = reactive({})
 
 const tt = (k, vars) => {
-  let s = (STRINGS[locale.value] && STRINGS[locale.value][k]) || STRINGS.tr[k] || k
+  let s = (STRINGS[locale.value] && STRINGS[locale.value][k]) || (STRINGS.en && STRINGS.en[k]) || STRINGS.tr[k] || k
   if (vars) for (const [kk, vv] of Object.entries(vars)) s = s.replace(new RegExp('\\{' + kk + '\\}', 'g'), vv)
   return s
 }
@@ -565,9 +565,9 @@ async function switchTab(t) {
     <header>
       <h1>{{ tt('app_title') }}</h1>
       <span class="status" :class="{ on: connected }">{{ connected ? tt('status_connected') : tt('status_connecting') }}</span>
-      <span class="active" v-if="snapshot.active">● aktif indirme</span>
-      <button class="gear" @click="updateGamesList" title="Oyun listesini güncelle" aria-label="Oyun listesini güncelle">🔄</button>
-      <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" title="Ayarlar" aria-label="Ayarlar">⚙</button>
+      <span class="active" v-if="snapshot.active">{{ tt('active_dl') }}</span>
+      <button class="gear" @click="updateGamesList" :title="tt('refresh_title')" :aria-label="tt('refresh_title')">🔄</button>
+      <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" :title="tt('settings_title')" :aria-label="tt('settings_title')">⚙</button>
       <Support />
     </header>
 
@@ -580,11 +580,11 @@ async function switchTab(t) {
 
     <!-- Tabs -->
     <nav class="tabs">
-      <button :class="{ active: tab === 'platforms' }" @click="switchTab('platforms')">Platformlar</button>
-      <button :class="{ active: tab === 'downloaded' }" @click="switchTab('downloaded')">İndirilenler ({{ downloadedItems.length }})</button>
-      <button :class="{ active: tab === 'queue' }" @click="switchTab('queue')">Kuyruk ({{ queueItems.length }})</button>
-      <button :class="{ active: tab === 'history' }" @click="switchTab('history')">Geçmiş ({{ historyItems.length }})</button>
-      <button :class="{ active: tab === 'settings' }" @click="switchTab('settings')">Ayarlar</button>
+      <button :class="{ active: tab === 'platforms' }" @click="switchTab('platforms')">{{ tt('tab_platforms') }}</button>
+      <button :class="{ active: tab === 'downloaded' }" @click="switchTab('downloaded')">{{ tt('tab_downloaded') }} ({{ downloadedItems.length }})</button>
+      <button :class="{ active: tab === 'queue' }" @click="switchTab('queue')">{{ tt('tab_queue') }} ({{ queueItems.length }})</button>
+      <button :class="{ active: tab === 'history' }" @click="switchTab('history')">{{ tt('tab_history') }} ({{ historyItems.length }})</button>
+      <button :class="{ active: tab === 'settings' }" @click="switchTab('settings')">{{ tt('settings') }}</button>
     </nav>
 
     <p v-if="catalogError" class="err">{{ catalogError }}</p>
@@ -592,7 +592,7 @@ async function switchTab(t) {
     <!-- Search results -->
     <section v-if="searchResults" class="panel">
       <h2>{{ tt('search_results') }} <a class="back" @click="clearSearch">{{ tt('clear') }}</a></h2>
-      <h3 v-if="searchResults.platforms.length">Platformlar</h3>
+       <h3 v-if="searchResults.platforms.length">{{ tt('tab_platforms') }}</h3>
       <div class="grid">
         <button v-for="p in searchResults.platforms" :key="p.platform_name" class="card"
                 @click="clearSearch(); selectPlatform(p.platform_name)">
@@ -600,7 +600,7 @@ async function switchTab(t) {
           <span class="count" v-if="p.games_count != null">{{ p.games_count }} {{ tt('games') }}</span>
         </button>
       </div>
-      <h3 v-if="searchResults.games.length">Oyunlar</h3>
+       <h3 v-if="searchResults.games.length">{{ tt('games_label') }}</h3>
       <ul class="games">
         <li v-for="(g, i) in searchResults.games" :key="g.game_name + i">
           <div class="row"><span class="name">{{ g.game_name }} <small>({{ g.platform }})</small></span><span class="size">{{ g.size || '' }}</span></div>
@@ -629,29 +629,29 @@ async function switchTab(t) {
       <div v-else>
         <h2>
           {{ selectedPlatform }}
-          <small>({{ filteredGames.length }} / {{ games.length }} oyun)</small>
+          <small>({{ filteredGames.length }} / {{ games.length }} {{ tt('games') }})</small>
           <a class="back" @click="backToPlatforms">{{ tt('back') }}</a>
         </h2>
 
         <!-- Filter bar -->
         <div class="filters">
-          <input class="gfilt" v-model="gameSearch" :placeholder="'Oyun ara…'" />
+          <input class="gfilt" v-model="gameSearch" :placeholder="tt('game_search_ph')" />
           <div class="regions">
             <button v-for="r in REGIONS" :key="r" class="rbtn" :class="regionFilters[r]"
                     @click="cycleRegion(r)">{{ r }}</button>
           </div>
-          <label class="chk"><input type="checkbox" v-model="hideDownloaded" @change="saveFilters()" /> İndirilenleri gizle</label>
-          <label class="chk"><input type="checkbox" v-model="hideNonRelease" @change="saveFilters()" /> Demo/beta gizle</label>
-          <label class="chk"><input type="checkbox" v-model="regexMode" @change="saveFilters()" /> Regex</label>
-          <label class="chk"><input type="checkbox" v-model="oneRomPerGame" @change="saveFilters()" /> 1 ROM/oyun</label>
+          <label class="chk"><input type="checkbox" v-model="hideDownloaded" @change="saveFilters()" /> {{ tt('filter_hide_dl') }}</label>
+          <label class="chk"><input type="checkbox" v-model="hideNonRelease" @change="saveFilters()" /> {{ tt('filter_hide_demo') }}</label>
+          <label class="chk"><input type="checkbox" v-model="regexMode" @change="saveFilters()" /> {{ tt('filter_regex') }}</label>
+          <label class="chk"><input type="checkbox" v-model="oneRomPerGame" @change="saveFilters()" /> {{ tt('filter_one_rom') }}</label>
           <select v-model="sortMode">
-            <option value="name_asc">Ada göre (A→Z)</option>
-            <option value="name_desc">Ada göre (Z→A)</option>
-            <option value="size_asc">Boya göre (küçük→büyük)</option>
-            <option value="size_desc">Boya göre (büyük→küçük)</option>
+            <option value="name_asc">{{ tt('pf_sort_name_asc') }}</option>
+            <option value="name_desc">{{ tt('pf_sort_name_desc') }}</option>
+            <option value="size_asc">{{ tt('pf_sort_size_asc') }}</option>
+            <option value="size_desc">{{ tt('sort_size_desc') }}</option>
           </select>
-          <button class="reset" @click="resetFilters">Filtreyi sıfırla</button>
-          <button class="dlall" @click="downloadAll">Tümünü indir ({{ filteredGames.length }})</button>
+          <button class="reset" @click="resetFilters">{{ tt('filter_reset') }}</button>
+          <button class="dlall" @click="downloadAll">{{ tt('download_all') }} ({{ filteredGames.length }})</button>
         </div>
         <p v-if="catalogLoading" class="muted">{{ tt('loading') }}</p>
 
@@ -660,8 +660,8 @@ async function switchTab(t) {
             <span class="badge sm" v-if="catalogStatus(g)" :style="{ background: catalogStatus(g).color }">{{ catalogStatus(g).marker }}</span>
             <div class="row"><span class="name">{{ g.name }}</span><span class="size">{{ g.size || '' }}</span></div>
             <div class="dlgrp">
-              <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g, 'now')" title="Şimdi indir" aria-label="Şimdi indir">⬇️</button>
-              <button class="dlbtn q" :disabled="!g.url" @click="downloadGame(g, 'queue')" title="Kuyruğa ekle" aria-label="Kuyruğa ekle">➕</button>
+              <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g, 'now')" :title="tt('dl_now_title')" :aria-label="tt('dl_now_title')">⬇️</button>
+              <button class="dlbtn q" :disabled="!g.url" @click="downloadGame(g, 'queue')" :title="tt('dl_queue_title')" :aria-label="tt('dl_queue_title')">➕</button>
             </div>
           </li>
         </ul>
@@ -670,8 +670,8 @@ async function switchTab(t) {
 
     <!-- DOWNLOADED TAB -->
     <section v-if="tab === 'downloaded'" class="panel">
-      <h2>İndirilenler <small>({{ downloadedItems.length }})</small></h2>
-      <p v-if="!downloadedItems.length" class="muted">Henüz indirilen oyun yok.</p>
+      <h2>{{ tt('tab_downloaded') }} <small>({{ downloadedItems.length }})</small></h2>
+      <p v-if="!downloadedItems.length" class="muted">{{ tt('downloaded_empty') }}</p>
       <ul class="games">
         <li v-for="(g, i) in downloadedItems" :key="g.name + i">
           <span class="st s-downloaded">✓</span>
@@ -682,14 +682,14 @@ async function switchTab(t) {
 
     <!-- QUEUE TAB -->
     <section v-if="tab === 'queue'" class="panel">
-      <h2>Kuyruk <small>({{ queueItems.length }})</small>
+      <h2>{{ tt('tab_queue') }} <small>({{ queueItems.length }})</small>
         <span class="qacts">
-          <button @click="pauseAll">⏸ Duraklat</button>
-          <button @click="resumeAll">▶ Devam</button>
-          <button class="danger" @click="clearQueue">Temizle</button>
+          <button @click="pauseAll">{{ tt('pause_all') }}</button>
+          <button @click="resumeAll">{{ tt('resume_all') }}</button>
+          <button class="danger" @click="clearQueue">{{ tt('clear') }}</button>
         </span>
       </h2>
-      <p v-if="!queueItems.length" class="muted">Kuyruk boş.</p>
+      <p v-if="!queueItems.length" class="muted">{{ tt('queue_empty') }}</p>
       <ul class="dl">
         <li v-for="(item, i) in queueItems" :key="item.task_id || item.url || i">
           <div class="row">
@@ -701,7 +701,7 @@ async function switchTab(t) {
           <div class="qmeta">
             <span class="muted">{{ item.platform }}</span>
             <span class="muted" v-if="queueSpeed(item)">{{ queueSpeed(item) }}</span>
-            <button class="dlbtn danger" @click="cancelDownload(item)">İptal</button>
+            <button class="dlbtn danger" @click="cancelDownload(item)">{{ tt('cancel') }}</button>
           </div>
         </li>
       </ul>
@@ -709,10 +709,10 @@ async function switchTab(t) {
 
     <!-- HISTORY TAB -->
     <section v-if="tab === 'history'" class="panel">
-      <h2>Geçmiş <small>({{ historyItems.length }})</small>
-        <button class="danger" v-if="historyItems.length" @click="clearHistory">Geçmişi temizle</button>
+      <h2>{{ tt('tab_history') }} <small>({{ historyItems.length }})</small>
+        <button class="danger" v-if="historyItems.length" @click="clearHistory">{{ tt('history_clear') }}</button>
       </h2>
-      <p v-if="!historyItems.length" class="muted">Geçmiş boş.</p>
+      <p v-if="!historyItems.length" class="muted">{{ tt('history_empty') }}</p>
       <ul class="hist">
         <li v-for="(item, i) in historyItems" :key="item.task_id || i" :class="statusMeta(item.status).cls">
           <div class="row">
@@ -731,15 +731,15 @@ async function switchTab(t) {
 
     <!-- SETTINGS TAB -->
     <section v-if="tab === 'settings'" class="panel">
-      <h2>Ayarlar</h2>
+      <h2>{{ tt('settings') }}</h2>
       <div class="field">
-        <label>Arayüz Dili</label>
+        <label>{{ tt('ui_language') }}</label>
         <select :value="locale" @change="changeUiLang($event.target.value)">
           <option v-for="(v, k) in STRINGS" :key="k" :value="k">{{ k }}</option>
         </select>
       </div>
       <div class="field" v-if="languages.length">
-        <label>Veri Dili (sunucu)</label>
+        <label>{{ tt('data_language') }}</label>
         <select :value="dataLang" @change="changeDataLang($event.target.value)">
           <option v-for="l in languages" :key="l" :value="l">{{ l }}</option>
         </select>
@@ -757,7 +757,7 @@ async function switchTab(t) {
           </select>
         </div>
         <div class="field">
-          <label>Yazı tipi (font family)</label>
+          <label>{{ tt('font_family') }}</label>
           <select v-model="settings.display.font_family" @change="saveSettings()">
             <option value="pixel">Pixel</option><option value="dejavu">DejaVu</option>
           </select>
@@ -775,11 +775,11 @@ async function switchTab(t) {
           <input type="checkbox" v-model="settings.show_unsupported_platforms" @change="saveSettings()" />
         </div>
         <div class="field">
-          <label>Bilinmeyen uzantılara izin ver</label>
+          <label>{{ tt('allow_unknown') }}</label>
           <input type="checkbox" v-model="settings.allow_unknown_extensions" @change="saveSettings()" />
         </div>
         <div class="field">
-          <label>Sıralama</label>
+          <label>{{ tt('sort') }}</label>
           <select v-model="settings.global_sort_option" @change="saveSettings()">
             <option value="name_asc">{{ tt('sort_name_asc') }}</option>
             <option value="name_desc">{{ tt('sort_name_desc') }}</option>
@@ -788,17 +788,17 @@ async function switchTab(t) {
           </select>
         </div>
         <div class="field">
-          <label>Kaynak modu</label>
+          <label>{{ tt('source_mode') }}</label>
           <select v-model="settings.sources.mode" @change="saveSettings()">
             <option value="rgsx">rgsx</option><option value="custom">custom</option>
           </select>
         </div>
         <div class="field" v-if="settings.sources.mode === 'custom'">
-          <label>Özel URL</label>
+          <label>{{ tt('custom_url') }}</label>
           <input type="text" v-model="settings.sources.custom_url" @change="saveSettings()" />
         </div>
         <div class="field">
-          <label>Sembolik bağ (symlink)</label>
+          <label>{{ tt('symlink_label') }}</label>
           <input type="checkbox" v-model="settings.symlink.enabled" @change="saveSettings()" />
         </div>
         <div class="field" v-if="settings.symlink.enabled">
@@ -810,13 +810,13 @@ async function switchTab(t) {
           <input type="checkbox" v-model="settings.auto_extract" @change="saveSettings()" />
         </div>
         <template v-if="systemInfo && (systemInfo.system || '').toLowerCase() === 'linux'">
-          <h3>Linux / Batocera</h3>
+          <h3>{{ tt('linux_section') }}</h3>
           <div class="field">
-            <label>Açılışta web servisi</label>
+            <label>{{ tt('web_service_label') }}</label>
             <input type="checkbox" v-model="settings.web_service_at_boot" @change="saveSettings()" />
           </div>
           <div class="field">
-            <label>Açılışta özel DNS</label>
+            <label>{{ tt('custom_dns_label') }}</label>
             <input type="checkbox" v-model="settings.custom_dns_at_boot" @change="saveSettings()" />
           </div>
         </template>
@@ -832,7 +832,7 @@ async function switchTab(t) {
           </div>
         </div>
         <div class="field" v-if="systemInfo">
-          <label>🖥️ {{ tt('system_info') || 'Sistem Bilgisi' }}</label>
+          <label>🖥️ {{ tt('system_info') }}</label>
           <div class="sysinfo">
             <div v-for="(v, k) in systemInfo" :key="k" class="sysrow"><span>{{ k }}</span><span>{{ v }}</span></div>
           </div>
@@ -844,7 +844,7 @@ async function switchTab(t) {
         <div class="field">
           <label>{{ tt('roms_folder') }}</label>
           <div class="browse-row">
-            <input type="text" v-model="settings.roms_folder" @change="saveSettings()" placeholder="varsayılan" />
+            <input type="text" v-model="settings.roms_folder" @change="saveSettings()" :placeholder="tt('default_placeholder')" />
             <button class="browse-btn" @click="openBrowse = true">📂 {{ tt('browse') }}</button>
           </div>
         </div>
