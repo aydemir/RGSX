@@ -279,16 +279,22 @@ const failedNames = computed(() => {
 // Python parity: önce indiriliyor, sonra indirildi, sonra başarısız.
 function catalogStatus(g) {
   const p = g.url ? progress[g.url] : null
-  const active = p && typeof p.status === 'string' &&
-    ['Downloading', 'Extracting', 'Connecting', 'Verifying', 'Seeding'].includes(p.status)
+  const pstatus = (p && typeof p.status === 'string') ? p.status : ''
+  const active = ['Downloading', 'Extracting', 'Connecting', 'Verifying', 'Seeding'].includes(pstatus)
+  // Yeşil ÖNCELİKLİ: indirme tamamlanınca gösterge anında yeşile dönmeli (refresh gerekmeden).
+  // Yeşil sinyali üç kaynaktan gelir (herhangi biri yeterli):
+  //   1) SSE snapshot `downloaded` haritası  — bitişte `downloaded` olayıyla anlık güncellenir
+  //   2) /api/game-status (gameStatuses)     — platform seçilince dolar
+  //   3) bitiş progress olayı (status=='Download_OK') — sarı zaten bu olayla dinamik güncelleniyor
+  const downloaded =
+    isDownloadedInSnapshot(g) ||
+    (gameStatusOf(g) && gameStatusOf(g).status === 'downloaded') ||
+    pstatus === 'Download_OK'
+  if (downloaded) return { marker: '[>]', color: '#28a745', cls: 'st-ok' }
   if (active) {
     const pct = typeof p.progress === 'number' ? Math.round(p.progress) : 0
     return { marker: `[~] ${pct}%`, color: '#ffcc00', cls: 'st-run' }
   }
-  // Yeşil: game-status (gameStatuses) VEYA SSE snapshot'ındaki `downloaded` haritası.
-  // İkincisi sayfa yenilenince de SSE bağlanınca geldiğinden yeşil gösterge düşmez.
-  const downloaded = (gameStatusOf(g) && gameStatusOf(g).status === 'downloaded') || isDownloadedInSnapshot(g)
-  if (downloaded) return { marker: '[>]', color: '#28a745', cls: 'st-ok' }
   if (failedNames.value.has(stem(g.name)) || failedNames.value.has(String(g.name).toLowerCase()))
     return { marker: '[X]', color: '#dc3545', cls: 'st-err' }
   return null
