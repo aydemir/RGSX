@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-7
 - **title:** Seed lifecycle (promote-to-seed, _seed_status_worker, has_active_seed, stop_seed) + qBittorrent password migration
-- **status:** todo
+- **status:** closed (out-of-scope)
 - **priority:** P1
 - **created:** 2026-08-14
 - **environment:** both
@@ -51,3 +51,18 @@ modda şifre kavramı yoktur ama fallback qBittorrent path'i için korunmalıdı
 - Bu TASK'ın asıl kapsamı zaten buydu; parity denetimiyle teyit edildi (dosya:satır kanıtlandı).
 - Bağımlılık: `TASK-002-gap-16` (dosya seçimi) ve `TASK-002-gap-8` (izolasyon) ile
   `manager-torrent/src/lib.rs` paylaşımı — sıralı ele alınmalı.
+
+## 2026-08-18 KAPATMA — kapsam dışı (kullanıcı kararı, gap-18 ile tutarlı)
+
+Kullanıcı: gap-7 (seed yaşam döngüsü + qBittorrent şifre migration) Rust portu kapsamı dışı.
+Gerekçe: Bu özellikler **qBittorrent/Python fallback path'ine** aittir (`qbittorrent_backend.py`
+`_promote_active_download_to_seed`/`_seed_status_worker`/`has_active_seed`/`stop_seed` ve Faz 5
+şifre migration). Rust librqbit embedded modelinde seed takibi kasıtlı yoktur (indir → link/copy → biter;
+`manager-torrent/src/lib.rs:195-196` yorumu teyit eder). gap-18 (qBittorrent UI) out-of-scope kararıyla
+tutarlı olarak kapatıldı.
+
+Not: "Aktif indirmeyi durdur" ihtiyacı Rust'ta ZATEN karşılanıyor — `/api/cancel` ucu
+(`lib.rs:58`) + `cancelDownload()` UI butonu (`App.vue:452`) + CANCELED durumu. Eksik olan yalnızca
+"bitmiş ama seeding devam eden torrent'i durdur+sil" (`stop_seed`); bu qBittorrent kavramı olduğundan
+Rust portuna port EDİLMEYECEK. İstenirse librqbit path'i için dar bir "stop & delete seeding" özelliği
+ayrı görev olarak açılabilir.
