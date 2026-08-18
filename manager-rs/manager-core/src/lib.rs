@@ -10,3 +10,4 @@ pub mod secrets;
 pub mod state;
 pub mod watchdog;
 pub mod settings;
+pub mod game_filters;

@@ -591,6 +591,49 @@ async fn test_save_filters() {
     assert_eq!(body["message"], json!("Filtres sauvegardés"));
 }
 
+/// TASK-002-gap-14 — `game_filters.py` saf mantığının Rust eşdeğeri (parity).
+/// Python `test_game_filters.py` senaryolarının Rust portu: bölge exclude,
+/// one-rom-per-game bölge önceliği ve non-release gizleme.
+#[tokio::test]
+async fn test_game_filters() {
+    use manager_core::game_filters::{FilteredGame, GameFilters};
+
+    // Bölge exclude: Europe hariç → Avrupa oyunları düşer, USA/World kalır.
+    let mut f = GameFilters::new();
+    f.region_filters
+        .insert("Europe".to_string(), "exclude".to_string());
+    let games = vec![
+        FilteredGame { name: "A (USA)".into(), url: "u1".into(), size: 0 },
+        FilteredGame { name: "B (Europe)".into(), url: "u2".into(), size: 0 },
+        FilteredGame { name: "C (World)".into(), url: "u3".into(), size: 0 },
+    ];
+    let out = f.apply_filters(&games, |_| false);
+    let names: Vec<&str> = out.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, vec!["A (USA)", "C (World)"]);
+
+    // one_rom_per_game: aynı taban, USA bölge önceliğiyle kazanır.
+    let mut f2 = GameFilters::new();
+    f2.one_rom_per_game = true;
+    let games2 = vec![
+        FilteredGame { name: "Cool (Europe)".into(), url: "e".into(), size: 0 },
+        FilteredGame { name: "Cool (USA)".into(), url: "u".into(), size: 0 },
+    ];
+    let out2 = f2.apply_filters(&games2, |_| false);
+    assert_eq!(out2.len(), 1);
+    assert_eq!(out2[0].name, "Cool (USA)");
+
+    // non-release gizleme.
+    let mut f3 = GameFilters::new();
+    f3.hide_non_release = true;
+    let games3 = vec![
+        FilteredGame { name: "Real (USA)".into(), url: "r".into(), size: 0 },
+        FilteredGame { name: "Leak (Beta)".into(), url: "b".into(), size: 0 },
+    ];
+    let out3 = f3.apply_filters(&games3, |_| false);
+    assert_eq!(out3.len(), 1);
+    assert_eq!(out3[0].name, "Real (USA)");
+}
+
 #[tokio::test]
 async fn test_clear_history() {
     let (status, _, body) = call_post(empty_app(), "/api/clear-history", json!({})).await;
