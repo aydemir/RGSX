@@ -301,8 +301,10 @@ impl LibrqbitEngine {
         }
         result?;
 
-        // İnen root'u çöz: bazı torrentlerin kök klasörü olabilir.
-        let found = self.resolve_downloaded_file().await?;
+        // İnen root'u çöz: yalnız BU torrentin seçtiği dosya (bkz. TASK-006 — eski
+        // "tüm output klasörünün en büyük dosyası" mantığı başka bir torrentin/dosyanın
+        // yanlış isimle linklenmesine yol açıyordu).
+        let found = self.resolve_selected_file(&handle).await?;
         link_or_copy(&found, dest_path).map_err(|e| BridgeError::Rpc {
             code: -32000,
             message: format!("dosya sonlandırılamadı ({found:?} → {dest_path:?}): {e}"),
@@ -473,6 +475,95 @@ impl LibrqbitEngine {
                 code: -32000,
                 message: "indirilen dosya bulunamadı".to_string(),
             })
+    }
+
+    /// `root` alt ağacında en büyük (`.rqbitpart` hariç) dosyayı bulur.
+    fn scan_largest_in(&self, root: &std::path::Path) -> Option<std::path::PathBuf> {
+        let mut largest: Option<(u64, std::path::PathBuf)> = None;
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir).ok()?;
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.is_file() {
+                    if p.file_name()
+                        .map(|n| n.to_string_lossy().ends_with(".rqbitpart"))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    let len = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                    if largest.as_ref().map(|(l, _)| len > *l).unwrap_or(true) {
+                        largest = Some((len, p));
+                    }
+                }
+            }
+        }
+        largest.map(|(_, p)| p)
+    }
+
+    /// Bu torrentin indirdiği (seçili) dosyayı, torrentin **kendi** `handle`'ından çözür.
+    ///
+    /// Eski `resolve_downloaded_file` TÜM `output_folder`'ı tarayıp en büyük dosyayı seçiyordu;
+    /// `output_folder` torrentler arasında paylaşıldığından başka bir torrentin (veya önceki
+    /// oturumun) daha büyük dosyası yanlışlıkla seçilip istenen oyun adıyla linkleniyordu
+    /// (TASK-006: Wii torrenti "10 Minute Solution" yerine "007 - Quantum of Solace"ı linkledi).
+    ///
+    /// Bu sürüm yalnız bu torrentin dosyalarına bakar: `handle.only_files()` ile seçili
+    /// indeksleri, `with_metadata().file_infos` ile bu torrentin dosya yollarını alır; diske
+    /// yazılmış seçili dosyalar içinden en büyüğünü döndürür. Bulamazsa torrentin kendi alt
+    /// ağacında (`output_folder/<torrent_name>`) en büyük dosyaya, son çare olarak da eski
+    /// "tüm klasör" taramasına düşer (log ile uyarı).
+    pub async fn resolve_selected_file(
+        &self,
+        handle: &Arc<ManagedTorrent>,
+    ) -> Result<std::path::PathBuf, BridgeError> {
+        let torrent_name = handle.name().unwrap_or_default();
+        let selected: Option<Vec<usize>> = handle.only_files();
+
+        let mut candidates: Vec<(usize, u64, std::path::PathBuf)> = Vec::new();
+        let _ = handle.with_metadata(|meta| {
+            for (idx, fi) in meta.file_infos.iter().enumerate() {
+                let rel = &fi.relative_filename;
+                let mut tries = vec![
+                    self.output_folder.join(&torrent_name).join(rel),
+                    self.output_folder.join(rel),
+                ];
+                if !torrent_name.is_empty() {
+                    tries.push(self.output_folder.join(&torrent_name));
+                }
+                for p in tries {
+                    if let Ok(md) = std::fs::metadata(&p) {
+                        if md.is_file() {
+                            let is_selected =
+                                selected.as_ref().map(|s| s.contains(&idx)).unwrap_or(true);
+                            if is_selected {
+                                candidates.push((idx, md.len(), p));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 1) Seçili dosyalar içinden en büyüğü (only_files / only_files_regex ile sınırlı).
+        if let Some(best) = candidates.iter().max_by_key(|(_, len, _)| *len) {
+            return Ok(best.2.clone());
+        }
+
+        // 2) Fallback: yalnız bu torrentin kendi alt ağacı (output_folder/<torrent_name>).
+        if let Some(found) = self.scan_largest_in(&self.output_folder.join(&torrent_name)) {
+            return Ok(found);
+        }
+
+        // 3) Son çare: eski davranış (tüm output klasörü) — uyarı ile.
+        tracing::warn!(
+            torrent = %torrent_name,
+            "resolve_selected_file: torrente özgü dosya bulunamadı, tüm output klasörü taranıyor (fallback)"
+        );
+        self.resolve_downloaded_file().await
     }
 }
 

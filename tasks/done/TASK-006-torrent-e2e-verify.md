@@ -2,7 +2,7 @@
 
 - **id:** TASK-006
 - **title:** Wii (Torrent) indirmesinin /test/roms/wii/ altına düşmesinin kanıtlanması
-- **status:** todo
+- **status:** completed
 - **priority:** P1
 - **created:** 2026-08-18
 - **environment:** linux
@@ -32,3 +32,6 @@ Torrent düzeltmesinin gerçekten uçtan uca çalıştığını (indir → doğr
 ## İlerleme
 
 - 2026-08-18 — görev oluşturuldu (torrent fix sonrası yarım kalan uçtan uca doğrulama).
+- 2026-08-18 — **Uçtan uca doğrulandı + kritik bir hata bulundu ve düzeltildi.** İndirme `COMPLETED` oluyor ve dosya `/test/roms/wii/`'a `link_or_copy` (hardlink) ile düşüyor. Ancak `resolve_downloaded_file` TÜM `output_folder`'ı tarayıp **en büyük dosyayı** seçtiği için, paylaşılan klasördeki eski/büyük dosya ("007 - Quantum of Solace (USA)", 2.68GB) istenen oyun adıyla ("10 Minute Solution Europe") yanlış linkleniyordu. Düzeltme: `resolve_selected_file(&self, &handle)` — yalnız bu torrentin `handle.only_files()` + `with_metadata().file_infos`'ndan gelen kendi dosyasını seçer. `manager-torrent/src/lib.rs`.
+- 2026-08-18 — Düzeltme `cargo check` + `cargo build --release -p manager-bin` ile derlendi, deploy edildi, Wii torrenti tekrar tetiklendi. `wii` hedefi artık doğru dosya (inode 922076, `10 Minute Solution (Europe)…zip`, 1.27GB). Hata giderildi.
+- **Not (ayrı küçük sorun):** History'de bazen gerçekten tamamlanıp doğru dosya linklenmesine rağmen `FAILED_PERMANENT / indirme iptal edildi` görünüyor (eski iptal edilmiş görev kalıntısı / cancel-check'in yanlış tetiklenmesi). Fonksiyonel akışı (dosya hedefe düşüyor) etkilemiyor ama UI'da kırmızı durum gösteriyor. Gerekirse ayrı task olarak ele alınabilir.
