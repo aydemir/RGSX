@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-18
 - **title:** WebUI qBittorrent bölümü (parola durum / regenerate / change / start) (hibrit mod: RGSX_TORRENT_ENGINE=python ONLY)
-- **status:** todo
+- **status:** closed (out-of-scope)
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ❌ **Hâlâ YOK.** Yeni App.vue tabs: platforms / downloaded / queue / history / settings. Settings
@@ -80,3 +80,11 @@ Renk otoritesi Python hex'leri: `#28a745` (ok), `#dc3545` (err), `#ffc107` (warn
 arama sonucu **sıfır dosya**. App.vue `QBittorrent`'i import etmiyor. Backend uçları
 (`/api/qbittorrent/*`, `lib.rs:69-72`) mevcut ama **frontend paneli YOK**. Üstteki "Done
 (2026-08-15)" bölümü yanıltıcıdır — görev fiilen BAŞLANMADI. `status: todo`'ya geri alındı.
+
+## 2026-08-18 KAPATMA — kapsam dışı (kullanıcı kararı)
+
+Kullanıcı: "qbittorrent python için rust portunda kapsam dışı". qBittorrent yalnız Python
+yöneticisine ait bir özelliktir; Rust portunda (librqbit saf-Rust varsayılan yolu) port
+EDİLMEYECEK. Bu nedenle frontend paneli (`QBittorrent.vue`) yapılmayacak, görev
+**kapatıldı**. Backend `/api/qbittorrent/*` uçları embedded placeholder döndürmeye devam
+eder (zaten mevcut); UI tarafında bir eylem yok. "Remaining real work" listesinden çıkarıldı.
