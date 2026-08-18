@@ -285,11 +285,26 @@ function catalogStatus(g) {
     const pct = typeof p.progress === 'number' ? Math.round(p.progress) : 0
     return { marker: `[~] ${pct}%`, color: '#ffcc00', cls: 'st-run' }
   }
-  if (gameStatusOf(g) && gameStatusOf(g).status === 'downloaded')
-    return { marker: '[>]', color: '#28a745', cls: 'st-ok' }
+  // Yeşil: game-status (gameStatuses) VEYA SSE snapshot'ındaki `downloaded` haritası.
+  // İkincisi sayfa yenilenince de SSE bağlanınca geldiğinden yeşil gösterge düşmez.
+  const downloaded = (gameStatusOf(g) && gameStatusOf(g).status === 'downloaded') || isDownloadedInSnapshot(g)
+  if (downloaded) return { marker: '[>]', color: '#28a745', cls: 'st-ok' }
   if (failedNames.value.has(stem(g.name)) || failedNames.value.has(String(g.name).toLowerCase()))
     return { marker: '[X]', color: '#dc3545', cls: 'st-err' }
   return null
+}
+
+// Yeşil göstergenin refresh'e dayanıklı olması için: sunucu `data.downloaded`'ı startup'ta
+// disk taramasıyla (installed_list) doldurur; SSE snapshot'ı bunu her bağlantıda tekrar gönderir.
+// Böylece `/api/game-status` yeniden çekilmeden de yeşil korunur.
+function isDownloadedInSnapshot(g) {
+  const dl = snapshot.downloaded || {}
+  const gstem = stem(g.name)
+  const glow = String(g.name).toLowerCase()
+  for (const names of Object.values(dl)) {
+    if (Array.isArray(names) && names.some((n) => stem(n) === gstem || String(n).toLowerCase() === glow)) return true
+  }
+  return false
 }
 
 const filteredGames = computed(() => {
