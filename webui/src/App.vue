@@ -48,10 +48,13 @@ const searchResults = ref(null)
 const DEFAULT_SETTINGS = {
   language: 'Turkish',
   music_enabled: false,
-  display: { grid: '3x4', light_mode: false, font_family: 'Arial', monitor: '', fullscreen: false },
+  display: { grid: '3x4', light_mode: false, font_family: 'pixel', monitor: '', fullscreen: false },
   show_unsupported_platforms: false,
   global_sort_option: 'name',
   max_simultaneous_downloads: 3,
+  allow_unknown_extensions: false,
+  web_service_at_boot: false,
+  custom_dns_at_boot: false,
   sources: { mode: 'rgsx', custom_url: '' },
   symlink: { enabled: false, target_directory: '' },
   accessibility: { font_scale: 1.0, footer_font_scale: 1.0 },
@@ -716,6 +719,12 @@ async function switchTab(t) {
           </select>
         </div>
         <div class="field">
+          <label>Yazı tipi (font family)</label>
+          <select v-model="settings.display.font_family" @change="saveSettings()">
+            <option value="pixel">Pixel</option><option value="dejavu">DejaVu</option>
+          </select>
+        </div>
+        <div class="field">
           <label>{{ tt('max_downloads') }}</label>
           <input type="number" min="1" max="20" v-model.number="settings.max_simultaneous_downloads" @change="saveSettings()" />
         </div>
@@ -726,6 +735,10 @@ async function switchTab(t) {
         <div class="field">
           <label>{{ tt('show_unsupported') }}</label>
           <input type="checkbox" v-model="settings.show_unsupported_platforms" @change="saveSettings()" />
+        </div>
+        <div class="field">
+          <label>Bilinmeyen uzantılara izin ver</label>
+          <input type="checkbox" v-model="settings.allow_unknown_extensions" @change="saveSettings()" />
         </div>
         <div class="field">
           <label>Sıralama</label>
@@ -758,11 +771,32 @@ async function switchTab(t) {
           <label>{{ tt('auto_extract') }}</label>
           <input type="checkbox" v-model="settings.auto_extract" @change="saveSettings()" />
         </div>
+        <template v-if="systemInfo && (systemInfo.system || '').toLowerCase() === 'linux'">
+          <h3>Linux / Batocera</h3>
+          <div class="field">
+            <label>Açılışta web servisi</label>
+            <input type="checkbox" v-model="settings.web_service_at_boot" @change="saveSettings()" />
+          </div>
+          <div class="field">
+            <label>Açılışta özel DNS</label>
+            <input type="checkbox" v-model="settings.custom_dns_at_boot" @change="saveSettings()" />
+          </div>
+        </template>
         <div class="field">
           <label>🔑 {{ tt('api_keys') }}</label>
-          <div class="browse-row">
-            <input type="text" :value="settings.api_keys['archive.org'] || ''" @input="onApiKey('archive.org', $event.target.value)" :placeholder="tt('archive_org_key')" />
-            <input type="text" :value="settings.api_keys['realdebrid'] || ''" @input="onApiKey('realdebrid', $event.target.value)" :placeholder="tt('realdebrid_key')" />
+          <div class="keyrows">
+            <input type="text" :value="settings.api_keys['archive.org'] || ''" @input="onApiKey('archive.org', $event.target.value)" placeholder="archive.org" />
+            <input type="text" :value="settings.api_keys['realdebrid'] || ''" @input="onApiKey('realdebrid', $event.target.value)" placeholder="RealDebrid" />
+            <input type="text" :value="settings.api_keys['1fichier'] || ''" @input="onApiKey('1fichier', $event.target.value)" placeholder="1fichier" />
+            <input type="text" :value="settings.api_keys['alldebrid'] || ''" @input="onApiKey('alldebrid', $event.target.value)" placeholder="AllDebrid" />
+            <input type="text" :value="settings.api_keys['debridlink'] || ''" @input="onApiKey('debridlink', $event.target.value)" placeholder="Debrid-Link" />
+            <input type="text" :value="settings.api_keys['torbox'] || ''" @input="onApiKey('torbox', $event.target.value)" placeholder="TorBox" />
+          </div>
+        </div>
+        <div class="field" v-if="systemInfo">
+          <label>🖥️ {{ tt('system_info') || 'Sistem Bilgisi' }}</label>
+          <div class="sysinfo">
+            <div v-for="(v, k) in systemInfo" :key="k" class="sysrow"><span>{{ k }}</span><span>{{ v }}</span></div>
           </div>
         </div>
         <div class="field">
@@ -931,6 +965,13 @@ small { color: #666; font-weight: normal; }
 .saved { color: #28a745; font-size: 13px; }
 .browse-row { display: flex; gap: 8px; }
 .browse-row input { flex: 1; background: #f8f8f8; border: 2px solid #ccc; border-radius: 5px; padding: 8px 10px; color: #000; font-size: 13px; }
+.keyrows { display: flex; flex-direction: column; gap: 6px; }
+.keyrows input { background: #f8f8f8; border: 2px solid #ccc; border-radius: 5px; padding: 8px 10px; color: #000; font-size: 13px; }
+.sysinfo { background: #f0f8ff; border: 2px solid #007bff; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.sysrow { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid #e0eaff; }
+.sysrow:last-child { border-bottom: 0; }
+.sysrow span:first-child { font-weight: bold; color: #0056b3; }
+.sysrow span:last-child { text-align: right; word-break: break-all; }
 .browse-btn { background: #007bff; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .browse-btn:hover { background: #0069d9; }
 
