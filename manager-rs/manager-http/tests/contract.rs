@@ -168,6 +168,80 @@ async fn test_translations_shape() {
     assert!(body["translations"].is_object());
 }
 
+// ---------------------------------------------------------------------------
+// TASK-002-gap-15 — Rust-only uç noktalar + dil auto-detect sözleşme testleri
+// (Python karşılığı yok; kapsama açığı, parite değil).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_languages_shape() {
+    // Katalog yokken fallback: {"languages": ["en", "tr"]}.
+    let (status, _, body) = call_get(empty_app(), "/api/languages").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    let langs = &body["languages"];
+    assert!(langs.is_array(), "languages must be an array");
+    let arr = langs.as_array().unwrap();
+    assert!(arr.contains(&json!("en")), "en must be a supported language");
+    assert!(arr.contains(&json!("tr")), "tr must be a supported language");
+}
+
+#[tokio::test]
+async fn test_scan_shape() {
+    // Hızlı + deterministik kalmak için küçük boş bir kök dizin kullan.
+    let tmp = std::env::temp_dir().join("rgsx_contract_scan_root");
+    let _ = std::fs::create_dir_all(&tmp);
+    std::env::set_var("RGSX_ROMS_FOLDER", &tmp);
+    let (status, _, body) = call_get(empty_app(), "/api/scan").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    assert!(body["root"].is_string(), "root must be a string");
+    assert!(body["platforms"].is_array(), "platforms must be an array");
+    assert!(body["total_bytes"].is_number(), "total_bytes must be a number");
+    assert!(body["total_files"].is_number(), "total_files must be a number");
+    let disk = &body["disk"];
+    assert!(disk["total"].is_number(), "disk.total must be a number");
+    assert!(disk["used"].is_number(), "disk.used must be a number");
+    assert!(disk["free"].is_number(), "disk.free must be a number");
+}
+
+#[tokio::test]
+async fn test_es_input_shape() {
+    // TASK-005: RetroBat/Batocera `es_input.cfg`'yi okur. Dosya bulunamazsa
+    // {"found": false}; bulunursa {"found": true, deviceName, guid, actions, rgsx}.
+    // Her iki durumda da `found` boolean olmalı (webui varsayılan mapping'e düşer).
+    let (status, _, body) = call_get(empty_app(), "/api/es-input").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["found"].is_boolean(),
+        "es-input response must carry a boolean `found`"
+    );
+    if body["found"].as_bool() == Some(true) {
+        assert!(body["deviceName"].is_string(), "deviceName must be a string");
+        assert!(body["guid"].is_string(), "guid must be a string");
+        assert!(body["actions"].is_object(), "actions must be an object");
+        assert!(body["rgsx"].is_object(), "rgsx map must be an object");
+    }
+}
+
+#[tokio::test]
+async fn test_language_autodetect_standalone_default() {
+    // Dil auto-detect: tarayıcı/OS algısı DEĞİL, sunucu tarafı varsayılanıdır.
+    // Kullanıcı RetroBat/Batocera'da önce dil+gamepad ayarını yapar, RGSX sonra
+    // kurulur; katalog modunda dil `RGSX_LANGUAGE` env'inden (kurulumdan) okunur,
+    // bağımsız modda gömülü varsayılan döner. Tasarım bu şekildedir, korunur.
+    let (status, _, body) = call_get(empty_app(), "/api/translations").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    let lang = body["language"]
+        .as_str()
+        .expect("language auto-detect must return a string");
+    assert!(
+        !lang.is_empty(),
+        "auto-detect must yield a concrete language, not empty"
+    );
+}
+
 #[tokio::test]
 async fn test_games_empty_platform() {
     let (status, _, body) = call_get(empty_app(), "/api/games/NES").await;
