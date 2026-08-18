@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-17
 - **title:** Settings schema parity (background_theme, web_service_at_boot persist, gamelist update days, app_version, app/config dir model)
-- **status:** todo
+- **status:** done
 - **priority:** P3
 - **created:** 2026-08-15
 - **environment:** both
@@ -48,3 +48,20 @@ Python'da olan bazı ayarlar EKSİK veya persist EDİLMİYOR; round-trip'de veri
 
 - `rgsx_settings.py` ayarları Rust `settings.rs`'e round-trip'de kaybolmaz (test: `tests.rs` settings round-trip).
 - `web_service_at_boot` diske yazılır ve geri okunur.
+
+## 2026-08-18 BAYATLIK AUDIT + UYGULAMA
+
+`manager-core/src/settings.rs` ve Python referansları (`rgsx_settings.py`, `config.py`) karşılaştırıldı.
+5 maddeden **yalnız 1'i gerçek parity açığı**, diğerleri sabit veya kasıtlı tasarım farkı:
+
+| Madde | Durum | Karar |
+|---|---|---|
+| `Display.background_theme` | ❌ GERÇEK AÇIK | **Uygulandı**: `Display.background_theme: String` eklendi (default `"default"`, izin kümesi `default/sunset/forest/midnight`). `load()` geçersiz değeri `"default"`'a düşürür (Python `get_display_background_theme` parity). Round-trip + coercion testleri eklendi. |
+| `web_service_at_boot` persist | ⚠️ KASITLI FARK | `save()` bunu kasıtlı siler (settings.rs:9-10 yorumu: systemd ayrı mekanizma, native save'de yazılmaz). Python parity'si ama Rust native modelinde **bilinçli**; değiştirilmedi. |
+| `gamelist_update_days` | ❌ YANLIŞ AÇIK | `config.py:42 GAMELIST_UPDATE_DAYS = 1` bir **sabit**, kullanıcı ayarı değil. `settings.rs`'e eklenmedi. |
+| `app_version` | ❌ YANLIŞ AÇIK | `config.py:30 app_version = "2.6.5.7"` build **sabit** (versiyon gösterimi/update kontrolü). Ayar alanı değil; eklenmedi. |
+| Path model (RGSX_APP_DIR/CONFIG_DIR) | ⚠️ KASITLI FARK | Rust tek `RGSX_DATA_DIR`+`RGSX_SETTINGS_PATH`'e konsolide (doc zaten "belirsiz" demişti). Bilinçli fark; değiştirilmedi. |
+
+**Not:** `background_theme` Rust şemasına eklendi ama webui (App.vue) henüz bu alanı gösterip
+yazmıyor — tam UI parity `TASK-006-native-settings-webui` kapsamında (bu görev yalnızca
+Rust şema parity'sini kapatır).

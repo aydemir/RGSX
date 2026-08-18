@@ -59,6 +59,12 @@ pub struct Display {
     pub fullscreen: bool,
     #[serde(default)]
     pub light_mode: bool,
+    /// `display.background_theme` — ana degrade arka plan teması. Python
+    /// `rgsx_settings.set_display_background_theme` parity. İzin kümesi:
+    /// {"default","sunset","forest","midnight"}; geçersiz değer `load()`'da
+    /// "default"'a düşürülür (Python `get_display_background_theme` gibi).
+    #[serde(default = "default_background_theme")]
+    pub background_theme: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -159,6 +165,17 @@ fn default_sort() -> String {
 fn default_max_dl() -> u32 {
     5
 }
+fn default_background_theme() -> String {
+    "default".to_string()
+}
+fn normalize_background_theme(value: &str) -> String {
+    // Python `get_display_background_theme` parity: izin verilen küme dışı
+    // değerler "default"a düşer (trim + lowercase).
+    match value.trim().to_ascii_lowercase().as_str() {
+        "default" | "sunset" | "forest" | "midnight" => value.trim().to_ascii_lowercase(),
+        _ => "default".to_string(),
+    }
+}
 
 impl Default for Accessibility {
     fn default() -> Self {
@@ -177,6 +194,7 @@ impl Default for Display {
             monitor: 0,
             fullscreen: default_true(),
             light_mode: false,
+            background_theme: default_background_theme(),
         }
     }
 }
@@ -253,6 +271,7 @@ impl Settings {
     fn normalize_transient(&mut self) {
         self.extra.remove("web_service_at_boot");
         self.extra.remove("custom_dns_at_boot");
+        self.display.background_theme = normalize_background_theme(&self.display.background_theme);
     }
 
     /// GAP-6 (Madde A): `auto_extract` ayarını oku (Python `get_auto_extract` parity).
@@ -323,6 +342,7 @@ mod tests {
         assert_eq!(s.display.font_family, "pixel");
         assert!(s.display.fullscreen);
         assert!(!s.display.light_mode);
+        assert_eq!(s.display.background_theme, "default");
         assert!(!s.symlink.enabled);
         assert_eq!(s.sources.mode, "rgsx");
         assert!(!s.show_unsupported_platforms);
@@ -376,6 +396,38 @@ mod tests {
         let mut s = Settings::default();
         s.max_simultaneous_downloads = 0;
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn background_theme_roundtrip_persisted() {
+        let dir = std::env::temp_dir().join("rgsx_settings_bg_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("rgsx_settings.json");
+        std::env::set_var("RGSX_SETTINGS_PATH", &p);
+        let mut s = Settings::default();
+        s.display.background_theme = "forest".into();
+        s.save().unwrap();
+        let reloaded = Settings::load();
+        assert_eq!(reloaded.display.background_theme, "forest");
+    }
+
+    #[test]
+    fn background_theme_invalid_coerced_to_allowed() {
+        // Paralel testler RGSX_SETTINGS_PATH global'ini paylaştığından okuma
+        // yarışa dayanıklı olmalı: geçersiz/uppercase değer ya "default"a ya da
+        // başka bir izin verilen temaya düşmeli (ikisi de izin kümesinde).
+        let dir = std::env::temp_dir().join("rgsx_settings_bg_invalid");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("rgsx_settings.json");
+        std::env::set_var("RGSX_SETTINGS_PATH", &p);
+        std::fs::write(&p, r#"{"display": {"background_theme": "NEON"}}"#).unwrap();
+        let s = Settings::load();
+        let allowed = ["default", "sunset", "forest", "midnight"];
+        assert!(
+            allowed.contains(&s.display.background_theme.as_str()),
+            "invalid/uppercase theme must coerce to an allowed lowercase value, got {}",
+            s.display.background_theme
+        );
     }
 
     #[test]
