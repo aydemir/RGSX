@@ -2,8 +2,9 @@
 
 - **id:** TASK-002-gap-13
 - **title:** /api/support secret redaction in pure-Rust (catalog-off) mode
-- **status:** todo
+- **status:** done
 - **priority:** P0
+- **completed:** 2026-08-18
 - **created:** 2026-08-15
 - **environment:** both
 - **tags:** security, support, redaction
@@ -49,3 +50,11 @@ Python `test_support_zip.py` P0 güvenlik testinin parity'si.
 - Saf-Rust modda üretilen support zip'inde şifre/API key görünmez (Python `test_support_zip.py`
   parity'si Rust testiyle sabitlenir).
 - Mevcut proxy (catalog var) davranışı değişmez.
+
+## Kod Durumu — 2026-08-18 (yeniden denetim)
+
+Görev BELİRSİZ kararı (`security.py` port mu / merkezi `redact_secrets` mı) **kodda merkezi
+`redact_secrets` yönünde çözülmüş**. `manager-core/src/secrets.rs` (Python `utils/security.py`
+parity'si) `redact_secrets`/`redact_json_text` uygular; `api.rs::build_support_zip` (line 1098)
+settings'i redakte edip zipliyor. Contract test `test_support_redacted_offline` (contract.rs:1499)
+`<redacted>` doğrular. **Tamamlandı** — görev belgesi bayattı.
