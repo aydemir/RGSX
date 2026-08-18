@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "gen:i18n": "node scripts/gen-i18n.mjs",
+    "build": "node scripts/gen-i18n.mjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
