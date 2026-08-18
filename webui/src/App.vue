@@ -254,6 +254,44 @@ function gameStatusOf(g) {
   return (s && (s[stem(g.name)] || s[String(g.name).toLowerCase()])) || null
 }
 
+// Son başarısız indirme denemesi yapılmış oyun adları (stem + lowercase).
+// History ve kuyruktaki FAILED/ERROR kayıtlarından türetilir; README'in
+// kırmızı `[X]` göstergesi için kullanılır.
+const failedNames = computed(() => {
+  const set = new Set()
+  const add = (n) => { if (!n) return; set.add(stem(n)); set.add(String(n).toLowerCase()) }
+  for (const it of historyItems.value) {
+    const s = String(it.status || '').toUpperCase()
+    if (s === 'FAILED' || s === 'FAILED_PERMANENT' || s === 'ERROR' || s === 'ERREUR')
+      add(it.name || it.game_name)
+  }
+  for (const it of queueItems.value) {
+    const s = String(it.status || '').toUpperCase()
+    if (s === 'FAILED' || s === 'ERROR') add(it.game_name || it.name)
+  }
+  return set
+})
+
+// Katalog satır göstergesi — README.md "Game List Status Indicators" ile uyumlu:
+//   Downloaded  `[>]`   🟢 yeşil   (dosya disk'te)
+//   Downloading `[~] %` 🟡 sarı    (aktif indirme, progress haritasından)
+//   Failed      `[X]`   🔴 kırmızı (son deneme başarısız)
+// Python parity: önce indiriliyor, sonra indirildi, sonra başarısız.
+function catalogStatus(g) {
+  const p = g.url ? progress[g.url] : null
+  const active = p && typeof p.status === 'string' &&
+    ['Downloading', 'Extracting', 'Connecting', 'Verifying', 'Seeding'].includes(p.status)
+  if (active) {
+    const pct = typeof p.progress === 'number' ? Math.round(p.progress) : 0
+    return { marker: `[~] ${pct}%`, color: '#ffcc00', cls: 'st-run' }
+  }
+  if (gameStatusOf(g) && gameStatusOf(g).status === 'downloaded')
+    return { marker: '[>]', color: '#28a745', cls: 'st-ok' }
+  if (failedNames.value.has(stem(g.name)) || failedNames.value.has(String(g.name).toLowerCase()))
+    return { marker: '[X]', color: '#dc3545', cls: 'st-err' }
+  return null
+}
+
 const filteredGames = computed(() => {
   if (!selectedPlatform.value) return []
   let list = games.value.slice()
@@ -619,7 +657,7 @@ async function switchTab(t) {
 
         <ul class="games">
           <li v-for="(g, i) in filteredGames" :key="g.name || g.url || i">
-            <span class="badge sm" :style="{ background: gameStatusOf(g) ? statusMeta(gameStatusOf(g).status).color : '#6c757d' }">{{ gameStatusOf(g) ? statusMeta(gameStatusOf(g).status).label : '' }}</span>
+            <span class="badge sm" v-if="catalogStatus(g)" :style="{ background: catalogStatus(g).color }">{{ catalogStatus(g).marker }}</span>
             <div class="row"><span class="name">{{ g.name }}</span><span class="size">{{ g.size || '' }}</span></div>
             <div class="dlgrp">
               <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g, 'now')" title="Şimdi indir" aria-label="Şimdi indir">⬇️</button>
