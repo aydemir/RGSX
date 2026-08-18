@@ -33,7 +33,7 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 - [ ] `TASK-002-gap-13` Support ZIP redaction (saf-Rust) — `tasks/gap/TASK-002-gap-13-support-redaction.md`
 
 ### P1 — Kritik / Veri Kaybı
-- [ ] `TASK-002-gap-10` History disk persist + clear_history aktif koruma + downloaded_games + SSE throttle — `tasks/gap/TASK-002-gap-10-history-sse.md`
+- [x] `TASK-002-gap-10` History disk persist + clear_history aktif koruma + downloaded_games + SSE throttle — `tasks/gap/TASK-002-gap-10-history-sse.md` (2026-08-18 kapatıldı: A/B/C/D/E kodda mevcut)
 - [ ] `TASK-002-gap-5` Disk alanı ön-kontrolü + permission pre-check — `tasks/gap/TASK-002-gap-5-disk-space.md`
 - [ ] `TASK-002-gap-12` Download orchestration (concurrency/slot/dedup/FIFO/global pause) — `tasks/gap/TASK-002-gap-12-download-orchestration.md`
 - [ ] `TASK-002-gap-16` Torrent dosya seçimi + öncelik — `tasks/gap/TASK-002-gap-16-torrent-selection.md`

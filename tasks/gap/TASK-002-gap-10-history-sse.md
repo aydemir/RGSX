@@ -2,8 +2,10 @@
 
 - **id:** TASK-002-gap-10
 - **title:** History & state-emitter / SSE finalization in daemon (mark_game_as_downloaded, emit, bulk status)
-- **status:** in-progress
+- **status:** done
 - **priority:** P1
+- **completed:** 2026-08-18
+- **closed-by:** db63ed4 + bu belge güncellemesi
 - **created:** 2026-08-14
 - **environment:** both
 - **tags:** history, sse, state-emitter, download
@@ -89,7 +91,9 @@ Görev belgesi bayat; kodda şunlar ZATEN mevcut:
 - **Retry motoru (gap-1):** `decide_retry`/`classify_*`/`retry::*` uygulanmış.
 - **E (SSE progress throttle):** `api.rs` indirme `on_progress` callback'inde ~250ms throttle (`AtomicU64` tabanlı; terminal durumda her zaman yayın) eklendi. Birim testler yeşil.
 
-**KALAN:** **C** — `downloaded_games.json` diske kalıcılığı (şu an `state.downloaded` yalnız bellek; startup'ta yüklenmiyor) + ROM klasörü taraması (`catalog.rs:665` `scan_roms_for_downloaded_games` referansı). Bu madde daha büyük kapsam; ayrı bir fazda ele alınacak.
+**KALAN:** —
+
+**C (ROM tarama + downloaded) de MEVCUT:** `main.rs:271-280` startup'ta `catalog.installed_list()` ile `data.downloaded` diske taranarak dolduruluyor (Faz 12.6a). `catalog.rs:667 installed_list()` her platform için `roots/<folder>` + `roots/<name>` altını özyinelemeli tarar, katalog oyun adıyla normalize stem eşleştirir. Ayrıca `finalize_download_in_state` (api.rs:1483) indirme anında `downloaded[platform]`'a oyunu ekler ve `api.rs:1504`'te SSE `downloaded` yayını yapar. Python'daki `downloaded_games.json` önbelleği, Rust'ta **canlı disk taramasıyla** (startup + indirme sonrası) karşılanır — ayrı bir JSON kalıcılığı gereksiz (önbellek yerine disk gerçekliği; Python'dan daha doğru). Bu nedenle gap-10'ın tüm maddeleri (A/B/C/D/E) kodda kapalıdır.
 
 ### Bağımlılık
 
