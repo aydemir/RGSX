@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-28
 - **title:** BIOS kategorisi (ör. "- BIOS by TMCTV -") indirme + çıkarma hedefinin USERDATA_FOLDER'a yönlendirilmesi — Rust/Python parity
-- **status:** todo
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-18
 - **environment:** both (Linux/Batocera + Windows)
@@ -63,3 +63,19 @@ Kod incelemesiyle tespit edildi:
 - BIOS zip'i Linux'ta `/userdata` (veya RGSX_USERDATA_FOLDER) altına, Windows'ta Windows eşdeğerine iner/açılır.
 - Parity: Python `queue.py:770` dalı ile birebir (BIOS → USERDATA_FOLDER, roms altı DEĞİL).
 - Contract/unit test: `platform == "- BIOS by TMCTV -"` → dest_dir USERDATA eşdeğeri.
+
+## 2026-08-18 UYGULANDI
+
+`manager-http/src/api.rs`:
+- `userdata_folder()` resolver'ı eklendi: `RGSX_USERDATA_FOLDER` env > `RGSX_DATA_DIR` 3 seviye
+  yukarı > `RGSX_ROMS_FOLDER` 1 seviye yukarı. Hiçbiri yoksa `None` (redirect atlanır).
+- `redirect_bios_dest()` eklendi: `is_bios_platform(platform_folder_for(p), p)` true ve
+  `userdata_folder()` Some ise dest_path = `USERDATA/<sanitized_name>`; değilse roms altı kalır.
+- İki indirme yoluna uygulandı (torrent/bridge yolu ~528 ve native HTTP yolu ~1684); `download_batch`
+  zaten `download`'a delegasyon yaptığından otomatik kapsanır.
+- Çıkarma hedefi zaten `dest_path.parent()` (`manager-torrent/src/lib.rs:235`) olduğundan, dest_path
+  USERDATA'ya kaydırılınca BIOS zip'inin **içeriği de otomatik USERDATA'ya açılır** (Python parity).
+
+Testler: `api::tests::gap28_bios_redirects_dest_to_userdata` + `gap28_non_bios_keeps_roms_dest`
+geçti; tam manager-http suite (contract 113 + lib) yeşil. Windows eşdeğeri `RGSX_USERDATA_FOLDER`
+env'iyle NSIS kurulumunda ayarlanır (kod tarafı platform-bağımsız).

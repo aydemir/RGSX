@@ -527,12 +527,16 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         // eski davranış — `downloads_folder` + türetilen dosya adı (geriye uyumlu).
         let dest_path = match body.get("dest_path").and_then(Value::as_str) {
             Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
-            _ => match effective_roms_folder() {
-                Some(rf) => rf
-                    .join(platform_folder_for(&platform))
-                    .join(sanitize_file_name(&gname)),
-                None => dest_path_for(&downloads, &game_url, &gname),
-            },
+            _ => {
+                let roms_dest = match effective_roms_folder() {
+                    Some(rf) => rf
+                        .join(platform_folder_for(&platform))
+                        .join(sanitize_file_name(&gname)),
+                    None => dest_path_for(&downloads, &game_url, &gname),
+                };
+                // gap-28: BIOS benzeri platformlar USERDATA_FOLDER'a yönlenir.
+                redirect_bios_dest(roms_dest, &platform, &gname)
+            }
         };
             let state2 = state.clone();
             let u = game_url.clone();
@@ -1681,11 +1685,15 @@ async fn native_ddl_download(
     // Faz 12 download-parity: ROMS_FOLDER ayarlıysa dosya doğrudan
     // `ROMS_FOLDER/<platform>/<game>` altına düşer (Python queue.py davranışı).
     // Aksi halde geriye uyumlu `downloads_dir` kullanılır.
-    let dest = match effective_roms_folder() {
-        Some(rf) => rf
-            .join(platform_folder_for(&platform))
-            .join(sanitize_file_name(&game_name)),
-        None => dest_path_for(&downloads, &game_url, &game_name),
+    let dest = {
+        let roms_dest = match effective_roms_folder() {
+            Some(rf) => rf
+                .join(platform_folder_for(&platform))
+                .join(sanitize_file_name(&game_name)),
+            None => dest_path_for(&downloads, &game_url, &game_name),
+        };
+        // gap-28: BIOS benzeri platformlar USERDATA_FOLDER'a yönlenir.
+        redirect_bios_dest(roms_dest, &platform, &game_name)
     };
 
     push_queued_history_entry(
@@ -1994,6 +2002,54 @@ fn effective_roms_folder() -> Option<std::path::PathBuf> {
     None
 }
 
+/// `USERDATA_FOLDER` eşdeğeri (Python `config.USERDATA_FOLDER` parity).
+///
+/// Çözüm önceliği: `RGSX_USERDATA_FOLDER` env > `RGSX_DATA_DIR`'dan 3 seviye
+/// yukarı > `RGSX_ROMS_FOLDER`'dan 1 seviye yukarı. Hiçbiri yoksa `None`
+/// (BIOS yönlendirmesi atlanır, roms alt klasörü kullanılır — geriye uyumlu).
+///
+/// Python: `USERDATA_FOLDER = dirname(dirname(dirname(APP_FOLDER)))` →
+/// Linux/Batocera'da `/userdata`, Windows'ta kurulum kökünden 3 seviye yukarı.
+fn userdata_folder() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("RGSX_USERDATA_FOLDER") {
+        if !p.trim().is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    if let Ok(d) = std::env::var("RGSX_DATA_DIR") {
+        if !d.trim().is_empty() {
+            if let Some(ud) = std::path::PathBuf::from(d).ancestors().nth(3) {
+                return Some(ud.to_path_buf());
+            }
+        }
+    }
+    if let Ok(r) = std::env::var("RGSX_ROMS_FOLDER") {
+        if !r.trim().is_empty() {
+            if let Some(parent) = std::path::PathBuf::from(r).parent() {
+                return Some(parent.to_path_buf());
+            }
+        }
+    }
+    None
+}
+
+/// BIOS benzeri platformlar (ör. "- BIOS by TMCTV -") için indirme/çıkarma
+/// hedefini `userdata_folder()` eşdeğerine yönlendirir (Python `queue.py:770`
+/// parity). `userdata_folder()` yoksa (env tanımsız) redirect atlanır.
+///
+/// Not: Rust'ta eskiden USERDATA_FOLDER kavramı yoktu; BIOS zipleri roms alt
+/// klasörüne açılıyordu. Bu fonksiyon o açığı kapatır. Çıkarma hedefi zaten
+/// `dest_path.parent()` olduğundan, dest_path USERDATA'ya kaydırılınca çıkarma
+/// da otomatik olarak USERDATA'ya düşer.
+fn redirect_bios_dest(roms_dest: std::path::PathBuf, platform: &str, game_name: &str) -> std::path::PathBuf {
+    if manager_core::extract::is_bios_platform(&platform_folder_for(platform), platform) {
+        if let Some(ud) = userdata_folder() {
+            return ud.join(sanitize_file_name(game_name));
+        }
+    }
+    roms_dest
+}
+
 /// TASK-005 — ES (EmulationStation) gamepad map'ini sunar.
 ///
 /// RetroBat/Batocera'daki `es_input.cfg`'yi okur; RGSX UI'ın aynı fiziksel
@@ -2068,5 +2124,29 @@ mod tests {
         assert!(is_active_history_entry(
             &seeding, &queue_ids, &queue_urls, &retry_urls, &prog
         ));
+    }
+
+    #[test]
+    fn gap28_bios_redirects_dest_to_userdata() {
+        let ud = std::env::temp_dir().join("rgsx_ud_gap28");
+        std::fs::create_dir_all(&ud).unwrap();
+        std::env::set_var("RGSX_USERDATA_FOLDER", &ud);
+        let roms_dest = std::path::PathBuf::from("/roms/biosbytmctv/game.zip");
+        // "- BIOS by TMCTV -" BIOS_LIKE kümesinde → USERDATA'ya yönlenir (queue.py:770 parity).
+        let out = redirect_bios_dest(roms_dest.clone(), "- BIOS by TMCTV -", "game.zip");
+        assert_eq!(out, ud.join("game.zip"));
+        assert!(!out.starts_with("/roms"));
+        let _ = std::fs::remove_dir_all(&ud);
+    }
+
+    #[test]
+    fn gap28_non_bios_keeps_roms_dest() {
+        let ud = std::env::temp_dir().join("rgsx_ud_gap28b");
+        std::fs::create_dir_all(&ud).unwrap();
+        std::env::set_var("RGSX_USERDATA_FOLDER", &ud);
+        let roms_dest = std::path::PathBuf::from("/roms/snes/game.zip");
+        let out = redirect_bios_dest(roms_dest.clone(), "Super Nintendo", "game.zip");
+        assert_eq!(out, roms_dest);
+        let _ = std::fs::remove_dir_all(&ud);
     }
 }
