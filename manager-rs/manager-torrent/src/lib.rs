@@ -26,6 +26,90 @@ use manager_core::extract::ExtractHint;
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
+/// `rgsx+torrent://download?source=<url>&path=<p>&index=<i>` sarmalayıcısını çözer.
+/// Döner: (gerçek torrent URL'i, seçim seçenekleri). Sarmalayıcı değilse URL değişmez,
+/// varsayılan seçenekler döner. Çok dosyalı torrentlerde yalnız hedef dosya indirilir
+/// (librqbit `only_files_regex` / `only_files`). Böylece "unsupported URL" hatası gider
+/// ve Myrient/Redump gibi tek dosyalı torrentler tüm paketi indirmez.
+fn resolve_rgsx_torrent(url: &str) -> (String, AddTorrentOptions) {
+    if url.starts_with("rgsx+torrent:") {
+        if let Some(q) = url.find('?') {
+            let mut source = String::new();
+            let mut path = String::new();
+            let mut index: Option<usize> = None;
+            for pair in url[q + 1..].split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    let val = percent_decode(v);
+                    match k {
+                        "source" => source = val,
+                        "path" => path = val,
+                        "index" => index = val.parse::<usize>().ok(),
+                        _ => {}
+                    }
+                }
+            }
+            if !source.is_empty() {
+                let mut opts = AddTorrentOptions::default();
+                // Yeniden denemelerde/öturum kalıntısında ara dosya zaten var olabilir;
+                // üzerine yazmaya izin ver (indirme yöneticisi için güvenli).
+                opts.overwrite = true;
+                if !path.is_empty() {
+                    // Kök klasör adı farklarını yutması için yalnız dosya adıyla eşle.
+                    let base = path.rsplit('/').next().unwrap_or(&path);
+                    opts.only_files_regex = Some(format!(".*{}$", regex_escape(base)));
+                } else if let Some(i) = index {
+                    opts.only_files = Some(vec![i]);
+                }
+                return (source, opts);
+            }
+        }
+    }
+    (url.to_string(), AddTorrentOptions::default())
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_val(bytes[i + 1]);
+            let lo = hex_val(bytes[i + 2]);
+            if hi != 0xFF && lo != 0xFF {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        b'A'..=b'F' => c - b'A' + 10,
+        _ => 0xFF,
+    }
+}
+
+fn regex_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        match c {
+            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '\\' | '|' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// lib.rs: manager-torrent — librqbit tabanlı embedded torrent engine.
 pub struct LibrqbitEngine {
     /// Lazy spawn edilen librqbit session'ı (ensure_running'a kadar None).
@@ -86,10 +170,11 @@ impl LibrqbitEngine {
     pub async fn add_torrent(
         &self,
         source: AddTorrent<'_>,
+        opts: AddTorrentOptions,
     ) -> Result<Arc<ManagedTorrent>, BridgeError> {
         let session = self.ensure_running().await?;
         session
-            .add_torrent(source, Some(AddTorrentOptions::default()))
+            .add_torrent(source, Some(opts))
             .await
             .map_err(|e| BridgeError::Rpc {
                 code: -32000,
@@ -116,8 +201,9 @@ impl LibrqbitEngine {
         source: AddTorrent<'_>,
         dest_path: &std::path::Path,
         extract_hint: Option<ExtractHint>,
+        opts: AddTorrentOptions,
     ) -> Result<std::path::PathBuf, BridgeError> {
-        self.download_torrent_source_with_progress(source, dest_path, None, None, extract_hint).await
+        self.download_torrent_source_with_progress(source, dest_path, None, None, extract_hint, opts).await
     }
 
     /// `download_torrent_source`'un canlı progress yayınlayan hali (TASK-002m).
@@ -135,13 +221,19 @@ impl LibrqbitEngine {
         task_id: Option<String>,
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
         extract_hint: Option<ExtractHint>,
+        opts: AddTorrentOptions,
     ) -> Result<std::path::PathBuf, BridgeError> {
-        let handle = self.add_torrent(source).await?;
+        // Çok dosyalı torrentlerde `handle.stats().total_bytes` TÜM torrent'tür (ör. 6TB);
+        // `only_files`/`only_files_regex` ile yalnız seçili dosya indirilir, gerçek yazılacak
+        // boyut çok daha küçüktür. Seçim aktifse alan kontrolünü atla (yalnız yazılabilirlik
+        // kalır) — aksi halde seçili tek dosya için yanlış "disk alanı yetersiz" hatası verir.
+        let selected = opts.only_files.is_some() || opts.only_files_regex.is_some();
+        let handle = self.add_torrent(source, opts).await?;
 
         // Gap-5 (A+B): indirme başı disk alanı + yazılabilirlik ön-kontrolü.
         // Boyutu add_torrent sonrası biliyoruz (Python H8 parity). QueryFailed → atla.
         let dest_dir = dest_path.parent().unwrap_or(dest_path);
-        let required = handle.stats().total_bytes;
+        let required = if selected { 0 } else { handle.stats().total_bytes };
         match manager_core::disk::precheck_destination(dest_dir, required) {
             Ok(()) => {}
             Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
@@ -561,10 +653,12 @@ impl TorrentBackend for LibrqbitEngine {
         dest_path: &std::path::Path,
         extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
+        let (real_url, opts) = resolve_rgsx_torrent(source_url);
         self.download_torrent_source(
-            AddTorrent::from_url(source_url.to_string()),
+            AddTorrent::from_url(real_url),
             dest_path,
             extract_hint,
+            opts,
         )
         .await
     }
@@ -580,12 +674,14 @@ impl TorrentBackend for LibrqbitEngine {
         on_progress: Option<Arc<dyn Fn(ProgressEvent) + Send + Sync>>,
         extract_hint: Option<ExtractHint>,
     ) -> Result<std::path::PathBuf, BridgeError> {
+        let (real_url, opts) = resolve_rgsx_torrent(source_url);
         self.download_torrent_source_with_progress(
-            AddTorrent::from_url(source_url.to_string()),
+            AddTorrent::from_url(real_url),
             dest_path,
             task_id,
             on_progress,
             extract_hint,
+            opts,
         )
         .await
     }
