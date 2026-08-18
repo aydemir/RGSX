@@ -427,15 +427,25 @@ async function clearHistory() {
 }
 
 // ===================== Downloaded (İndirilenler) =====================
+// Faz A parity: aynı dosya gameStatuses'ta 2 anahtarla (stem + lowercase) ve
+// snapshot.downloaded'da gerçek adıyla düşer → 3 ayrı satır görünür. Normalize
+// anahtar (platform | stem(name).toLowerCase) ile birleştirip TEK satıra indir.
 const downloadedItems = computed(() => {
   const map = {}
+  const norm = (plat, name) => (plat || '') + '|' + stem(name)
   const st = gameStatuses.value || {}
   for (const [k, v] of Object.entries(st)) {
-    if (v && v.status === 'downloaded') map[k] = { name: k, platform: v.platform || '' }
+    if (v && v.status === 'downloaded') {
+      const key = norm(v.platform, v.name || k)
+      if (!map[key]) map[key] = { name: v.name || k, platform: v.platform || '' }
+    }
   }
   const dl = snapshot.downloaded || {}
   for (const [plat, names] of Object.entries(dl)) {
-    for (const n of (names || [])) if (!map[n]) map[n] = { name: n, platform: plat }
+    for (const n of (names || [])) {
+      const key = norm(plat, n)
+      if (!map[key]) map[key] = { name: n, platform: plat }
+    }
   }
   return Object.values(map)
 })
@@ -865,14 +875,14 @@ small { color: #666; font-weight: normal; }
 
 .games { list-style: none; padding: 0; margin: 0; }
 .games li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
-.games li .row { flex: 1; display: flex; justify-content: space-between; gap: 12px; }
-.name { font-size: 13px; color: #333; }
+.games li .row { flex: 1; display: flex; justify-content: space-between; gap: 12px; min-width: 0; }
+.name { font-size: 13px; color: #333; overflow-wrap: break-word; min-width: 0; }
 .size { color: #666; font-size: 12px; white-space: nowrap; }
 .dlbtn { background: #28a745; color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
 .dlbtn:hover { background: #218838; }
 .dlbtn:disabled { background: #c6c6c6; color: #fff; cursor: not-allowed; }
 .dlbtn.q { background: #6c757d; }
-.dlgrp { display: flex; gap: 4px; }
+.dlgrp { display: flex; gap: 4px; flex-shrink: 0; }
 
 .back { font-size: 11px; color: #667eea; cursor: pointer; margin-left: 8px; }
 
