@@ -362,14 +362,25 @@ impl NativeCatalog {
     fn games_file_for(&self, platform: &str) -> Option<PathBuf> {
         let mut candidates: Vec<String> =
             vec![platform.to_string(), platform.to_ascii_lowercase()];
-        if let Some(folder) = self
+        if let Some(src) = self
             .load_sources()
             .iter()
-            .find(|s| s.get("platform_name").and_then(|x| x.as_str()) == Some(platform))
-            .and_then(|s| s.get("folder").and_then(|x| x.as_str()))
+            .find(|s| {
+                s.get("platform_name").and_then(|x| x.as_str()) == Some(platform)
+                    || s.get("folder").and_then(|x| x.as_str()) == Some(platform)
+            })
         {
-            candidates.push(folder.to_string());
-            candidates.push(folder.to_ascii_lowercase());
+            // Python catalog games dosyaları platform ADIYLA adlandırılır
+            // (ör. "3DO Interactive Multiplayer (Archive).json"), Rust sorgusu ise
+            // folder ile gelir ("3do"). Her iki adı da aday olarak ekle ki dosya bulunabilsin.
+            if let Some(name) = src.get("platform_name").and_then(|x| x.as_str()) {
+                candidates.push(name.to_string());
+                candidates.push(name.to_ascii_lowercase());
+            }
+            if let Some(folder) = src.get("folder").and_then(|x| x.as_str()) {
+                candidates.push(folder.to_string());
+                candidates.push(folder.to_ascii_lowercase());
+            }
         }
         candidates
             .iter()
@@ -830,6 +841,71 @@ mod tests {
         let games = v["games"].as_array().unwrap();
         assert_eq!(games[0]["name"], "Super Mario Bros");
         assert_eq!(games[0]["url"], "http://x/mario.zip");
+    }
+
+    // --- TASK-011: her iki games JSON formatı da desteklenmeli ---
+
+    #[tokio::test]
+    async fn games_list_format() {
+        // Format B: [[name, url, size], ...]
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        write(&root.join("systems_list.json"), r#"[{"platform_name":"XBOX","folder":"xbox"}]"#);
+        write(&root.join("games").join("XBOX.json"),
+            r#"[["Halo","http://x/halo.zip","3.0G"],["Forza","http://x/forza.zip","40.0G"]]"#);
+        let cat = NativeCatalog {
+            sources_file: root.join("systems_list.json"), games_folder: root.join("games"),
+            images_folder: root.join("images"), languages_folder: root.join("languages"),
+            roms_folder: None, show_unsupported: true, default_language: "en".into(), python: None,
+        };
+        let v = cat.get_json("/api/games/xbox").await.unwrap();
+        assert_eq!(v["count"], 2);
+        let g = v["games"].as_array().unwrap();
+        assert_eq!(g[0]["name"], "Halo");
+        assert_eq!(g[0]["url"], "http://x/halo.zip");
+        assert_eq!(g[0]["size"], "3.0G");
+        assert_eq!(g[0]["downloaded"], false);
+    }
+
+    #[tokio::test]
+    async fn games_object_format() {
+        // Format A: {"games":[{"game_name":...,"url":...,"size":...}]}
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        write(&root.join("systems_list.json"), r#"[{"platform_name":"XBOX","folder":"xbox"}]"#);
+        write(&root.join("games").join("XBOX.json"),
+            r#"{"games":[{"game_name":"Halo","url":"http://x/halo.zip","size":"3.0G"},{"name":"Forza","url":"http://x/forza.zip","size":"40.0G"}]}"#);
+        let cat = NativeCatalog {
+            sources_file: root.join("systems_list.json"), games_folder: root.join("games"),
+            images_folder: root.join("images"), languages_folder: root.join("languages"),
+            roms_folder: None, show_unsupported: true, default_language: "en".into(), python: None,
+        };
+        let v = cat.get_json("/api/games/xbox").await.unwrap();
+        assert_eq!(v["count"], 2);
+        let g = v["games"].as_array().unwrap();
+        assert_eq!(g[0]["name"], "Halo");
+        assert_eq!(g[1]["name"], "Forza");
+        assert_eq!(g[0]["size"], "3.0G");
+    }
+
+    #[tokio::test]
+    async fn games_resolve_by_platform_name_file() {
+        // Gerçek senaryo: games dosyası platform ADIYLA adlandırılmış, sorgu folder ile gelir.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        write(&root.join("systems_list.json"),
+            r#"[{"platform_name":"3DO Interactive Multiplayer (Archive)","folder":"3do"}]"#);
+        write(&root.join("games").join("3DO Interactive Multiplayer (Archive).json"),
+            r#"[["Almanac","http://x/a.chd","382.0M"]]"#);
+        let cat = NativeCatalog {
+            sources_file: root.join("systems_list.json"), games_folder: root.join("games"),
+            images_folder: root.join("images"), languages_folder: root.join("languages"),
+            roms_folder: None, show_unsupported: true, default_language: "en".into(), python: None,
+        };
+        // WebUI folder ("3do") ile sorgular:
+        let v = cat.get_json("/api/games/3do").await.unwrap();
+        assert_eq!(v["count"], 1);
+        assert_eq!(v["games"][0]["name"], "Almanac");
     }
 
     #[tokio::test]
