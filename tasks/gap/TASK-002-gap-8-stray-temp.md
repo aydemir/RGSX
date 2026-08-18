@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-8
 - **title:** Stray .rgsx_torrent temp-root cleanup (eski platform path'lerinde orphan tarama)
-- **status:** todo
+- **status:** closed (out-of-scope)
 - **priority:** P2
 - **created:** 2026-08-14
 - **environment:** both
@@ -45,3 +45,24 @@ yapmaz**; eski konumlardaki `.rgsx_torrent` klasörleri birikir.
   `link_or_copy` — **temp_dir izolasyonu ve seed için kaynak koruma YOK**.
 - BELİRSİZ: izolasyon stratejisi (ayrı temp root mu, mevcut `output_folder` mı?) ve kaynak koruma
   yaklaşımı kullanıcı onayı gerektirir. `TASK-002-gap-16` ile `lib.rs` paylaşımı var.
+
+## 2026-08-18 BAYATLIK AUDIT — KAPATILDI (out-of-scope)
+
+gap-8'in temel iddiası (ROMS_FOLDER altındaki platform klasörlerinde `.rgsx_torrent/<stable_key>`
+orphan taraması) **Rust native port'ta geçerli DEĞİL**:
+
+- Rust `LibrqbitEngine` tek bir `output_folder` kullanır (`manager-bin/src/main.rs:73` →
+  `<temp_dir>/rgsx_torrents` veya env), per-platform `.rgsx_torrent/<key>` yapısı **yok**.
+  `.rgsx_torrent` temp-root mekanizması tamamen **qBittorrent/Python-path**'e özgüdür.
+- İptalde kısmi dosyalar (` .rqbitpart`) `session.delete(id, true)` ile diskten temizlenir
+  (`manager-torrent/src/lib.rs:419`) — yani iptal sonrası orphan birikmez.
+- Oturum yeniden başlatmada librqbit kendi session state'ini `output_folder`'dan rehydrate
+  eder; eski platform path'lerinde kalıcı orphan `.rgsx_torrent` klasörü oluşmaz (kavram yok).
+
+Bu, gap-7 (seed yaşam döngüsü) ve gap-18 (qBittorrent UI) ile **aynı kategoridir**: qBittorrent/
+Python-path mekanizmaları Rust native (librqbit) port'unun kapsamı dışında. Dolayısıyla gap-8
+**out-of-scope** kapatıldı.
+
+**Madde A notu:** "Disk yazma izolasyonu + kaynak koruma" belirsizliği ayrı bir tasarım konusudur
+(`TASK-002-gap-16` ile `lib.rs` paylaşımı var) ve bu görev kapsamında değerlendirilmedi — native
+port'ta librqbit kendi yazma yönetimini yapar. Gerekirse ayrı görev olarak ele alınabilir.
