@@ -418,6 +418,21 @@ pub async fn update_cache() -> Response {
 /// task'ında koşar, bitince history/downloaded/progress + SSE sonuçlanır.
 /// Bridge yoksa (pure placeholder) eski davranış korunur — yalnız kuyruklanır.
 ///
+/// TASK-002-gap-12 (dedup): Aynı URL için eşzamanlı çift spawn'ı engeller.
+///
+/// `retry_in_flight` set'ine atomik check-and-insert yapar; URL zaten aktifse
+/// `false` döner (caller yinelenen isteği düşürür). Python `queue.py:649-685`
+/// `urls_in_progress` dedup parity'si — çift indirme → partial/corrupt çakışması
+/// olmadan mevcut görev sonlanır.
+fn claim_in_flight(state: &AppState, url: &str) -> bool {
+    let mut d = state.write();
+    if d.retry_in_flight.contains(url) {
+        return false;
+    }
+    d.retry_in_flight.insert(url.to_string());
+    true
+}
+
 /// Not: tüm `.await`'ler `state.write()` kilidinden ÖNCE — write guard sonrası
 /// await handler future'ını Send yapmaz (bkz. change_password deseni).
 pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
@@ -543,12 +558,17 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
             let n = gname.clone();
             let p = platform.clone();
             let t = task_id.clone();
-            // TASK-002-gap-1: retry döngüsü (torrent + native DDL ortak envelope).
-            // Her transient başarısızlıkta yeni task_id + yeni history entry
-            // (Python queue.py:610 parity). retry_in_flight dedup + cancel/shutdown.
-            {
-                let mut d = state.write();
-                d.retry_in_flight.insert(game_url.clone());
+            // TASK-002-gap-12 (dedup): aynı URL zaten aktifse yinelenen spawn'ı
+            // düşür. TASK-002-gap-1: retry döngüsü (torrent + native DDL ortak
+            // envelope) — her transient başarısızlıkta yeni task_id + yeni history
+            // entry (Python queue.py:610 parity). cancel/shutdown sinyalleri aşağıda.
+            if !claim_in_flight(&state, &game_url) {
+                return ok(contract::ok(json!({
+                    "queued": false,
+                    "message": "Déjà en cours de téléchargement",
+                    "url": game_url,
+                    "task_id": Value::Null,
+                })));
             }
             let cancel: Arc<Notify> = {
                 let mut d = state.write();
@@ -1713,9 +1733,14 @@ async fn native_ddl_download(
     let c_name = game_name.clone();
     let c_plat = platform.clone();
     let c_task = task_id.clone();
-    {
-        let mut d = c_state.write();
-        d.retry_in_flight.insert(c_url.clone());
+    // TASK-002-gap-12 (dedup): aynı URL zaten aktifse yinelenen spawn'ı düşür.
+    if !claim_in_flight(&c_state, &c_url) {
+        return ok(contract::ok(json!({
+            "queued": false,
+            "message": "Déjà en cours de téléchargement",
+            "url": c_url,
+            "task_id": Value::Null,
+        })));
     }
     let cancel: Arc<Notify> = {
         let mut d = c_state.write();
@@ -2148,5 +2173,20 @@ mod tests {
         let out = redirect_bios_dest(roms_dest.clone(), "Super Nintendo", "game.zip");
         assert_eq!(out, roms_dest);
         let _ = std::fs::remove_dir_all(&ud);
+    }
+
+    #[test]
+    fn gap12_claim_in_flight_dedups_same_url() {
+        let state = AppState::empty();
+        let url = "http://example.com/game.zip";
+        // İlk claim başarılı.
+        assert!(claim_in_flight(&state, url));
+        // Aynı URL ikinci kez claim edilemez (çift spawn engellenir).
+        assert!(!claim_in_flight(&state, url));
+        // Farklı URL serbest.
+        assert!(claim_in_flight(&state, "http://example.com/other.zip"));
+        // Tamamlanma sonrası (retry_in_flight temizlenirse) tekrar claim edilebilir.
+        state.write().retry_in_flight.remove(url);
+        assert!(claim_in_flight(&state, url));
     }
 }
