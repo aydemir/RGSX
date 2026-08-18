@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-18
 - **title:** WebUI qBittorrent bölümü (parola durum / regenerate / change / start) (hibrit mod: RGSX_TORRENT_ENGINE=python ONLY)
-- **status:** done
+- **status:** todo
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ❌ **Hâlâ YOK.** Yeni App.vue tabs: platforms / downloaded / queue / history / settings. Settings
@@ -72,3 +72,11 @@ Renk otoritesi Python hex'leri: `#28a745` (ok), `#dc3545` (err), `#ffc107` (warn
 - Settings sekmesinde qBittorrent bölümü görünür; parola durumu `/api/qbittorrent/password-status` ile çekilir.
 - regenerate / change-password / start çağrıları Python'dakiyle aynı endpoint'lere düşer.
 - Renkler Python hex otoritesiyle uyumlu.
+
+## 2026-08-18 DENETİM — "Done" iddiası YANLIŞ
+
+`webui/src/components/` yalnız `Support.vue` + `BrowseDirectories.vue` içerir; `QBittorrent.vue`
+**YOK**. `webui/src/**/*.vue` içinde `qbittorrent`/`QBittorrent`/`password-status`/`change-password`
+arama sonucu **sıfır dosya**. App.vue `QBittorrent`'i import etmiyor. Backend uçları
+(`/api/qbittorrent/*`, `lib.rs:69-72`) mevcut ama **frontend paneli YOK**. Üstteki "Done
+(2026-08-15)" bölümü yanıltıcıdır — görev fiilen BAŞLANMADI. `status: todo`'ya geri alındı.

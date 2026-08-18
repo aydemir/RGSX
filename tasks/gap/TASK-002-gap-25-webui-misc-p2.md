@@ -67,3 +67,12 @@ Renk otoritesi Python hex'leri: `#28a745` (ok), `#dc3545` (err), `#ffc107` (warn
 - Update Cache butonu `/api/update-cache` çağırır, UI yenilenir.
 - UI dizgeleri sunucu veri diline bağlanır (Python `data-translate` eşdeğeri).
 - Tüm renklar Python hex otoritesiyle birebir.
+
+## 2026-08-18 DENETİM — kısmi, bir alt-madde bayat
+
+`webui/src/App.vue:178` `apiPost('/api/update-cache', {})` çağrısı MEVCUT → üstteki
+"update-cache butonu YOK" alt-maddesi (Audit 2026-08-15) **artık yanlış**; buton var.
+AÇIK kalanlar: (b) i18n sunucu veri-dili bind'i (`data-translate` eşdeğeri App.vue'da yok,
+`tt()` fallback kullanılıyor) ve (c) renk paleti hizası (Rust sapmaları `#2f8f46`/`#d29922`/
+`#58a6ff` hâlâ Python hex otoritesine `#28a745`/`#dc3545`/`#ffc107`/`#17a2b8`/`#007bff`
+göre hizalanmadı). `status: partial` korunur.
