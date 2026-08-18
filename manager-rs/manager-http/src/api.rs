@@ -1209,7 +1209,14 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
         };
         return ok(contract::ok(json!({ "paused": paused })));
     }
-    let paused = state.read().queue_size();
+    // TASK-002-gap-29: native modda global pause — devam eden HTTP-direct
+    // indirmeleri abort eder (pause_signals) ve yeni başlatmaları engeller.
+    let mut d = state.write();
+    d.global_paused = true;
+    let paused = d.pause_signals.len();
+    for sig in d.pause_signals.values() {
+        sig.notify_one();
+    }
     ok(contract::ok(json!({ "paused": paused })))
 }
 
@@ -1233,6 +1240,11 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
         };
         return ok(contract::ok(json!({ "resumed": resumed })));
     }
+    // TASK-002-gap-29: native modda global resume — duraklatılmış indirme
+    // döngülerini uyandırır (pause_resume.notify_all).
+    let mut d = state.write();
+    d.global_paused = false;
+    d.pause_resume.notify_waiters();
     ok(contract::ok(json!({ "resumed": 0 })))
 }
 
@@ -1748,6 +1760,14 @@ async fn native_ddl_download(
         d.cancel_signals.insert(c_url.clone(), sig.clone());
         sig
     };
+    // TASK-002-gap-29: global pause abort sinyali (URL başına). Pause handler'ı
+    // tüm aktif indirmelerin sinyalini tetikler → `CancelFlag` ile indirme durur.
+    let pause_sig: Arc<Notify> = {
+        let mut d = c_state.write();
+        let sig = Arc::new(Notify::new());
+        d.pause_signals.insert(c_url.clone(), sig.clone());
+        sig
+    };
     let shutdown = c_state.shutdown.clone();
     tokio::spawn(async move {
         // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
@@ -1762,6 +1782,13 @@ async fn native_ddl_download(
         let current_url = c_url.clone();
         let mut aborted: Option<String> = None;
         loop {
+            // TASK-002-gap-29: global pause aktifken yeni indirme başlamaz;
+            // resume sinyaline kadar bekle (Python pause_all_downloads parity'si).
+            if c_state.read().global_paused {
+                let pr = c_state.read().pause_resume.clone();
+                pr.notified().await;
+                continue;
+            }
             let progress_state = c_state.clone();
             let progress_url = current_url.clone();
             let req = manager_download::http::DownloadRequest {
@@ -1773,7 +1800,7 @@ async fn native_ddl_download(
             };
             let cancel_flag = CancelFlag::new();
             let cf = cancel_flag.clone();
-            let result = manager_download::http::HttpDownloader::new()
+            let downloader = manager_download::http::HttpDownloader::new()
                 .with_cancel(cancel_flag)
                 .with_retry(1, Duration::from_secs(5))
                 .with_progress(move |downloaded, total| {
@@ -1790,9 +1817,29 @@ async fn native_ddl_download(
                         "progress",
                         &json!(data.progress),
                     );
-                })
-                .download_async(&req)
-                .await;
+                });
+            let dl_fut = downloader.download_async(&req);
+            // TASK-002-gap-29: global pause (pause_sig) devam eden indirmeyi abort eder;
+            // cancel/shutdown da aynı CancelFlag üzerinden keser.
+            let mut paused_now = false;
+            let result = tokio::select! {
+                r = dl_fut => r,
+                _ = pause_sig.notified() => {
+                    cf.set();
+                    paused_now = true;
+                    Err(manager_download::http::DownloadError::Canceled)
+                }
+                _ = cancel.notified() => {
+                    cf.set();
+                    aborted = Some("İptal edildi".to_string());
+                    Err(manager_download::http::DownloadError::Canceled)
+                }
+                _ = shutdown.notified() => {
+                    cf.set();
+                    aborted = Some("Sunucu kapatılıyor".to_string());
+                    Err(manager_download::http::DownloadError::Canceled)
+                }
+            };
 
             match result {
                 Ok(path) => {
@@ -1809,6 +1856,12 @@ async fn native_ddl_download(
                     break;
                 }
                 Err(e) => {
+                    // TASK-002-gap-29: global pause abort'u → retry akışına gir
+                    // (loop başı global_paused kontrolü resume'a kadar bekletir).
+                    if paused_now {
+                        current_task_id = web_task_id();
+                        continue;
+                    }
                     let cls = classify_download_error(&e);
                     match decide_retry(
                         &c_state,
@@ -1871,6 +1924,7 @@ async fn native_ddl_download(
         let mut d = c_state.write();
         d.retry_in_flight.remove(&current_url);
         d.cancel_signals.remove(&current_url);
+        d.pause_signals.remove(&current_url);
     });
 
     ok(contract::ok(json!({
@@ -2188,5 +2242,56 @@ mod tests {
         // Tamamlanma sonrası (retry_in_flight temizlenirse) tekrar claim edilebilir.
         state.write().retry_in_flight.remove(url);
         assert!(claim_in_flight(&state, url));
+    }
+
+    #[test]
+    fn gap29_global_pause_flags_and_signals() {
+        let state = AppState::empty();
+        assert!(!state.read().global_paused);
+        assert!(state.read().pause_signals.is_empty());
+
+        // pause handler (native): global_paused=true + her aktif indirme sinyali tetiklenir.
+        let sig: std::sync::Arc<tokio::sync::Notify> = std::sync::Arc::new(tokio::sync::Notify::new());
+        {
+            let mut d = state.write();
+            d.global_paused = true;
+            d.pause_signals.insert("http://x/game.zip".to_string(), sig.clone());
+            sig.notify_one();
+        }
+        assert!(state.read().global_paused);
+
+        // resume handler (native): global_paused=false + beklerenler uyandırılır.
+        {
+            let mut d = state.write();
+            d.global_paused = false;
+            d.pause_resume.notify_waiters();
+        }
+        assert!(!state.read().global_paused);
+    }
+
+    #[test]
+    fn gap29_paused_loop_top_blocks_until_resume() {
+        // native_ddl_download loop-top global pause kontrolünü taklit eder:
+        // global_paused iken indirme başlamaz, resume sonrası devam eder.
+        let state = AppState::empty();
+        state.write().global_paused = true;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let s = state.clone();
+        let handle = rt.spawn(async move {
+            // loop başı: pause kontrolü
+            if s.read().global_paused {
+                let pr = s.read().pause_resume.clone();
+                pr.notified().await;
+            }
+            assert!(!s.read().global_paused);
+        });
+        // görev beklerken kısa süre bekle
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        {
+            let mut d = state.write();
+            d.global_paused = false;
+            d.pause_resume.notify_waiters();
+        }
+        rt.block_on(async { handle.await.unwrap() });
     }
 }

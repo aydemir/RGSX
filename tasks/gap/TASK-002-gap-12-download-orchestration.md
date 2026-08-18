@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-12
 - **title:** Download orchestration layer (max_simultaneous_downloads gate, slot acquire/release, in-progress dedup, FIFO queue, global pause for HTTP-direct)
-- **status:** done (çekirdek 4/5 madde; global-pause-HTTP-direct → TASK-002-gap-29)
+- **status:** done (tüm 5 madde; global-pause-HTTP-direct TASK-002-gap-29'da tamamlandı)
 - **priority:** P1
 - **created:** 2026-08-15
 - **updated:** 2026-08-18
@@ -52,9 +52,10 @@ URL seti, dedup + bireysel pause/cancel için). Client'a yeni alan gönderilmedi
   `api::tests::gap12_claim_in_flight_dedups_same_url`.
 - ✅ **FIFO:** Semaphore permit sırası (tokio FIFO) ile sağlanır — dolu gate'te bekleyen
   indirmeler çıkış sırasıyla başlar. Ayrı worker gerekmedi.
-- ❌ **Global pause (HTTP-direct):** `api.rs:1175-1215` `pause`/`resume` handler'ları
-  `bridge` (torrent engine) için çalışır; `bridge` yoksa placeholder yalnız `queue_size`
-  döndürür, native HTTP-direct indirmeyi gerçekten duraklatmaz. **TASK-002-gap-29'a ayrıldı.**
+- ✅ **Global pause (HTTP-direct):** `pause`/`resume` handler'larının native (bridge yok) dalı
+  artık placeholder `queue_size` döndürmez — `global_paused` bayrağı + `pause_signals` (devam
+  eden indirmeleri `CancelFlag` ile abort) ve `pause_resume` (bekleyen döngüleri uyandırır)
+  mekanizması ile native HTTP-direct indirmeleri de duraklatır/sürdürür. **TASK-002-gap-29'da tamamlandı.**
 
 ## Kapsam / Dosyalar
 
@@ -78,6 +79,6 @@ URL seti, dedup + bireysel pause/cancel için). Client'a yeni alan gönderilmedi
 - ✅ `max_simultaneous_downloads=N` iken eşzamanlı aktif indirme N'yi geçmez (semaphore gate).
 - ✅ Aynı URL 2. kez istenirse ikinci istek spawn edilmez (dedup, corrupt/partial çakışma yok).
 - ✅ Kuyruk FIFO sırası korunur (semaphore permit sırası).
-- ⏳ Global pause HTTP-direct indirmeyi duraklatır → TASK-002-gap-29.
+- ✅ Global pause HTTP-direct indirmeyi duraklatır (TASK-002-gap-29 tamamlandı).
 - `tests/test_download_batch.py` senaryoları Rust'ta test edilir (contract.rs) — dedup/gate
   birim testi `gap12_claim_in_flight_dedups_same_url` mevcut.

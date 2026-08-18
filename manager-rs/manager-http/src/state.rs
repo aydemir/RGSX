@@ -56,6 +56,16 @@ pub struct StateData {
     /// Faz 12.6d — eşzamanlı indirme sayısını sınırlayan semaphore. Kapasite
     /// `Settings.max_simultaneous_downloads`'tan türetilir (startup + ayar kaydı).
     pub download_semaphore: Arc<Semaphore>,
+    /// TASK-002-gap-29: global pause bayrağı. `true` iken native HTTP-direct
+    /// indirmeleri başlamaz / devam edenler duraklatılır (Python
+    /// `pause_all_downloads` parity'si). Yalnız native modda (bridge yok) kullanılır.
+    pub global_paused: bool,
+    /// TASK-002-gap-29: resume sinyali — duraklatılmış indirme döngüleri bununla
+    /// uyandırılır (`global_paused` false olduktan sonra `notify_all`).
+    pub pause_resume: Arc<Notify>,
+    /// TASK-002-gap-29: URL başına pause sinyali. Global pause'da devam eden
+    /// native HTTP-direct indirmelerin `CancelFlag`'i tetiklenir (abort).
+    pub pause_signals: HashMap<String, Arc<Notify>>,
 }
 
 impl StateData {
@@ -77,6 +87,9 @@ impl StateData {
             retry_at: HashMap::new(),
             cancel_signals: HashMap::new(),
             download_semaphore: Arc::new(Semaphore::new(5)),
+            global_paused: false,
+            pause_resume: Arc::new(Notify::new()),
+            pause_signals: HashMap::new(),
         }
     }
 
