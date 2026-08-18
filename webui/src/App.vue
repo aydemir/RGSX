@@ -1028,7 +1028,7 @@ small { color: #666; font-weight: normal; }
 .chk { font-size: 12px; color: #333; display: flex; align-items: center; gap: 4px; }
 .filters select { background: #fff; border: 2px solid #ccc; border-radius: 5px; padding: 6px; color: #333; font-size: 12px; }
 .reset { background: #e0e0e0; border: 2px solid #999; color: #333; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
-.dlall { background: #2f8f46; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
+.dlall { background: #28a745; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
 
 /* Status badges — exact colors from old Python app.js (1966-1989) */
 .badge { display: inline-block; color: #fff; padding: 2px 10px; border-radius: 5px; font-size: 0.8em; font-weight: bold; white-space: nowrap; }

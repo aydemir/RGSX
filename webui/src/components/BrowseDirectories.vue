@@ -105,7 +105,7 @@ load(props.currentPath || '')
 .browse-title { margin: 0 0 10px; font-size: 15px; }
 .browse-path {
   background: #0e1116; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px;
-  font-family: ui-monospace, monospace; font-size: 13px; color: #58a6ff;
+  font-family: ui-monospace, monospace; font-size: 13px; color: #007bff;
   word-break: break-all; margin-bottom: 10px;
 }
 .browse-list {
