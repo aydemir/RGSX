@@ -627,7 +627,7 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                         }
                         Err(e) => {
                             let cls = classify_bridge_error(&e);
-                            match decide_retry(&state2, &current_url, &n, &p, &current_task_id, &e.to_string(), cls) {
+                            match decide_retry(&state2, &current_url, &n, &current_task_id, &e.to_string(), cls) {
                                 RetryDecision::Retry { new_task_id, delay } => {
                                     let dur = Duration::from_secs_f64(delay.max(0.0));
                                     tokio::select! {
@@ -1513,20 +1513,6 @@ fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn retry_task_id(url: &str) -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let mut h: u64 = 1469598103934665603;
-    for b in url.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(1099511628211);
-    }
-    let hash = (h & 0xFFFFFF) as u32;
-    format!("retry_{}_{:06x}", millis, hash)
-}
-
 fn retry_message(name: &str, count: u32, delay: f64) -> String {
     format!(
         "Retry {} (attempt {}/{}) in {}s",
@@ -1619,7 +1605,6 @@ fn decide_retry(
     state: &AppState,
     url: &str,
     name: &str,
-    platform: &str,
     current_task_id: &str,
     err_msg: &str,
     err_class: ErrorClass,
@@ -1636,32 +1621,29 @@ fn decide_retry(
         );
         let retry_at = now_secs() + delay;
         data.retry_at.insert(url.to_string(), retry_at);
-        if let Some(e) = data
-            .history
-            .iter_mut()
-            .find(|e| e.get("task_id").and_then(Value::as_str) == Some(current_task_id))
-        {
-            e["status"] = json!("Téléchargement");
-            e["entity_state"] = json!("RETRY_SCHEDULED");
-            e["retry_count"] = json!(new_failures);
-            e["max_retries"] = json!(retry::DEFAULT_MAX_RETRIES);
-            e["retry_at"] = json!(retry_at);
-            e["message"] = json!(retry_message(name, new_failures, delay));
+        // Faz A (retry aggregation): retry'ler YENİ satır açmaz, mevcut
+        // parent görev satırı güncellenir — böylece Kuyruk/Geçmiş'te dosya başına
+        // yalnızca TEK kayıt görünür (IDM/Aria2 davranışı).
+        for e in data.history.iter_mut() {
+            if e.get("task_id").and_then(Value::as_str) == Some(current_task_id) {
+                e["status"] = json!("Téléchargement");
+                e["entity_state"] = json!("RETRY_SCHEDULED");
+                e["retry_count"] = json!(new_failures);
+                e["max_retries"] = json!(retry::DEFAULT_MAX_RETRIES);
+                e["retry_at"] = json!(retry_at);
+                e["message"] = json!(retry_message(name, new_failures, delay));
+            }
         }
-        let new_task_id = retry_task_id(url);
-        drop(data);
-        push_queued_history_entry(
-            state,
-            &new_task_id,
-            url,
-            name,
-            platform,
-            "Queued",
-            &retry_message(name, new_failures, delay),
-            new_failures,
-        );
+        for q in data.queue.iter_mut() {
+            if q.get("task_id").and_then(Value::as_str) == Some(current_task_id) {
+                q["status"] = json!("Retrying");
+                q["retry_count"] = json!(new_failures);
+            }
+        }
+        // Aynı parent task_id korunur; retry döngüsü `current_task_id = new_task_id`
+        // (artık eşit) ile devam ettiği için bir sonraki retry da aynı satırı bulur.
         RetryDecision::Retry {
-            new_task_id,
+            new_task_id: current_task_id.to_string(),
             delay,
         }
     } else {
@@ -1789,7 +1771,6 @@ async fn native_ddl_download(
                         &c_state,
                         &current_url,
                         &c_name,
-                        &c_plat,
                         &current_task_id,
                         &e.message(),
                         cls,

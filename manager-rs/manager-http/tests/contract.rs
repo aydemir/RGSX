@@ -1719,8 +1719,10 @@ async fn test_download_retries_then_succeeds() {
     }
 
     let entries = data.read().unwrap().history.clone();
-    // 1 initial + 2 retry = 3 entry (son deneme başarılı → yeni retry girişi açılmaz).
-    assert_eq!(entries.len(), 3, "retry sayısı (3 deneme) 3 history entry üretmeli");
+    // Faz A (retry aggregation): 1 başlangıç + 2 retry = 3 engine çağrısı
+    // AMA history'de yalnızca TEK entry (parent task_id) — retry'ler aynı satırı
+    // günceller, yeni satır açmaz (IDM/Aria2 davranışı).
+    assert_eq!(entries.len(), 1, "retry'ler ayrı history entry açmamalı (aggregation)");
     let task_ids: Vec<&str> = entries
         .iter()
         .map(|e| e["task_id"].as_str().unwrap())
@@ -1728,16 +1730,13 @@ async fn test_download_retries_then_succeeds() {
     let unique: std::collections::HashSet<&str> = task_ids.iter().copied().collect();
     assert_eq!(
         unique.len(),
-        3,
-        "her deneme yeni task_id kullanmalı (Python queue.py:610 parity)"
+        1,
+        "tüm denemeler aynı parent task_id'yi kullanmalı (retry aggregation)"
     );
-    // İlk iki entry transient başarısızlık sonrası RETRY_SCHEDULED olmalı.
-    assert_eq!(entries[0]["entity_state"], json!("RETRY_SCHEDULED"));
-    assert_eq!(entries[0]["retry_count"], json!(1));
-    assert_eq!(entries[1]["retry_count"], json!(2));
-    // Son entry başarılı → COMPLETED.
-    assert_eq!(entries[2]["entity_state"], json!("COMPLETED"));
-    assert_eq!(entries[2]["status"], json!("Download_OK"));
+    // Tek entry: 2 retry yaşandı (fail_times=2), başarıyla tamamlandı.
+    assert_eq!(entries[0]["entity_state"], json!("COMPLETED"));
+    assert_eq!(entries[0]["status"], json!("Download_OK"));
+    assert_eq!(entries[0]["retry_count"], json!(2));
 }
 
 #[tokio::test]
