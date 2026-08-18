@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-24
 - **title:** WebUI Region-priority modal (One ROM Per Game)
-- **status:** partial
+- **status:** done
 
 ## Audit (2026-08-15, App.vue b6c37d8)
 - ⚠️ **KISMEN.** Region filtreleme TAM: `REGIONS`, `REGION_PRIORITY`, `regionFilters`
@@ -50,3 +50,20 @@ Region-priority modal, `App.vue` → `webui/src/components/Platforms.vue` compon
 
 - Kullanıcı region önceliğini sıralayabilir; sıralama `/api/save_filters` ile persist edilir.
 - One ROM Per Game seçimi yeni önceliğe göre çalışır (Python ile eşdeğer).
+
+## Done (2026-08-18)
+
+- `webui/src/App.vue`:
+  - `REGION_PRIORITY` sabit `const` kaldırıldı; yerine `regionPriorityOrder = ref([...REGION_PRIORITY_DEFAULT])`
+    (kullanıcı düzenlenebilir, ayarlardan yüklenir).
+  - `regionPriority()` artık `regionPriorityOrder.value` kullanıyor → sıralama canlı uygulanır.
+  - Filtre çubuğuna "Region priority" butonu eklendi; reorder modal'ı açılır.
+  - Modal: bölgeleri ▲/▼ ile yeniden sıralama + Reset (varsayılan) + Save (persist) + Cancel.
+  - `saveFilters()` artık `region_priority: regionPriorityOrder.value` gönderiyor (eskiden sabit const).
+  - `loadFiltersFromSettings()` ayarlardan `region_priority` dizisini okuyup `regionPriorityOrder`'a yüklüyor.
+- Backend hazır doğrulandı: `/api/save_filters` `region_priority`'i `Settings.extra["game_filters"]`'a
+  zaten kalıcılaştırıyor (api.rs:982); ek backend değişikliği gerekmedi.
+- One ROM Per Game sıralaması yeni önceliğe göre çalışır; değişiklik refresh sonrası da korunur.
+
+Not: Doc'daki "Platforms.vue component split" kararı uygulanmadı — filtre çubuğu zaten App.vue'da;
+modal doğrudan App.vue'ya eklendi (component split gereksizdi).

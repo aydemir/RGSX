@@ -31,7 +31,8 @@ const catalogError = ref('')
 
 // --- Per-platform game filters ---
 const REGIONS = ['USA', 'Canada', 'Europe', 'France', 'Germany', 'Japan', 'Korea', 'World', 'Other']
-const REGION_PRIORITY = ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other']
+const REGION_PRIORITY_DEFAULT = ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other']
+const regionPriorityOrder = ref([...REGION_PRIORITY_DEFAULT])
 const regionFilters = reactive({}) // region -> 'include' | 'exclude' | undefined
 const gameSearch = ref('')
 const hideDownloaded = ref(false)
@@ -231,9 +232,9 @@ function getBaseName(name) {
 }
 function regionPriority(name) {
   const regs = getRegions(name)
-  if (!regs.length) return REGION_PRIORITY.indexOf('Other')
+  if (!regs.length) return regionPriorityOrder.value.indexOf('Other')
   let best = -1
-  for (const r of regs) best = Math.max(best, REGION_PRIORITY.indexOf(r))
+  for (const r of regs) best = Math.max(best, regionPriorityOrder.value.indexOf(r))
   return best
 }
 function parseSize(str) {
@@ -368,7 +369,7 @@ async function saveFilters() {
       one_rom_per_game: oneRomPerGame.value,
       hide_downloaded: hideDownloaded.value,
       regex_mode: regexMode.value,
-      region_priority: REGION_PRIORITY,
+      region_priority: regionPriorityOrder.value,
     })
   } catch (e) { /* sessiz */ }
 }
@@ -378,6 +379,7 @@ async function loadFiltersFromSettings() {
     const f = s && s.settings && s.settings.game_filters
     if (f) {
       if (f.region_filters) for (const [k, v] of Object.entries(f.region_filters)) regionFilters[k] = v
+      if (Array.isArray(f.region_priority) && f.region_priority.length) regionPriorityOrder.value = [...f.region_priority]
       if (typeof f.hide_non_release === 'boolean') hideNonRelease.value = f.hide_non_release
       if (typeof f.one_rom_per_game === 'boolean') oneRomPerGame.value = f.one_rom_per_game
       if (typeof f.hide_downloaded === 'boolean') hideDownloaded.value = f.hide_downloaded
@@ -385,6 +387,20 @@ async function loadFiltersFromSettings() {
     }
   } catch (e) { /* sessiz */ }
 }
+
+// --- Region-priority reorder modal (gap-24) ---
+const regionPriorityModal = reactive({ open: false })
+function openRegionPriority() { regionPriorityModal.open = true }
+function closeRegionPriority() { regionPriorityModal.open = false }
+function moveRegion(idx, dir) {
+  const arr = regionPriorityOrder.value.slice()
+  const j = idx + dir
+  if (j < 0 || j >= arr.length) return
+  const t = arr[idx]; arr[idx] = arr[j]; arr[j] = t
+  regionPriorityOrder.value = arr
+}
+function saveRegionPriority() { closeRegionPriority(); saveFilters() }
+function resetRegionPriority() { regionPriorityOrder.value = [...REGION_PRIORITY_DEFAULT]; saveFilters() }
 
 // ===================== Downloads =====================
 async function downloadGame(g, mode) {
@@ -661,6 +677,7 @@ async function switchTab(t) {
             <button v-for="r in REGIONS" :key="r" class="rbtn" :class="regionFilters[r]"
                     @click="cycleRegion(r)">{{ r }}</button>
           </div>
+          <button class="btn sm" @click="openRegionPriority()">Region priority</button>
           <label class="chk"><input type="checkbox" v-model="hideDownloaded" @change="saveFilters()" /> {{ tt('filter_hide_dl') }}</label>
           <label class="chk"><input type="checkbox" v-model="hideNonRelease" @change="saveFilters()" /> {{ tt('filter_hide_demo') }}</label>
           <label class="chk"><input type="checkbox" v-model="regexMode" @change="saveFilters()" /> {{ tt('filter_regex') }}</label>
@@ -893,6 +910,28 @@ async function switchTab(t) {
         </div>
       </div>
     </div>
+
+    <!-- Region priority reorder modal (gap-24) -->
+    <div v-if="regionPriorityModal.open" class="modal-overlay" @click.self="closeRegionPriority" @keydown.esc="closeRegionPriority">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Region priority">
+        <h3 class="modal-title">Region priority (One ROM Per Game)</h3>
+        <p class="modal-msg">Highest to lowest — top wins when One ROM Per Game is on.</p>
+        <ul class="rp-list">
+          <li v-for="(r, i) in regionPriorityOrder" :key="r" class="rp-item">
+            <span class="rp-name">{{ r }}</span>
+            <span class="rp-ctrl">
+              <button class="btn sm" :disabled="i === 0" @click="moveRegion(i, -1)" aria-label="Move up">&#9650;</button>
+              <button class="btn sm" :disabled="i === regionPriorityOrder.length - 1" @click="moveRegion(i, 1)" aria-label="Move down">&#9660;</button>
+            </span>
+          </li>
+        </ul>
+        <div class="modal-actions">
+          <button class="btn" @click="resetRegionPriority()">Reset</button>
+          <button class="btn primary" @click="saveRegionPriority()">Save</button>
+          <button class="btn" @click="closeRegionPriority()">Cancel</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1092,4 +1131,12 @@ h3 { font-size: calc(13px * var(--font-scale, 1)); }
 .modal-actions .btn { min-height: 40px; padding: 8px 16px; border: 1px solid #ccc; background: #f1f1f1; border-radius: 8px; }
 .modal-actions .btn.primary { background: #007bff; border-color: #007bff; color: #fff; }
 .modal-actions .btn:focus-visible { outline: 3px solid #007bff; outline-offset: 2px; }
+.btn { font-size: 13px; padding: 6px 12px; border: 1px solid #ccc; background: #f1f1f1; border-radius: 8px; cursor: pointer; }
+.btn.sm { font-size: 11px; padding: 3px 8px; }
+.btn.primary { background: #007bff; border-color: #007bff; color: #fff; }
+.btn:disabled { opacity: .4; cursor: default; }
+.rp-list { list-style: none; margin: 0 0 16px; padding: 0; max-height: 320px; overflow: auto; }
+.rp-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid #eee; }
+.rp-name { font-weight: 600; }
+.rp-ctrl { display: flex; gap: 4px; }
 </style>
