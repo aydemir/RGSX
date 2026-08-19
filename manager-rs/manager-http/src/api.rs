@@ -2374,8 +2374,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&ud);
     }
 
-    #[test]
-    fn gap12_claim_in_flight_dedups_same_url() {
+    #[tokio::test]
+    async fn gap12_claim_in_flight_dedups_same_url() {
         let state = AppState::empty();
         let url = "http://example.com/game.zip";
         // İlk claim başarılı.
@@ -2389,8 +2389,8 @@ mod tests {
         assert!(claim_in_flight(&state, url));
     }
 
-    #[test]
-    fn gap12_queued_progress_status_is_queued_not_downloading() {
+    #[tokio::test]
+    async fn gap12_queued_progress_status_is_queued_not_downloading() {
         let state = AppState::empty();
         let url = "http://example.com/queued.zip";
         // Kuyruğa eklenen öğe semaphore iznini henüz etmedi → progress "Downloading"
@@ -2414,8 +2414,8 @@ mod tests {
         assert!(prog.queue.iter().any(|q| q["url"] == url));
     }
 
-    #[test]
-    fn gap29_global_pause_flags_and_signals() {
+    #[tokio::test]
+    async fn gap29_global_pause_flags_and_signals() {
         let state = AppState::empty();
         assert!(!state.read().global_paused);
         assert!(state.read().pause_signals.is_empty());
@@ -2439,15 +2439,14 @@ mod tests {
         assert!(!state.read().global_paused);
     }
 
-    #[test]
-    fn gap29_paused_loop_top_blocks_until_resume() {
+    #[tokio::test]
+    async fn gap29_paused_loop_top_blocks_until_resume() {
         // native_ddl_download loop-top global pause kontrolünü taklit eder:
         // global_paused iken indirme başlamaz, resume sonrası devam eder.
         let state = AppState::empty();
         state.write().global_paused = true;
-        let rt = tokio::runtime::Runtime::new().unwrap();
         let s = state.clone();
-        let handle = rt.spawn(async move {
+        let handle = tokio::spawn(async move {
             // loop başı: pause kontrolü
             if s.read().global_paused {
                 let pr = s.read().pause_resume.clone();
@@ -2456,12 +2455,12 @@ mod tests {
             assert!(!s.read().global_paused);
         });
         // görev beklerken kısa süre bekle
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         {
             let mut d = state.write();
             d.global_paused = false;
             d.pause_resume.notify_waiters();
         }
-        rt.block_on(async { handle.await.unwrap() });
+        handle.await.unwrap();
     }
 }

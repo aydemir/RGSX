@@ -10,6 +10,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
+use futures_util::StreamExt;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -1183,7 +1184,17 @@ async fn test_sse_handler_returns_event_stream_and_snapshot() {
             .unwrap()
             .contains("text/event-stream")
     );
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    // SSE gövdesi sonsuz akıştır (snapshot + `rx` broadcast loop); tüm gövdeyi
+    // `collect()` ile toplamak asılır. Yalnızca ilk SSE event frame'ini (snapshot)
+    // oku ve event sınırına ("\n\n") kadar biriktir.
+    let mut stream = res.into_body().into_data_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk.unwrap());
+        if String::from_utf8_lossy(&bytes).contains("\n\n") {
+            break;
+        }
+    }
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.starts_with("event: snapshot\n"), "got: {text:?}");
     assert!(text.contains("\"history\"") && text.contains("\"queue\""));
