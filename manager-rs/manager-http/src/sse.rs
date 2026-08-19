@@ -12,15 +12,18 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::time::interval;
 
 use manager_core::contract;
 
 use crate::state::{AppState, StateData};
 
 use futures_util::StreamExt;
+use serde_json::json;
+use serde_json::Value;
 
 /// Broadcast kanal kapasitesi — Python'un `_broadcaster_loop`'u ~250ms'de bir
 /// yayın yapar; kapasite yetmese `Lagged` ile atlanır (Python kaybı gibi).
@@ -91,3 +94,61 @@ pub async fn events(State(state): State<AppState>) -> impl IntoResponse {
 /// Keep-alive aralığı (Python 15s timeout → boşta snapshot yeniden gönderimi).
 #[allow(dead_code)]
 pub const IDLE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(15);
+
+/// F6 — 250ms batched delta SSE broadcaster (Python `_broadcaster_loop` parity'si,
+/// `rgsx_manager.py:125`).
+///
+/// Durum bölümleri (history / queue / progress / downloaded) okuma kilidi
+/// yalnızca serileştirme süresince tutulur (mikrosaniyeler); değişen bölümler
+/// `publish` ile tek seferde yayınlanır. Böylece bayt/transafer başına anlık SSE
+/// seli ortadan kalkar, WebUI en fazla 250ms gecikmeyle güncellenir. 30s'de bir
+/// tam `snapshot` (keep-alive + tam state refresh) yayınlanır.
+pub async fn broadcast_loop(state: AppState) {
+    let mut ticker = interval(Duration::from_millis(250));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_history: Option<String> = None;
+    let mut last_queue: Option<String> = None;
+    let mut last_progress: Option<String> = None;
+    let mut last_downloaded: Option<String> = None;
+    let mut last_snapshot = Instant::now();
+    loop {
+        ticker.tick().await;
+        // Okuma kilidi yalnızca serileştirme kadar tutulur (F3-F4 lock granularity).
+        let (history, queue, active, progress, downloaded) = {
+            let d = state.read();
+            (
+                serde_json::to_string(&d.history).unwrap_or_default(),
+                serde_json::to_string(&d.queue).unwrap_or_default(),
+                d.active,
+                serde_json::to_string(&d.progress).unwrap_or_default(),
+                serde_json::to_string(&d.downloaded).unwrap_or_default(),
+            )
+        };
+        if last_history.as_deref() != Some(history.as_str()) {
+            last_history = Some(history.clone());
+            publish(&state.events, "history", &json!({ "history": parse_value(&history) }));
+        }
+        if last_queue.as_deref() != Some(queue.as_str()) {
+            last_queue = Some(queue.clone());
+            publish(&state.events, "queue", &json!({ "queue": parse_value(&queue), "active": active }));
+        }
+        if last_progress.as_deref() != Some(progress.as_str()) {
+            last_progress = Some(progress.clone());
+            publish(&state.events, "progress", &json!({ "progress": parse_value(&progress), "active": active }));
+        }
+        if last_downloaded.as_deref() != Some(downloaded.as_str()) {
+            last_downloaded = Some(downloaded.clone());
+            publish(&state.events, "downloaded", &json!({ "downloaded": parse_value(&downloaded) }));
+        }
+        if last_snapshot.elapsed() >= Duration::from_secs(30) {
+            last_snapshot = Instant::now();
+            let snap = { let d = state.read(); snapshot_json(&d) };
+            publish(&state.events, "snapshot", &snap);
+        }
+    }
+}
+
+/// Serileştirilmiş bölümü yayın için `Value`'a çözer (değişmediyse çağrılmaz).
+fn parse_value(s: &str) -> Value {
+    serde_json::from_str::<Value>(s).unwrap_or(Value::Null)
+}

@@ -271,6 +271,8 @@ async fn run(paths: paths::RgsxPaths) {
     if let Some(c) = &catalog {
         let installed = c.installed_list();
         data.downloaded = serde_json::json!(installed);
+        // F3-F4: O(1) "already downloaded?" indeksini kurulumdan türet.
+        data.rebuild_downloaded_index();
         let total: usize = installed.values().map(|v| v.len()).sum();
         tracing::info!(
             "disk taraması: {} platformda {} kurulu oyun bulundu",

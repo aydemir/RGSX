@@ -18,6 +18,7 @@ use crate::catalog::CatalogSource;
 
 use crate::sse;
 use serde_json::json;
+use serde_json::Value;
 
 pub const SNAPSHOT_KEYS: [&str; 5] = ["history", "queue", "active", "progress", "downloaded"];
 
@@ -43,6 +44,21 @@ pub struct QueuedItem {
     pub platform: String,
     pub name: String,
     pub url: String,
+}
+
+/// Kuyruk görev kimliği (Faz gap-30 / F3-F4). Mevcut kodda tekil anahtar URL'dir
+/// (`retry_in_flight` ile aynı anahtar → O(1) çakışmasız dedupe).
+pub type TaskId = String;
+
+/// Bir görevin kuyruk içi durumu (Faz gap-30 / F3-F4). O(1) durum sorgusu
+/// (`is_queued` / `get_status`) için `tasks: HashMap<TaskId, TaskState>` kullanılır;
+/// böylece liste render / scan sırasında `Vec` taraması (O(N)) ortadan kalkar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskState {
+    Queued,
+    Active,
+    Completed,
+    Failed,
 }
 
 /// Kuyruk durum makinesi (Faz gap-30 / F1).
@@ -110,10 +126,21 @@ pub struct StateData {
     /// Faz 12 "Download All" refactor: toplu enqueue artık handler içinde
     /// yapılmaz. `download_batch` yalnızca geçerli öğeleri buraya `push_back`
     /// eder (O(1) dönüş) ve tek bir arka plan `download_consumer` döngüsü bu
-    /// seti FIFO boşaltır. Kuyruk görünümü = `active` + `pending_set` (tıpkı
-    /// katalog listesinin veri üzerinde bir view olması gibi). "Durdur"
-    /// (queue_clear) `pending_set`'i temizler → consumer durur.
-    pub pending_set: VecDeque<QueuedItem>,
+    /// Kuyruk sıra takibi (Faz gap-30 / F3): FIFO sıra = `VecDeque<TaskId>`
+    /// (TaskId = url). Gerçek payload `queued_items` haritasındadır; pop_front
+    /// bir TaskId verir, payload oradan O(1) alınır.
+    pub pending_set: VecDeque<TaskId>,
+    /// `pending_set` içindeki TaskId → öğe payload'ı (O(1) lookup).
+    pub queued_items: HashMap<TaskId, QueuedItem>,
+    /// O(1) durum sorgusu: TaskId → `TaskState` (Queued/Active/Completed/Failed).
+    /// Liste render / scan `Vec` taraması yapmaz, bunu kullanır.
+    pub tasks: HashMap<TaskId, TaskState>,
+    /// O(1) "queued?" üyelik seti. `download_batch` dedupe ve UI snapshot'ı bunu
+    /// kullanır (kilit altında mikrosaniyede clone edilir).
+    pub queued_ids: HashSet<TaskId>,
+    /// O(1) "already downloaded?" indeksi: `(platform, name)` çiftleri. `downloaded`
+    /// `Value` array'inin O(N) taraması yerine geçer (finalize'da artırımlı doldurulur).
+    pub downloaded_index: HashSet<(String, String)>,
     /// `queue_worker`'ı uyandırmak için notify (Arc çünkü borrow süresi
     /// select içinde guard'dan uzun olabilir). F2'de `Paused→Running`
     /// geçişinde `notify_waiters()` ile dispatch döngüsü uyandırılır.
@@ -154,6 +181,10 @@ impl StateData {
             max_simultaneous_downloads: 5,
             aborting: AtomicBool::new(false),
             pending_set: VecDeque::new(),
+            queued_items: HashMap::new(),
+            tasks: HashMap::new(),
+            queued_ids: HashSet::new(),
+            downloaded_index: HashSet::new(),
             pending_notify: Arc::new(Notify::new()),
             status: QueueStatus::Running,
             global_paused: false,
@@ -165,6 +196,26 @@ impl StateData {
     /// `config.download_queue` uzunluğu.
     pub fn queue_size(&self) -> usize {
         self.queue.len()
+    }
+
+    /// `downloaded` `Value` (platform→[name]) yapısından O(1) `downloaded_index`
+    /// haritasını (yeniden) türetir. `main.rs` startup ve settings tazelemesinde
+    /// `downloaded` değiştiğinde çağrılır; böylece `download_batch` O(N) array
+    /// taraması yapmaz, doğrudan `downloaded_index.contains` ile O(1) bakar.
+    pub fn rebuild_downloaded_index(&mut self) {
+        let mut idx = HashSet::new();
+        if let Value::Object(map) = &self.downloaded {
+            for (platform, arr) in map {
+                if let Some(arr) = arr.as_array() {
+                    for g in arr {
+                        if let Some(name) = g.as_str() {
+                            idx.insert((platform.clone(), name.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        self.downloaded_index = idx;
     }
 
     /// `/api/browse-directories` — verilen kökün alt dizinleri (placeholder: boş).
@@ -223,6 +274,7 @@ impl AppState {
             tx,
         };
         tokio::spawn(crate::api::queue_worker(rx, state.clone()));
+        tokio::spawn(crate::sse::broadcast_loop(state.clone()));
         state
     }
 
@@ -239,6 +291,7 @@ impl AppState {
             tx,
         };
         tokio::spawn(crate::api::queue_worker(rx, state.clone()));
+        tokio::spawn(crate::sse::broadcast_loop(state.clone()));
         state
     }
 
@@ -261,5 +314,12 @@ impl AppState {
     /// Yazma kilidi (poison'u unwrap).
     pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, StateData> {
         self.data.write().unwrap()
+    }
+
+    /// Faz gap-30 / F3-F4: O(1) "queued?" üyelik snapshot'ı. Kilit yalnızca
+    /// `HashSet` clone'ı kadar (mikrosaniye) tutulur; liste render / scan bunu
+    /// kullanarak worker kilitlerini uzun süre tutmaz. `Vec` taraması YOK.
+    pub fn queued_ids_snapshot(&self) -> HashSet<TaskId> {
+        self.read().queued_ids.clone()
     }
 }

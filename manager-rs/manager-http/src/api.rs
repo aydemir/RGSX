@@ -29,8 +29,7 @@ use manager_bridge::BridgeError;
 use manager_download::http::stream::CancelFlag;
 use manager_download::http::DownloadError;
 
-use crate::sse;
-use crate::state::{AppState, QueueCommand, QueuedItem};
+use crate::state::{AppState, QueueCommand, QueueStatus, QueuedItem, TaskState};
 
 /// CORS başlığı (tüm yanıtlarda; handlers.py `_set_headers`).
 const CORS: [(&str, &str); 1] = [("Access-Control-Allow-Origin", "*")];
@@ -254,10 +253,14 @@ pub async fn queue(State(state): State<AppState>) -> Response {
         }
     }
     let data = state.read();
+    // F3-F4: UI'ye O(1) "queued?" üyelik snapshot'ı ver (kilit mikrosaniyede bırakılır;
+    // WebUI `Vec` taraması yapmaz, bu set ile doğrudan bakar).
+    let queued_ids: Vec<String> = data.queued_ids.iter().cloned().collect();
     ok(contract::ok(json!({
         "active": data.active,
         "queue": data.queue,
         "queue_size": data.queue_size(),
+        "queued_ids": queued_ids,
     })))
 }
 
@@ -607,10 +610,8 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                 loop {
                     let cb_state = state2.clone();
                     let cb_url = current_url.clone();
-                    // TASK-002-gap-10 (E): SSE progress selini önle — yayın en fazla
-                    // ~250ms'de bir (terminal durumlarda her zaman). Python
-                    // `_broadcaster_loop` ~250ms parity'si.
-                    let last_progress_emit = std::sync::atomic::AtomicU64::new(0);
+                    // F6: progress SSE'i artık `broadcast_loop` (250ms batched delta)
+                    // tarafından yayınlanır; burada yalnızca durum yazılır.
                     let on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>> =
                         Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
                             let pct = if ev.total > 0 {
@@ -636,13 +637,6 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                                         "speed": ev.speed,
                                     }),
                                 );
-                            }
-                            // E: yalnızca ~250ms aralıkla (veya terminal durumda) yayınla.
-                            let now_ms = (now_secs() * 1000.0) as u64;
-                            let last = last_progress_emit.load(std::sync::atomic::Ordering::Relaxed);
-                            if ev.finished || ev.paused || now_ms.saturating_sub(last) >= 250 {
-                                sse::publish(&cb_state.events, "progress", &json!(data.progress));
-                                last_progress_emit.store(now_ms, std::sync::atomic::Ordering::Relaxed);
                             }
                         }));
                     // GAP-6: indirme sonrası otomatik çıkarma ipucu üret.
@@ -765,16 +759,6 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
     // durdurur; burada sadece genel aborting'i sıfırlarız.
     state.write().aborting.store(false, Ordering::SeqCst);
 
-    // Dedupe anlık görüntüsü: aktif kuyruk (retry_in_flight) + kurulu oyunlar.
-    let active: HashSet<String> = state.read().retry_in_flight.clone();
-    let downloaded: HashSet<String> = state
-        .read()
-        .downloaded
-        .get(&platform)
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
-        .unwrap_or_default();
-
     let mut queued = 0u32;
     let mut skipped = 0u32;
     let mut already_downloaded = 0u32;
@@ -786,6 +770,11 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
     // (O(1) dönüş — binlerce oyun handler'ı bloke etmez). Worker SÜREKLİ çalışır;
     // gerçek indirme spawn'ı arka plan `queue_worker` döngüsünde yapılır. "Durdur"
     // (`queue_clear`) `pending_set`'i temizler → taze büyüme durur.
+    // F3-F4: dedupe O(1) — `retry_in_flight` (aktif) + `queued_ids` (buffer'da) +
+    // `downloaded_index` (kurulu) hepsi HashSet, kilit altında mikrosaniye clone.
+    let active: HashSet<String> = state.read().retry_in_flight.clone();
+    let buffered: HashSet<String> = state.read().queued_ids.clone();
+    let downloaded_index: HashSet<(String, String)> = state.read().downloaded_index.clone();
     let mut items: Vec<QueuedItem> = Vec::with_capacity(names.len());
     for n in names {
         let name = n.as_str().unwrap_or("").to_string();
@@ -800,12 +789,12 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
             results.push(json!({ "ok": false, "game_name": name, "error": "not_found" }));
             continue;
         };
-        if active.contains(&url) {
+        if active.contains(&url) || buffered.contains(&url) {
             skipped += 1;
             results.push(json!({ "ok": false, "game_name": name, "error": "already_queued" }));
             continue;
         }
-        if downloaded.contains(&name) {
+        if downloaded_index.contains(&(platform.clone(), name.clone())) {
             already_downloaded += 1;
             skipped += 1;
             results.push(json!({ "ok": false, "game_name": name, "error": "already_downloaded" }));
@@ -841,31 +830,61 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
 /// gate'lenecek; `Paused→Running` geçişi `pending_notify` ile uyandıracak.
 pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState) {
     loop {
-        // 1) Buffer'da kalan her öğeyi dispatch et (F1: koşulsuz; F2'de status'e göre).
-        //    Kilit yalnızca `pop_front` süresince tutulur; `download` çağrısı kilit
-        //    DIŞINDA yapılır → deadlock/contention riski yok.
-        while let Some(item) = {
-            let mut d = state.write();
-            d.pending_set.pop_front()
-        } {
-            dispatch_queued(&state, item).await;
+        // 1) Dispatch YALNIZCA `status == Running` iken. Paused'ta `pop_front`
+        //    ENGELLENİR; gelen Add/AddBatch öğeleri `pending_set`'te KALIR (drop
+        //    EDİLMEZ) → resume'da baştan işlenir. Kilit yalnızca `pop_front`
+        //    süresince tutulur; `download` çağrısı kilit DIŞINDA → deadlock yok.
+        while state.read().status == QueueStatus::Running {
+            let url = {
+                let mut d = state.write();
+                d.pending_set.pop_front()
+            };
+            match url {
+                Some(url) => {
+                    // Dispatch anında: buffer üyeliğini düş, durumu Active yap,
+                    // payload'ı queued_items'tan O(1) al. `queued_ids` artık
+                    // aktif olduğu için "queued?" snapshot'ından çıkar.
+                    let item = {
+                        let mut d = state.write();
+                        d.queued_ids.remove(&url);
+                        d.tasks.insert(url.clone(), TaskState::Active);
+                        d.queued_items.remove(&url)
+                    };
+                    match item {
+                        Some(item) => dispatch_queued(&state, item).await,
+                        None => continue,
+                    }
+                }
+                None => break,
+            }
         }
-        // 2) Buffer boş → yeni komut VEYA resume sinyali beklenir (ikisi de döngüyü döndürür).
+        // 2) Buffer boş VEYA Paused → yeni komut VEYA resume sinyali beklenir
+        //    (ikisi de döngüyü döndürür; resume'da yukarıdaki `while` drene eder).
         let resume = state.read().pending_notify.clone();
         tokio::select! {
             cmd = rx.recv() => match cmd {
                 Some(QueueCommand::Add(item)) => {
                     let mut d = state.write();
-                    d.pending_set.push_back(item);
+                    let url = item.url.clone();
+                    d.pending_set.push_back(url.clone());
+                    d.queued_items.insert(url.clone(), item);
+                    d.tasks.insert(url.clone(), TaskState::Queued);
+                    d.queued_ids.insert(url);
                 }
                 Some(QueueCommand::AddBatch(items)) => {
                     let mut d = state.write();
-                    d.pending_set.extend(items);
+                    for item in items {
+                        let url = item.url.clone();
+                        d.pending_set.push_back(url.clone());
+                        d.queued_items.insert(url.clone(), item);
+                        d.tasks.insert(url.clone(), TaskState::Queued);
+                        d.queued_ids.insert(url);
+                    }
                 }
                 // Tüm sender'lar drop → worker biter (meşru shutdown).
                 None => return,
             },
-            // F2: status Running ise yukarıdaki `while` döngüsü buffer'ı drene eder.
+            // Paused→Running geçişinde `pending_notify.notify_waiters()` ile çalar.
             _ = resume.notified() => {}
         }
     }
@@ -970,9 +989,13 @@ pub async fn queue_clear(State(state): State<AppState>) -> Response {
         // 5) Durum temizliği.
         let cleared = data.queue.len();
         data.queue.clear();
-        // 5b) Arka plan batch tüketicisinin (download_consumer) setini temizle →
-        // "Download All" listesi durur, yeniden büyümez.
+        // 5b) Arka plan batch worker'ının buffer'ını + O(1) indekslerini temizle →
+        // "Download All" listesi durur, yeniden büyümez. `downloaded_index` KORUNUR
+        // (kurulu oyunlar hâlâ indirilmiş sayılır).
         data.pending_set.clear();
+        data.queued_items.clear();
+        data.queued_ids.clear();
+        data.tasks.clear();
         data.retry_in_flight.clear();
         data.cancel_signals.clear();
         data.pause_signals.clear();
@@ -980,12 +1003,7 @@ pub async fn queue_clear(State(state): State<AppState>) -> Response {
         data.progress = json!({});
         // 5c) Consumer'ı uyandır (boş seti bulup beklemeye geçer).
         data.pending_notify.notify_one();
-        sse::publish(
-            &state.events,
-            "queue",
-            &json!({ "queue": data.queue, "active": data.active }),
-        );
-        sse::publish(&state.events, "progress", &json!(data.progress));
+        // F6: queue/progress SSE'i `broadcast_loop` (250ms) yayınlar.
         cleared
     };
     // aborting bayrağını kısa gecikmeyle sıfırla: bu pencerede klonlanan eski
@@ -1019,11 +1037,7 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
         .position(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id.as_str()))
     {
         data.queue.remove(pos);
-        sse::publish(
-            &state.events,
-            "queue",
-            &json!({ "queue": data.queue, "active": data.active }),
-        );
+        // F6: queue SSE'i `broadcast_loop` (250ms) yayınlar.
         return ok(contract::ok(json!({ "task_id": task_id })));
     }
     json_err(format!("Élément non trouvé: {task_id}"), StatusCode::NOT_FOUND)
@@ -1057,7 +1071,10 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
                             // snapshot'ını (İndirilenler sekmesi + yeşil rozetler) tazele.
                             if let Some(c) = &state.catalog {
                                 let installed = c.installed_list();
-                                state.write().downloaded = serde_json::json!(installed);
+                                let mut d = state.write();
+                                d.downloaded = serde_json::json!(installed);
+                                // F3-F4: O(1) indeksi tazele (batch dedupe bunu kullanır).
+                                d.rebuild_downloaded_index();
                             }
                             return ok(contract::ok(Value::Null));
                         }
@@ -1169,7 +1186,7 @@ pub async fn clear_history(State(state): State<AppState>) -> Response {
         (preserved, data.history_path.clone())
     };
     persist_history(&preserved, &path);
-    sse::publish(&state.events, "history", &json!(preserved));
+    // F6: history SSE'i `broadcast_loop` (250ms) yayınlar.
     ok(contract::ok(Value::Null))
 }
 
@@ -1316,8 +1333,11 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
     }
     // TASK-002-gap-29: native modda global pause — devam eden HTTP-direct
     // indirmeleri abort eder (pause_signals) ve yeni başlatmaları engeller.
+    // F2 (gap-30): kuyruk durum makinesini `Paused`'a çeker → worker yeni
+    // dispatch'i durdurur, gelen Add/AddBatch öğeleri `pending_set`'te buffer'lanır.
     let mut d = state.write();
     d.global_paused = true;
+    d.status = QueueStatus::Paused;
     let paused = d.pause_signals.len();
     for sig in d.pause_signals.values() {
         sig.notify_one();
@@ -1347,9 +1367,13 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
     }
     // TASK-002-gap-29: native modda global resume — duraklatılmış indirme
     // döngülerini uyandırır (pause_resume.notify_all).
+    // F2 (gap-30): kuyruk durum makinesini `Running`'a çeker ve `pending_notify`
+    // ile bekleyen worker'ı anında uyandırır → buffer'daki `pending_set` drene edilir.
     let mut d = state.write();
     d.global_paused = false;
+    d.status = QueueStatus::Running;
     d.pause_resume.notify_waiters();
+    d.pending_notify.notify_waiters();
     ok(contract::ok(json!({ "resumed": 0 })))
 }
 
@@ -1629,9 +1653,17 @@ pub async fn finalize_download_in_state(
                 }
             }
         }
+        // F3-F4: O(1) "already downloaded?" indeksini artırımlı güncelle (batch
+        // handler'ının O(N) array taraması yapmaması için).
+        data.downloaded_index.insert((platform.to_string(), game_name.to_string()));
         // Faz 12.6e — indirilen dosyaya symlink oluştur (settings.symlink etkinse).
         apply_symlink(message);
     }
+    // F3-F4: görev durumu tamamlandı olarak işaretle (O(1) `get_status`).
+    data.tasks.insert(
+        game_url.to_string(),
+        if ok { TaskState::Completed } else { TaskState::Failed },
+    );
     if let Value::Object(prog) = &mut data.progress {
         if ok {
             prog.insert(game_url.to_string(), json!({ "status": "Download_OK", "progress": 100 }));
@@ -1639,12 +1671,7 @@ pub async fn finalize_download_in_state(
             prog.insert(game_url.to_string(), json!({ "status": "Erreur", "message": message }));
         }
     }
-    sse::publish(&state.events, "queue", &json!({ "queue": data.queue, "active": data.active }));
-    sse::publish(&state.events, "history", &json!(data.history));
-    if ok {
-        sse::publish(&state.events, "downloaded", &json!(data.downloaded));
-    }
-    sse::publish(&state.events, "progress", &json!(data.progress));
+    // F6: queue/history/downloaded/progress SSE'i `broadcast_loop` (250ms) yayınlar.
         (data.history.clone(), data.history_path.clone())
     };
     persist_history(&history_snapshot, &path);
@@ -1715,13 +1742,7 @@ fn push_queued_history_entry(
         "max_retries": retry::DEFAULT_MAX_RETRIES,
         "retry_at": 0,
     }));
-    sse::publish(
-        &state.events,
-        "queue",
-        &json!({ "queue": data.queue, "active": data.active }),
-    );
-    sse::publish(&state.events, "progress", &json!(data.progress));
-    sse::publish(&state.events, "history", &json!(data.history));
+    // F6: queue/progress/history SSE'i `broadcast_loop` (250ms) yayınlar.
         (data.history.clone(), data.history_path.clone())
     };
     persist_history(&history_snapshot, &path);
@@ -1940,11 +1961,7 @@ async fn native_ddl_download(
                     let mut data = progress_state.write();
                     data.progress[&progress_url] =
                         json!({ "status": "Downloading", "progress": pct });
-                    sse::publish(
-                        &progress_state.events,
-                        "progress",
-                        &json!(data.progress),
-                    );
+                    // F6: progress SSE'i artık `broadcast_loop` (250ms batched delta) yayınlar.
                 });
             let dl_fut = downloader.download_async(&req);
             // TASK-002-gap-29: global pause (pause_sig) devam eden indirmeyi abort eder;
