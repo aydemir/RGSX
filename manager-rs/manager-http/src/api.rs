@@ -19,7 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 
 use manager_core::contract;
 use manager_core::retry::{self, ErrorClass};
@@ -30,7 +30,7 @@ use manager_download::http::stream::CancelFlag;
 use manager_download::http::DownloadError;
 
 use crate::sse;
-use crate::state::AppState;
+use crate::state::{AppState, QueueCommand, QueuedItem};
 
 /// CORS başlığı (tüm yanıtlarda; handlers.py `_set_headers`).
 const CORS: [(&str, &str); 1] = [("Access-Control-Allow-Origin", "*")];
@@ -781,11 +781,12 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
     let mut errors: Vec<String> = Vec::new();
     let mut results: Vec<Value> = Vec::new();
 
-    // Handler YALNIZCA katalog çözümü + dedupe + sayım yapar ve geçerli öğeleri
-    // `pending_set`'e ekler (O(1) dönüş). Gerçek indirme spawn'ı arka plan
-    // `download_consumer` döngüsünde yapılır — böylece "Download All" binlerce
-    // oyunu handler'ı bloke etmeden kuyruğa düşürür ve "Durdur" anında
-    // `pending_set` temizlenince consumer durur.
+    // F1 (gap-30): Handler YALNIZCA katalog çözümü + dedupe + sayım yapar ve
+    // geçerli öğeleri tek bir `QueueCommand::AddBatch` mesajıyla worker'a yollar
+    // (O(1) dönüş — binlerce oyun handler'ı bloke etmez). Worker SÜREKLİ çalışır;
+    // gerçek indirme spawn'ı arka plan `queue_worker` döngüsünde yapılır. "Durdur"
+    // (`queue_clear`) `pending_set`'i temizler → taze büyüme durur.
+    let mut items: Vec<QueuedItem> = Vec::with_capacity(names.len());
     for n in names {
         let name = n.as_str().unwrap_or("").to_string();
         if name.is_empty() {
@@ -810,21 +811,14 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
             results.push(json!({ "ok": false, "game_name": name, "error": "already_downloaded" }));
             continue;
         }
-        {
-            let mut d = state.write();
-            d.pending_set.push_back((platform.clone(), name.clone(), url));
-        }
+        items.push(QueuedItem { platform: platform.clone(), name: name.clone(), url });
         queued += 1;
         results.push(json!({ "ok": true, "game_name": name }));
     }
 
-    // Arka plan consumer'ı ilk kez başlat ve uyar.
-    if queued > 0 {
-        if !state.read().consumer_started.swap(true, Ordering::SeqCst) {
-            let s = state.clone();
-            tokio::spawn(async move { download_consumer(s).await; });
-        }
-        state.read().pending_notify.notify_one();
+    // Worker'a tek mesajla yolla (kanal bounded; tek mesaj → asla dolmaz/takılmaz).
+    if !items.is_empty() {
+        let _ = state.tx.send(QueueCommand::AddBatch(items)).await;
     }
 
     ok(contract::ok(json!({
@@ -837,41 +831,56 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
     })))
 }
 
-/// Arka plan "Download All" tüketicisi — `pending_set`'i FIFO boşaltır.
+/// Arka plan kuyruk worker'ı (Faz gap-30 / F1) — `AppState::empty()`/`with_data()`
+/// ve `main.rs` tarafından `tokio::spawn` ile başlatılır, SÜREKLİ çalışır.
 ///
-/// Handler (`download_batch`) yalnızca öğeleri `pending_set`'e ekler; bu tek
-/// döngü her öğe için tekil `download()` akışını başlatır (semaphore izni
-/// `download` içinde edinilir, eşzamanlı indirme `max_simultaneous_downloads`
-/// ile sınırlı). `queue_clear` (stop all) `pending_set`'i temizlediğinde bu
-/// döngü boş seti bulup `pending_notify` üzerinde bekler; yeni batch uyarır.
-async fn download_consumer(state: AppState) {
+/// Çıkış noktası TEK: `rx.recv()` `None` döndüğünde (tüm `tx` drop edildiğinde,
+/// yani uygulama kapanışında). `Paused`/`Stopped` durumunda `break`/`return` YOK.
+/// Gelen komutlar `pending_set`'e yazılır (mesaj ASLA drop edilmez) ve buffer
+/// boşalana kadar dispatch edilir. F2'de dispatch `status == Running` kapısıyla
+/// gate'lenecek; `Paused→Running` geçişi `pending_notify` ile uyandıracak.
+pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState) {
     loop {
-        let item = {
+        // 1) Buffer'da kalan her öğeyi dispatch et (F1: koşulsuz; F2'de status'e göre).
+        //    Kilit yalnızca `pop_front` süresince tutulur; `download` çağrısı kilit
+        //    DIŞINDA yapılır → deadlock/contention riski yok.
+        while let Some(item) = {
             let mut d = state.write();
             d.pending_set.pop_front()
-        };
-        match item {
-            Some((platform, name, url)) => {
-                let single = json!({
-                    "url": url,
-                    "platform": platform,
-                    "game_name": name,
-                    "mode": "queue",
-                });
-                // `download()` arka plan task spawn eder ve hızlı döner; gerçek
-                // indirme semaphore'da bekler. Yanıt önemli değil.
-                let _ = download(State(state.clone()), Json(single)).await;
-            }
-            None => {
-                // Boş → yeni batch (veya shutdown) sinyalini bekle.
-                let n = state.read().pending_notify.clone();
-                tokio::select! {
-                    _ = state.shutdown.notified() => return,
-                    _ = n.notified() => continue,
+        } {
+            dispatch_queued(&state, item).await;
+        }
+        // 2) Buffer boş → yeni komut VEYA resume sinyali beklenir (ikisi de döngüyü döndürür).
+        let resume = state.read().pending_notify.clone();
+        tokio::select! {
+            cmd = rx.recv() => match cmd {
+                Some(QueueCommand::Add(item)) => {
+                    let mut d = state.write();
+                    d.pending_set.push_back(item);
                 }
-            }
+                Some(QueueCommand::AddBatch(items)) => {
+                    let mut d = state.write();
+                    d.pending_set.extend(items);
+                }
+                // Tüm sender'lar drop → worker biter (meşru shutdown).
+                None => return,
+            },
+            // F2: status Running ise yukarıdaki `while` döngüsü buffer'ı drene eder.
+            _ = resume.notified() => {}
         }
     }
+}
+
+/// Tek bir `QueuedItem`'ı `download()` handler'ına yönlendirir. `download` kendi
+/// içinde arka plan task spawn eder ve hızlı döner; worker yalnız kurulumu bekler.
+async fn dispatch_queued(state: &AppState, item: QueuedItem) {
+    let single = json!({
+        "url": item.url,
+        "platform": item.platform,
+        "game_name": item.name,
+        "mode": "queue",
+    });
+    let _ = download(State(state.clone()), Json(single)).await;
 }
 
 /// POST `/api/cancel` — Faz 10c/3/4 + Gap-3: `catalog` varsa Python'a proxy;

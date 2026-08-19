@@ -291,13 +291,19 @@ async fn run(paths: paths::RgsxPaths) {
     // `tokio::select!` ile dinlediği `AppState.shutdown` Notify'ı. Aynı Arc hem
     // `AppState`'e hem tray Quit handler'ına geçer (iki ayrı instance OLMAZ).
     let shutdown = Arc::new(Notify::new());
-    let app = router(AppState {
-        data: Arc::new(std::sync::RwLock::new(data)),
-        events: events.clone(),
-        bridge: bridge.clone(),
-        static_root,
-        catalog,
-        shutdown: shutdown.clone(),
+    let app = router({
+        let (tx, rx) = tokio::sync::mpsc::channel::<manager_http::state::QueueCommand>(1024);
+        let state = AppState {
+            data: Arc::new(std::sync::RwLock::new(data)),
+            events: events.clone(),
+            bridge: bridge.clone(),
+            static_root: static_root.clone(),
+            catalog: catalog.clone(),
+            shutdown: shutdown.clone(),
+            tx,
+        };
+        tokio::spawn(manager_http::api::queue_worker(rx, state.clone()));
+        state
     });
 
     // TASK-005-B — native SDL2/gilrs gamepad girdi yolu. `native-input` feature

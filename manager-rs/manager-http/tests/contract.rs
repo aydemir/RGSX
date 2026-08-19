@@ -777,14 +777,18 @@ impl manager_bridge::TorrentBackend for FakeCancelEngine {
 }
 
 fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
-    router(AppState {
+    let (tx, rx) = tokio::sync::mpsc::channel::<manager_http::state::QueueCommand>(1024);
+    let state = AppState {
         data: Arc::new(std::sync::RwLock::new(StateData::empty())),
         events: manager_http::sse::channel(),
         bridge: Some(bridge),
         static_root: None,
         catalog: None,
         shutdown: Arc::new(tokio::sync::Notify::new()),
-    })
+        tx,
+    };
+    tokio::spawn(manager_http::api::queue_worker(rx, state.clone()));
+    router(state)
 }
 
 #[tokio::test]

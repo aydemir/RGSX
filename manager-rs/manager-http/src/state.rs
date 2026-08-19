@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
+use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use tokio::sync::Notify;
 
@@ -19,6 +20,49 @@ use crate::sse;
 use serde_json::json;
 
 pub const SNAPSHOT_KEYS: [&str; 5] = ["history", "queue", "active", "progress", "downloaded"];
+
+/// Kuyruk worker'ına gönderilen komutlar (Faz gap-30 / F1).
+///
+/// `download_batch` handler'ı katalog çözümü + dedupe'u yapar ve geçerli
+/// öğeleri `AddBatch` ile TEK mesajda yollar (binlerce öğe = 1 kanal mesajı).
+/// Tekil `/api/download` de `Add` ile yollayabilir. Worker komutları alır,
+/// `pending_set`'e yazar ve (F1'de koşulsuz, F2'de `status == Running` kapısıyla)
+/// dispatch eder. `Paused`/`Stopped` durumunda kanal DİNLENMEYE DEVAM EDER —
+/// gelen mesajlar DROP EDİLMEZ, yalnız buffer'a yazılır.
+#[derive(Debug)]
+pub enum QueueCommand {
+    /// Tekil indirme isteği.
+    Add(QueuedItem),
+    /// Toplu indirme isteği (binlerce öğe tek mesajda).
+    AddBatch(Vec<QueuedItem>),
+}
+
+/// Kuyruk worker'ının dispatch ettiği tek bir indirme öğesi.
+#[derive(Debug, Clone)]
+pub struct QueuedItem {
+    pub platform: String,
+    pub name: String,
+    pub url: String,
+}
+
+/// Kuyruk durum makinesi (Faz gap-30 / F1).
+///
+/// `Stopped` şu an kullanımda değil (worker yalnız `rx.recv() == None`, yani
+/// tüm `tx` drop edilince biter). `Paused` kapısı F2'de devreye girer; o zaman
+/// dispatch `status == Running` ile gate'lenir ve `Paused→Running` geçişi
+/// worker'ı `pending_notify` ile uyandırır.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueStatus {
+    Running,
+    Paused,
+    Stopped,
+}
+
+impl Default for QueueStatus {
+    fn default() -> Self {
+        QueueStatus::Running
+    }
+}
 
 /// İş mantığı durumu (config eşleniği). `RwLock` + senkron erişim — axum
 /// handler'ları kısa tutulduğu için `tokio::sync`'e gerek yok.
@@ -69,12 +113,13 @@ pub struct StateData {
     /// seti FIFO boşaltır. Kuyruk görünümü = `active` + `pending_set` (tıpkı
     /// katalog listesinin veri üzerinde bir view olması gibi). "Durdur"
     /// (queue_clear) `pending_set`'i temizler → consumer durur.
-    pub pending_set: VecDeque<(String, String, String)>,
-    /// `download_consumer`'u uyandırmak için notify (Arc çünkü borrow süresi
-    /// select içinde guard'dan uzun olabilir).
+    pub pending_set: VecDeque<QueuedItem>,
+    /// `queue_worker`'ı uyandırmak için notify (Arc çünkü borrow süresi
+    /// select içinde guard'dan uzun olabilir). F2'de `Paused→Running`
+    /// geçişinde `notify_waiters()` ile dispatch döngüsü uyandırılır.
     pub pending_notify: Arc<Notify>,
-    /// Arka plan consumer'ın yalnızca bir kez spawn edildiğini garanti eder.
-    pub consumer_started: AtomicBool,
+    /// Kuyruk durum makinesi (F1: `Running`; F2'de `Paused`/`Stopped` kapısı).
+    pub status: QueueStatus,
     /// TASK-002-gap-29: global pause bayrağı. `true` iken native HTTP-direct
     /// indirmeleri başlamaz / devam edenler duraklatılır (Python
     /// `pause_all_downloads` parity'si). Yalnız native modda (bridge yok) kullanılır.
@@ -110,7 +155,7 @@ impl StateData {
             aborting: AtomicBool::new(false),
             pending_set: VecDeque::new(),
             pending_notify: Arc::new(Notify::new()),
-            consumer_started: AtomicBool::new(false),
+            status: QueueStatus::Running,
             global_paused: false,
             pause_resume: Arc::new(Notify::new()),
             pause_signals: HashMap::new(),
@@ -158,31 +203,43 @@ pub struct AppState {
     pub catalog: Option<Arc<dyn CatalogSource>>,
     /// TASK-002-gap-1: global shutdown sinyali (retry sleep'lerini keser).
     pub shutdown: Arc<Notify>,
+    /// Faz gap-30 / F1: kuyruk worker'ına komut kanalı (clone'lanabilir sender).
+    /// `AppState::empty()`/`with_data()` worker'ı `tokio::spawn` ile başlatır.
+    pub tx: mpsc::Sender<QueueCommand>,
 }
 
 impl AppState {
-    /// Boş state + yeni SSE kanalı.
+    /// Boş state + yeni SSE kanalı. Kuyruk worker'ı da burada `tokio::spawn`
+    /// ile başlatılır (runtime içinde çağrılmalı — handler/test bağlamı).
     pub fn empty() -> Self {
-        Self {
+        let (tx, rx) = mpsc::channel(1024);
+        let state = Self {
             data: Arc::new(RwLock::new(StateData::empty())),
             events: sse::channel(),
             bridge: None,
             static_root: None,
             catalog: None,
             shutdown: Arc::new(Notify::new()),
-        }
+            tx,
+        };
+        tokio::spawn(crate::api::queue_worker(rx, state.clone()));
+        state
     }
 
-    /// Kanalı paylaşırken (test) verilen sender ile kurar.
+    /// Kanalı paylaşırken (test) verilen sender ile kurar. Worker yine burada spawn edilir.
     pub fn with_data(data: StateData, events: Sender<String>) -> Self {
-        Self {
+        let (tx, rx) = mpsc::channel(1024);
+        let state = Self {
             data: Arc::new(RwLock::new(data)),
             events,
             bridge: None,
             static_root: None,
             catalog: None,
             shutdown: Arc::new(Notify::new()),
-        }
+            tx,
+        };
+        tokio::spawn(crate::api::queue_worker(rx, state.clone()));
+        state
     }
 
     /// bridge yoksa sahte `BridgeError::Spawn` döndürür (handler'lar placeholder
