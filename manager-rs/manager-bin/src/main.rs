@@ -284,6 +284,7 @@ async fn run(paths: paths::RgsxPaths) {
         .max_simultaneous_downloads
         .max(1) as usize;
     data.download_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_dl));
+    data.max_simultaneous_downloads = max_dl;
 
     let events = manager_http::sse::channel();
     // TASK-002-gap-1 (BELİRSİZ-2): global shutdown sinyali — retry döngülerinin

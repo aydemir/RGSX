@@ -85,6 +85,13 @@ let toastSeq = 0
 function pushToast(msg, type = 'info') {
   const id = ++toastSeq
   toasts.value.push({ id, msg, type })
+  // Çok sayıda bildirim ekranı doldurmasın: en fazla görünür N toast kalsın
+  // (en eski olanlar düşürülür). Toplu "Tümünü indir"de yüzlerce bildirim
+  // aynı anda basılınca sel oluşmasını engeller.
+  const MAX_VISIBLE = 4
+  if (toasts.value.length > MAX_VISIBLE) {
+    toasts.value = toasts.value.slice(-MAX_VISIBLE)
+  }
   setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id) }, 4000)
 }
 
@@ -432,6 +439,10 @@ const queueItems = computed(() => snapshot.queue || [])
 function queuePct(item) {
   const p = progress[item.url]
   if (!p) return null
+  // Yalnızca aktif indirme durumlarında bar render et — kuyruktaki (Queued)
+  // öğelerin boş bar'ı "indiriliyor" illüzyonu üretmesin (backend "Queued" döner).
+  const st = p.status
+  if (!['Downloading', 'Extracting', 'Connecting', 'Verifying', 'Seeding'].includes(st)) return null
   if (typeof p.progress === 'number') return p.progress
   if (p.total && p.downloaded) return Math.round((p.downloaded / p.total) * 100)
   return null

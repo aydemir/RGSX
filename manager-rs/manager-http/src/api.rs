@@ -11,11 +11,11 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
-use axum::body::to_bytes;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
@@ -580,10 +580,27 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
             tokio::spawn(async move {
                 // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
                 // Semaphore izni task sonuna kadar tutulur → concurrency kontrolü.
+                // `queue_clear` (stop-all) semaphore'u kapatınca acquire Err → görev çıkar.
                 let _dl_permit = {
                     let sem = state2.read().download_semaphore.clone();
-                    sem.acquire_owned().await.unwrap()
+                    match sem.acquire_owned().await {
+                        Ok(p) => p,
+                        Err(_) => {
+                            let mut d = state2.write();
+                            d.retry_in_flight.remove(&u);
+                            d.cancel_signals.remove(&u);
+                            d.pause_signals.remove(&u);
+                            return;
+                        }
+                    }
                 };
+                if state2.read().aborting.load(Ordering::SeqCst) {
+                    let mut d = state2.write();
+                    d.retry_in_flight.remove(&u);
+                    d.cancel_signals.remove(&u);
+                    d.pause_signals.remove(&u);
+                    return;
+                }
                 let mut current_task_id = t.clone();
                 let current_url = u.clone();
                 let mut aborted: Option<String> = None;
@@ -743,7 +760,12 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
         return json_err("Paramètre 'platform' manquant", StatusCode::BAD_REQUEST);
     }
 
-    // Dedupe: aktif kuyruk (retry_in_flight) ve kurulu oyunlar (snapshot.downloaded).
+    // Yeni batch = kullanıcı indirme niyeti → önceki "stop all" bayrağını temizle
+    // (taze indirmeler hemen başlasın). `pending_set` temizliği consumer'ı
+    // durdurur; burada sadece genel aborting'i sıfırlarız.
+    state.write().aborting.store(false, Ordering::SeqCst);
+
+    // Dedupe anlık görüntüsü: aktif kuyruk (retry_in_flight) + kurulu oyunlar.
     let active: HashSet<String> = state.read().retry_in_flight.clone();
     let downloaded: HashSet<String> = state
         .read()
@@ -759,13 +781,17 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
     let mut errors: Vec<String> = Vec::new();
     let mut results: Vec<Value> = Vec::new();
 
+    // Handler YALNIZCA katalog çözümü + dedupe + sayım yapar ve geçerli öğeleri
+    // `pending_set`'e ekler (O(1) dönüş). Gerçek indirme spawn'ı arka plan
+    // `download_consumer` döngüsünde yapılır — böylece "Download All" binlerce
+    // oyunu handler'ı bloke etmeden kuyruğa düşürür ve "Durdur" anında
+    // `pending_set` temizlenince consumer durur.
     for n in names {
         let name = n.as_str().unwrap_or("").to_string();
         if name.is_empty() {
             skipped += 1;
             continue;
         }
-        // URL çözümü (katalog).
         let url = state.catalog.as_ref().and_then(|c| c.game_url(&platform, &name));
         let Some(url) = url else {
             skipped += 1;
@@ -773,7 +799,6 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
             results.push(json!({ "ok": false, "game_name": name, "error": "not_found" }));
             continue;
         };
-        // Dedupe.
         if active.contains(&url) {
             skipped += 1;
             results.push(json!({ "ok": false, "game_name": name, "error": "already_queued" }));
@@ -785,35 +810,21 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
             results.push(json!({ "ok": false, "game_name": name, "error": "already_downloaded" }));
             continue;
         }
-        // Tekil indirme akışını başlat (semaphore içeride edinilir).
-        let single = json!({
-            "url": url,
-            "platform": platform,
-            "game_name": name,
-            "mode": "queue",
-        });
-        let resp = download(State(state.clone()), Json(single)).await;
-        let bytes = match to_bytes(resp.into_body(), usize::MAX).await {
-            Ok(b) => b,
-            Err(_) => {
-                errors.push(format!("Erreur IO: {name}"));
-                results.push(json!({ "ok": false, "game_name": name, "error": "io" }));
-                continue;
-            }
-        };
-        let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        let ok = v.get("queued").and_then(|x| x.as_bool()).unwrap_or(false);
-        if ok {
-            queued += 1;
-        } else {
-            skipped += 1;
-            errors.push(format!("Échec file d'attente: {name}"));
+        {
+            let mut d = state.write();
+            d.pending_set.push_back((platform.clone(), name.clone(), url));
         }
-        results.push(json!({
-            "ok": ok,
-            "game_name": name,
-            "task_id": v.get("task_id").cloned().unwrap_or(Value::Null),
-        }));
+        queued += 1;
+        results.push(json!({ "ok": true, "game_name": name }));
+    }
+
+    // Arka plan consumer'ı ilk kez başlat ve uyar.
+    if queued > 0 {
+        if !state.read().consumer_started.swap(true, Ordering::SeqCst) {
+            let s = state.clone();
+            tokio::spawn(async move { download_consumer(s).await; });
+        }
+        state.read().pending_notify.notify_one();
     }
 
     ok(contract::ok(json!({
@@ -824,6 +835,43 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
         "errors": errors,
         "results": results,
     })))
+}
+
+/// Arka plan "Download All" tüketicisi — `pending_set`'i FIFO boşaltır.
+///
+/// Handler (`download_batch`) yalnızca öğeleri `pending_set`'e ekler; bu tek
+/// döngü her öğe için tekil `download()` akışını başlatır (semaphore izni
+/// `download` içinde edinilir, eşzamanlı indirme `max_simultaneous_downloads`
+/// ile sınırlı). `queue_clear` (stop all) `pending_set`'i temizlediğinde bu
+/// döngü boş seti bulup `pending_notify` üzerinde bekler; yeni batch uyarır.
+async fn download_consumer(state: AppState) {
+    loop {
+        let item = {
+            let mut d = state.write();
+            d.pending_set.pop_front()
+        };
+        match item {
+            Some((platform, name, url)) => {
+                let single = json!({
+                    "url": url,
+                    "platform": platform,
+                    "game_name": name,
+                    "mode": "queue",
+                });
+                // `download()` arka plan task spawn eder ve hızlı döner; gerçek
+                // indirme semaphore'da bekler. Yanıt önemli değil.
+                let _ = download(State(state.clone()), Json(single)).await;
+            }
+            None => {
+                // Boş → yeni batch (veya shutdown) sinyalini bekle.
+                let n = state.read().pending_notify.clone();
+                tokio::select! {
+                    _ = state.shutdown.notified() => return,
+                    _ = n.notified() => continue,
+                }
+            }
+        }
+    }
 }
 
 /// POST `/api/cancel` — Faz 10c/3/4 + Gap-3: `catalog` varsa Python'a proxy;
@@ -876,24 +924,71 @@ pub async fn queue_post(State(state): State<AppState>) -> Response {
     ok(contract::ok(json!({ "queue_size": size })))
 }
 
-/// POST `/api/queue/clear` — Faz 10c/3/4: `catalog` varsa Python'a proxy, yoksa yerel.
+/// POST `/api/queue/clear` — Tüm kuyruğu temizler VE devam eden/bekleyen tüm
+/// indirmeleri iptal eder (gerçek "stop all"). `catalog` varsa Python'a proxy.
+///
+/// Mekanizma:
+/// 1. `download_semaphore.close()` → semaphore'da bekleyen (queued) görevler
+///    `acquire` Err alır ve çıkar (native_ddl_download / bridge yolu).
+/// 2. Yeni semaphore aynı kapasiteyle yeniden oluşturulur (gelecek indirmeler için).
+/// 3. Tüm `cancel_signals` + `pause_signals` tetiklenir → aktif indirmeler abort olur.
+/// 4. `aborting` bayrağı set edilir (geç klonlanan görevleri yakalamak için) ve
+///    kısa gecikmeyle (600ms) sıfırlanır.
+/// 5. Kuyruk, `pending_set` (arka plan batch tüketicisi), retry_in_flight,
+///    sinyal haritaları ve progress temizlenir. Consumer uyanır, boş seti bulup
+///    bekler → "Download All" listesi yeniden büyümez.
 pub async fn queue_clear(State(state): State<AppState>) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok(v) = c.post_json("/api/queue/clear", &Value::Null).await {
             return ok(v);
         }
     }
-    let mut data = state.write();
-    let cleared = data.queue.len();
-    data.queue.clear();
-    sse::publish(
-        &state.events,
-        "queue",
-        &json!({ "queue": data.queue, "active": data.active }),
-    );
+    let cleared = {
+        let mut data = state.write();
+        // 1+2) Bekleyen görevleri uyandır, yeni semaphore kur.
+        data.download_semaphore.close();
+        let cap = data.max_simultaneous_downloads;
+        data.download_semaphore = Arc::new(tokio::sync::Semaphore::new(cap));
+        // 3) Aktif indirmeleri iptal et.
+        for sig in data.cancel_signals.values() {
+            sig.notify_one();
+        }
+        for sig in data.pause_signals.values() {
+            sig.notify_one();
+        }
+        // 4) Geç klonlanan görevleri yakala.
+        data.aborting.store(true, Ordering::SeqCst);
+        // 5) Durum temizliği.
+        let cleared = data.queue.len();
+        data.queue.clear();
+        // 5b) Arka plan batch tüketicisinin (download_consumer) setini temizle →
+        // "Download All" listesi durur, yeniden büyümez.
+        data.pending_set.clear();
+        data.retry_in_flight.clear();
+        data.cancel_signals.clear();
+        data.pause_signals.clear();
+        data.active = false;
+        data.progress = json!({});
+        // 5c) Consumer'ı uyandır (boş seti bulup beklemeye geçer).
+        data.pending_notify.notify_one();
+        sse::publish(
+            &state.events,
+            "queue",
+            &json!({ "queue": data.queue, "active": data.active }),
+        );
+        sse::publish(&state.events, "progress", &json!(data.progress));
+        cleared
+    };
+    // aborting bayrağını kısa gecikmeyle sıfırla: bu pencerede klonlanan eski
+    // görevler iptal olsun, yeni kullanıcı indirmeleri etkilenmesin.
+    let st = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        st.write().aborting.store(false, Ordering::SeqCst);
+    });
     ok(contract::ok(json!({
         "cleared_count": cleared,
-        "message": format!("{cleared} éléments supprimés de la queue"),
+        "message": format!("{cleared} éléments supprimés — tous les téléchargements annulés"),
     })))
 }
 
@@ -947,6 +1042,7 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
                                 let mut data = state.write();
                                 data.download_semaphore =
                                     Arc::new(tokio::sync::Semaphore::new(cap));
+                                data.max_simultaneous_downloads = cap;
                             }
                             // Faz 12.6e: `roms_folder` değişmiş olabilir → kurulu oyun
                             // snapshot'ını (İndirilenler sekmesi + yeşil rozetler) tazele.
@@ -1581,7 +1677,12 @@ fn push_queued_history_entry(
 ) {
     let (history_snapshot, path) = {
         let mut data = state.write();
-    data.progress[url] = json!({ "status": "Downloading", "progress": 0 });
+    // TASK-002-gap-12: kuyruğa eklenen öğe henüz semaphore iznini edinmediyse
+    // indirme yapmıyor; progress durumu "Queued" olmalı (gerçek transfer başlayınca
+    // indirme döngüsü callback'i "Downloading"e günceller). Aksi halde N oyun
+    // semaphore'da beklerken UI hepsini "Downloading" gösterir → "5 limit çalışmıyor"
+    // yanılgısı (aktif transfer yine download_semaphore ile 5 ile sınırlı).
+    data.progress[url] = json!({ "status": status, "progress": 0 });
     data.queue.push(json!({
         "url": url,
         "platform": platform,
@@ -1771,10 +1872,28 @@ async fn native_ddl_download(
     let shutdown = c_state.shutdown.clone();
     tokio::spawn(async move {
         // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
+        // `queue_clear` (stop-all) semaphore'u kapatınca `acquire` Err döner → görev
+        // iptal edilir. Ayrıca `aborting` bayrağı geç klonlanan görevleri yakalar.
         let _dl_permit = {
             let sem = c_state.read().download_semaphore.clone();
-            sem.acquire_owned().await.unwrap()
+            match sem.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    let mut d = c_state.write();
+                    d.retry_in_flight.remove(&c_url);
+                    d.cancel_signals.remove(&c_url);
+                    d.pause_signals.remove(&c_url);
+                    return;
+                }
+            }
         };
+        if c_state.read().aborting.load(Ordering::SeqCst) {
+            let mut d = c_state.write();
+            d.retry_in_flight.remove(&c_url);
+            d.cancel_signals.remove(&c_url);
+            d.pause_signals.remove(&c_url);
+            return;
+        }
         // Gap-4 4a — bellek içi `bytes()` yerine `HttpDownloader` stream motoru
         // (`.part` yazma, Range resume, challenge/HTML/arşiv guards, cancel).
         // TASK-002-gap-1: job-level retry envelope (torrent ile ortak).
@@ -2242,6 +2361,31 @@ mod tests {
         // Tamamlanma sonrası (retry_in_flight temizlenirse) tekrar claim edilebilir.
         state.write().retry_in_flight.remove(url);
         assert!(claim_in_flight(&state, url));
+    }
+
+    #[test]
+    fn gap12_queued_progress_status_is_queued_not_downloading() {
+        let state = AppState::empty();
+        let url = "http://example.com/queued.zip";
+        // Kuyruğa eklenen öğe semaphore iznini henüz etmedi → progress "Downloading"
+        // değil "Queued" olmalı (aksi halde N oyun beklerken UI hepsini indiriliyor
+        // gösterir, "5 limit çalışmıyor" yanılgısı).
+        push_queued_history_entry(
+            &state,
+            "task-1",
+            url,
+            "Queued Game",
+            "SNES",
+            "Queued",
+            "Ajouté à la file d'attente",
+            0,
+        );
+        let prog = state.read();
+        let entry = prog.progress.get(url).expect("queued entry in progress map");
+        assert_eq!(entry["status"], "Queued");
+        assert_eq!(entry["progress"], 0);
+        // Aynı anda kuyrukta görünür.
+        assert!(prog.queue.iter().any(|q| q["url"] == url));
     }
 
     #[test]

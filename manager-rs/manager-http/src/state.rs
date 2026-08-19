@@ -4,7 +4,8 @@
 //! (`download_queue`, `download_progress`, `history`, `downloaded_games`).
 //! placeholder: gerçek persist/worker bağlantısı TASK-002c.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::Semaphore;
@@ -56,6 +57,24 @@ pub struct StateData {
     /// Faz 12.6d — eşzamanlı indirme sayısını sınırlayan semaphore. Kapasite
     /// `Settings.max_simultaneous_downloads`'tan türetilir (startup + ayar kaydı).
     pub download_semaphore: Arc<Semaphore>,
+    /// `download_semaphore` kapasitesi (stop-all sonrası yeniden oluşturmak için saklanır).
+    pub max_simultaneous_downloads: usize,
+    /// TASK-002-gap-12: "stop all" (kuyruk temizle + tüm indirmeleri iptal) bayrağı.
+    /// `queue_clear` set eder; semaphore'da bekleyen/indiren görevler bunu kontrol
+    /// edip çıkar. Kısa bir gecikmeyle (bkz. queue_clear) sıfırlanır.
+    pub aborting: AtomicBool,
+    /// Faz 12 "Download All" refactor: toplu enqueue artık handler içinde
+    /// yapılmaz. `download_batch` yalnızca geçerli öğeleri buraya `push_back`
+    /// eder (O(1) dönüş) ve tek bir arka plan `download_consumer` döngüsü bu
+    /// seti FIFO boşaltır. Kuyruk görünümü = `active` + `pending_set` (tıpkı
+    /// katalog listesinin veri üzerinde bir view olması gibi). "Durdur"
+    /// (queue_clear) `pending_set`'i temizler → consumer durur.
+    pub pending_set: VecDeque<(String, String, String)>,
+    /// `download_consumer`'u uyandırmak için notify (Arc çünkü borrow süresi
+    /// select içinde guard'dan uzun olabilir).
+    pub pending_notify: Arc<Notify>,
+    /// Arka plan consumer'ın yalnızca bir kez spawn edildiğini garanti eder.
+    pub consumer_started: AtomicBool,
     /// TASK-002-gap-29: global pause bayrağı. `true` iken native HTTP-direct
     /// indirmeleri başlamaz / devam edenler duraklatılır (Python
     /// `pause_all_downloads` parity'si). Yalnız native modda (bridge yok) kullanılır.
@@ -87,6 +106,11 @@ impl StateData {
             retry_at: HashMap::new(),
             cancel_signals: HashMap::new(),
             download_semaphore: Arc::new(Semaphore::new(5)),
+            max_simultaneous_downloads: 5,
+            aborting: AtomicBool::new(false),
+            pending_set: VecDeque::new(),
+            pending_notify: Arc::new(Notify::new()),
+            consumer_started: AtomicBool::new(false),
             global_paused: false,
             pause_resume: Arc::new(Notify::new()),
             pause_signals: HashMap::new(),

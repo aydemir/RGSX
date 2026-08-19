@@ -483,7 +483,7 @@ async fn test_queue_clear_empty() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["cleared_count"], json!(0));
-    assert_eq!(body["message"], json!("0 éléments supprimés de la queue"));
+    assert_eq!(body["message"], json!("0 éléments supprimés — tous les téléchargements annulés"));
 }
 
 #[tokio::test]
