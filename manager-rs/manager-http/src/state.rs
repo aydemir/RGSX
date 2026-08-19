@@ -22,6 +22,12 @@ use serde_json::Value;
 
 pub const SNAPSHOT_KEYS: [&str; 5] = ["history", "queue", "active", "progress", "downloaded"];
 
+/// `tasks` haritasında bellekte tutulan maksimum görev sayısı (eviction cap).
+/// Aşan en eski `Completed`/`Failed` görevler FIFO sırasından tahliye edilir;
+/// `history` ayrı `Vec` olarak korunur (bkz. `history_path`), dolayısıyla
+/// uzun süreli daemon'larda `tasks` sınırsız büyümez.
+pub const TASKS_CAP: usize = 500;
+
 /// Kuyruk worker'ına gönderilen komutlar (Faz gap-30 / F1).
 ///
 /// `download_batch` handler'ı katalog çözümü + dedupe'u yapar ve geçerli
@@ -135,6 +141,10 @@ pub struct StateData {
     /// O(1) durum sorgusu: TaskId → `TaskState` (Queued/Active/Completed/Failed).
     /// Liste render / scan `Vec` taraması yapmaz, bunu kullanır.
     pub tasks: HashMap<TaskId, TaskState>,
+    /// `tasks` eviction FIFO sırası: tamamlanan görevlerin tahliye edileceği sıra.
+    /// Yalnız `Completed`/`Failed` geçişlerinde doldurulur; in-flight görevler
+    /// (Queued/Active) buraya YAZILMAZ, böylece yanlışlıkla tahliye edilmezler.
+    pub tasks_order: VecDeque<TaskId>,
     /// O(1) "queued?" üyelik seti. `download_batch` dedupe ve UI snapshot'ı bunu
     /// kullanır (kilit altında mikrosaniyede clone edilir).
     pub queued_ids: HashSet<TaskId>,
@@ -147,10 +157,6 @@ pub struct StateData {
     pub pending_notify: Arc<Notify>,
     /// Kuyruk durum makinesi (F1: `Running`; F2'de `Paused`/`Stopped` kapısı).
     pub status: QueueStatus,
-    /// TASK-002-gap-29: global pause bayrağı. `true` iken native HTTP-direct
-    /// indirmeleri başlamaz / devam edenler duraklatılır (Python
-    /// `pause_all_downloads` parity'si). Yalnız native modda (bridge yok) kullanılır.
-    pub global_paused: bool,
     /// TASK-002-gap-29: resume sinyali — duraklatılmış indirme döngüleri bununla
     /// uyandırılır (`global_paused` false olduktan sonra `notify_all`).
     pub pause_resume: Arc<Notify>,
@@ -183,11 +189,11 @@ impl StateData {
             pending_set: VecDeque::new(),
             queued_items: HashMap::new(),
             tasks: HashMap::new(),
+            tasks_order: VecDeque::new(),
             queued_ids: HashSet::new(),
             downloaded_index: HashSet::new(),
             pending_notify: Arc::new(Notify::new()),
             status: QueueStatus::Running,
-            global_paused: false,
             pause_resume: Arc::new(Notify::new()),
             pause_signals: HashMap::new(),
         }
@@ -196,6 +202,43 @@ impl StateData {
     /// `config.download_queue` uzunluğu.
     pub fn queue_size(&self) -> usize {
         self.queue.len()
+    }
+
+    /// `tasks` haritasına durum yazar ve eviction FIFO sırasını günceller.
+    /// Yalnız `Completed`/`Failed` geçişlerinde sıraya eklenir (in-flight görevler
+    /// korunur); yazma sonrası `TASKS_CAP` altına çekmek için tahliye yapılır.
+    pub fn set_task_state(&mut self, id: TaskId, state: TaskState) {
+        let is_terminal = matches!(state, TaskState::Completed | TaskState::Failed);
+        self.tasks.insert(id.clone(), state);
+        if is_terminal && !self.tasks_order.contains(&id) {
+            self.tasks_order.push_back(id);
+        }
+        self.evict_tasks(TASKS_CAP);
+    }
+
+    /// `tasks` haritasını `TASKS_CAP` altında tutar: `tasks_order` başından
+    /// tarayarak en eski `Completed`/`Failed` görevleri tahliye eder. Baştaki
+    /// giriş in-flight (Queued/Active) ise tarama durur — aktif görev silinmez.
+    pub fn evict_tasks(&mut self, cap: usize) {
+        while self.tasks.len() > cap {
+            let front = match self.tasks_order.front() {
+                Some(f) => f.clone(),
+                None => break,
+            };
+            match self.tasks.get(&front) {
+                Some(TaskState::Completed) | Some(TaskState::Failed) => {
+                    self.tasks_order.pop_front();
+                    self.tasks.remove(&front);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// `stop all` / kuyruk temizleme: `tasks` ve eviction sırası birlikte sıfırlanır.
+    pub fn clear_tasks(&mut self) {
+        self.tasks.clear();
+        self.tasks_order.clear();
     }
 
     /// `downloaded` `Value` (platform→[name]) yapısından O(1) `downloaded_index`
@@ -257,6 +300,16 @@ pub struct AppState {
     /// Faz gap-30 / F1: kuyruk worker'ına komut kanalı (clone'lanabilir sender).
     /// `AppState::empty()`/`with_data()` worker'ı `tokio::spawn` ile başlatır.
     pub tx: mpsc::Sender<QueueCommand>,
+    /// TASK-002-gap-29: global pause bayrağı (native HTTP-direct mod). RwLock
+    /// dışında `AtomicBool` — saniyede yüzlerce kez okunsa bile zero-lock O(1)
+    /// (CPU cache invalidation sürtünmesi yok). `true` iken yeni indirme başlamaz.
+    pub global_paused: Arc<AtomicBool>,
+    /// SSE yayını için "değişti mi?" bayrağı (F6 optimization). Durum her değiştiğinde
+    /// `store(true)` yapılır; `broadcast_loop` yalnızca `true` iken serileştirip yayınlar
+    /// (idle daemon'da gereksiz JSON serialization overhead'i önlenir). 30s tam-snapshot
+    /// yayını bu bayraktan BAĞIMSIZDIR — böylece bir set atlanırsa en fazla 30s bayatlar,
+    /// kalıcı SSE uyumsuzluğu oluşmaz.
+    pub dirty: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -272,6 +325,8 @@ impl AppState {
             catalog: None,
             shutdown: Arc::new(Notify::new()),
             tx,
+            global_paused: Arc::new(AtomicBool::new(false)),
+            dirty: Arc::new(AtomicBool::new(true)),
         };
         tokio::spawn(crate::api::queue_worker(rx, state.clone()));
         tokio::spawn(crate::sse::broadcast_loop(state.clone()));
@@ -289,6 +344,8 @@ impl AppState {
             catalog: None,
             shutdown: Arc::new(Notify::new()),
             tx,
+            global_paused: Arc::new(AtomicBool::new(false)),
+            dirty: Arc::new(AtomicBool::new(true)),
         };
         tokio::spawn(crate::api::queue_worker(rx, state.clone()));
         tokio::spawn(crate::sse::broadcast_loop(state.clone()));

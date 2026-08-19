@@ -13,7 +13,7 @@ pub struct DiskUsage {
 /// `path` içeren diskin toplam/kullanılan/boş baytlarını döndürür.
 /// Bulunamazsa (0,0,0) döner.
 pub fn disk_usage(path: &Path) -> DiskUsage {
-    let mut disks = Disks::new_with_refreshed_list();
+    let disks = Disks::new_with_refreshed_list();
     let disk = disks
         .iter()
         .find(|d| path.starts_with(d.mount_point()))

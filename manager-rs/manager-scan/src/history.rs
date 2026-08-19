@@ -6,7 +6,7 @@ use std::path::Path;
 
 /// `(dosya_adı, mutlak_yol)` çiftleri — hâlâ diskte olanlar.
 pub fn match_history_local(entry: &serde_json::Value, roms_folder: &Path) -> Vec<(String, String)> {
-    let empty = serde_json::Value::Null;
+    let _empty = serde_json::Value::Null;
     let mut candidates: Vec<String> = Vec::new();
 
     if let Some(lp) = entry.get("local_path").and_then(|v| v.as_str()) {

@@ -303,6 +303,8 @@ async fn run(paths: paths::RgsxPaths) {
             catalog: catalog.clone(),
             shutdown: shutdown.clone(),
             tx,
+            global_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            dirty: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
         tokio::spawn(manager_http::api::queue_worker(rx, state.clone()));
         state

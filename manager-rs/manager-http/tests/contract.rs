@@ -787,6 +787,8 @@ fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
         catalog: None,
         shutdown: Arc::new(tokio::sync::Notify::new()),
         tx,
+        global_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        dirty: Arc::new(std::sync::atomic::AtomicBool::new(true)),
     };
     tokio::spawn(manager_http::api::queue_worker(rx, state.clone()));
     router(state)
@@ -1539,12 +1541,12 @@ async fn test_status_placeholder_when_no_source() {
     let (status, _, body) = call_get(empty_app(), "/api/settings").await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["success"].as_bool().unwrap_or(false));
-    let (status, _, body) = call_get(empty_app(), "/api/system_info").await;
+    let (status, _, _body) = call_get(empty_app(), "/api/system_info").await;
     assert_eq!(status, StatusCode::OK);
     let (status, _, body) = call_get(empty_app(), "/api/game-status").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["statuses"], json!({}));
-    let (status, _, body) = call_get(empty_app(), "/api/browse-directories?path=/nope").await;
+    let (status, _, _body) = call_get(empty_app(), "/api/browse-directories?path=/nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 

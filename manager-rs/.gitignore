@@ -1,3 +1,5 @@
 target/
 **/*.rs.bk
 *.pdb
+# Yerel runtime ayarları (test/çalışma zamanı üretir, repoya girmemeli)
+rgsx_settings.json

@@ -850,10 +850,11 @@ pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState)
                         d.tasks.insert(url.clone(), TaskState::Active);
                         d.queued_items.remove(&url)
                     };
-                    match item {
-                        Some(item) => dispatch_queued(&state, item).await,
-                        None => continue,
+                    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(item) = item {
+                        let _ = dispatch_queued(&state, item).await;
                     }
+                    continue;
                 }
                 None => break,
             }
@@ -870,6 +871,7 @@ pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState)
                     d.queued_items.insert(url.clone(), item);
                     d.tasks.insert(url.clone(), TaskState::Queued);
                     d.queued_ids.insert(url);
+                    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 Some(QueueCommand::AddBatch(items)) => {
                     let mut d = state.write();
@@ -879,6 +881,7 @@ pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState)
                         d.queued_items.insert(url.clone(), item);
                         d.tasks.insert(url.clone(), TaskState::Queued);
                         d.queued_ids.insert(url);
+                        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 // Tüm sender'lar drop → worker biter (meşru shutdown).
@@ -995,12 +998,14 @@ pub async fn queue_clear(State(state): State<AppState>) -> Response {
         data.pending_set.clear();
         data.queued_items.clear();
         data.queued_ids.clear();
-        data.tasks.clear();
+        data.clear_tasks();
         data.retry_in_flight.clear();
         data.cancel_signals.clear();
         data.pause_signals.clear();
         data.active = false;
         data.progress = json!({});
+        // SSE: kuyruk/aktif/progress sıfırlandı → yayıncıyı uyandır (idle'da noop olur).
+        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
         // 5c) Consumer'ı uyandır (boş seti bulup beklemeye geçer).
         data.pending_notify.notify_one();
         // F6: queue/progress SSE'i `broadcast_loop` (250ms) yayınlar.
@@ -1075,6 +1080,7 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
                                 d.downloaded = serde_json::json!(installed);
                                 // F3-F4: O(1) indeksi tazele (batch dedupe bunu kullanır).
                                 d.rebuild_downloaded_index();
+                                state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                             }
                             return ok(contract::ok(Value::Null));
                         }
@@ -1183,6 +1189,7 @@ pub async fn clear_history(State(state): State<AppState>) -> Response {
             .cloned()
             .collect();
         data.history = preserved.clone();
+        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
         (preserved, data.history_path.clone())
     };
     persist_history(&preserved, &path);
@@ -1336,7 +1343,7 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
     // F2 (gap-30): kuyruk durum makinesini `Paused`'a çeker → worker yeni
     // dispatch'i durdurur, gelen Add/AddBatch öğeleri `pending_set`'te buffer'lanır.
     let mut d = state.write();
-    d.global_paused = true;
+    state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
     d.status = QueueStatus::Paused;
     let paused = d.pause_signals.len();
     for sig in d.pause_signals.values() {
@@ -1370,7 +1377,7 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
     // F2 (gap-30): kuyruk durum makinesini `Running`'a çeker ve `pending_notify`
     // ile bekleyen worker'ı anında uyandırır → buffer'daki `pending_set` drene edilir.
     let mut d = state.write();
-    d.global_paused = false;
+    state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
     d.status = QueueStatus::Running;
     d.pause_resume.notify_waiters();
     d.pending_notify.notify_waiters();
@@ -1660,10 +1667,12 @@ pub async fn finalize_download_in_state(
         apply_symlink(message);
     }
     // F3-F4: görev durumu tamamlandı olarak işaretle (O(1) `get_status`).
-    data.tasks.insert(
+    // `set_task_state` eviction FIFO'sunu günceller ve `TASKS_CAP` tahliyesini tetikler.
+    data.set_task_state(
         game_url.to_string(),
         if ok { TaskState::Completed } else { TaskState::Failed },
     );
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Value::Object(prog) = &mut data.progress {
         if ok {
             prog.insert(game_url.to_string(), json!({ "status": "Download_OK", "progress": 100 }));
@@ -1742,7 +1751,9 @@ fn push_queued_history_entry(
         "max_retries": retry::DEFAULT_MAX_RETRIES,
         "retry_at": 0,
     }));
-    // F6: queue/progress/history SSE'i `broadcast_loop` (250ms) yayınlar.
+    // F6: queue/progress/history SSE'i `broadcast_loop` (250ms) yayınlar; `dirty`
+    // bayrağını set et (idle daemon'da gereksiz serialization önlenir).
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
         (data.history.clone(), data.history_path.clone())
     };
     persist_history(&history_snapshot, &path);
@@ -1933,7 +1944,7 @@ async fn native_ddl_download(
         loop {
             // TASK-002-gap-29: global pause aktifken yeni indirme başlamaz;
             // resume sinyaline kadar bekle (Python pause_all_downloads parity'si).
-            if c_state.read().global_paused {
+            if c_state.global_paused.load(std::sync::atomic::Ordering::Relaxed) {
                 let pr = c_state.read().pause_resume.clone();
                 pr.notified().await;
                 continue;
@@ -1961,6 +1972,7 @@ async fn native_ddl_download(
                     let mut data = progress_state.write();
                     data.progress[&progress_url] =
                         json!({ "status": "Downloading", "progress": pct });
+                    progress_state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                     // F6: progress SSE'i artık `broadcast_loop` (250ms batched delta) yayınlar.
                 });
             let dl_fut = downloader.download_async(&req);
@@ -2304,6 +2316,12 @@ pub async fn es_input(State(_state): State<AppState>) -> Response {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    /// `RGSX_USERDATA_FOLDER` process-global env değişkenine bağımlı testleri
+    /// serialize eder; paralel `#[test]` çalıştırmasında env yarışını (flakylik)
+    /// önler.
+    static USERDATA_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn now_timestamp_non_empty_and_formatted() {
@@ -2352,6 +2370,7 @@ mod tests {
 
     #[test]
     fn gap28_bios_redirects_dest_to_userdata() {
+        let _env_guard = USERDATA_ENV_LOCK.lock().unwrap();
         let ud = std::env::temp_dir().join("rgsx_ud_gap28");
         std::fs::create_dir_all(&ud).unwrap();
         std::env::set_var("RGSX_USERDATA_FOLDER", &ud);
@@ -2365,6 +2384,7 @@ mod tests {
 
     #[test]
     fn gap28_non_bios_keeps_roms_dest() {
+        let _env_guard = USERDATA_ENV_LOCK.lock().unwrap();
         let ud = std::env::temp_dir().join("rgsx_ud_gap28b");
         std::fs::create_dir_all(&ud).unwrap();
         std::env::set_var("RGSX_USERDATA_FOLDER", &ud);
@@ -2417,26 +2437,26 @@ mod tests {
     #[tokio::test]
     async fn gap29_global_pause_flags_and_signals() {
         let state = AppState::empty();
-        assert!(!state.read().global_paused);
+        assert!(!state.global_paused.load(std::sync::atomic::Ordering::Relaxed));
         assert!(state.read().pause_signals.is_empty());
 
         // pause handler (native): global_paused=true + her aktif indirme sinyali tetiklenir.
         let sig: std::sync::Arc<tokio::sync::Notify> = std::sync::Arc::new(tokio::sync::Notify::new());
         {
             let mut d = state.write();
-            d.global_paused = true;
+            state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
             d.pause_signals.insert("http://x/game.zip".to_string(), sig.clone());
             sig.notify_one();
         }
-        assert!(state.read().global_paused);
+        assert!(state.global_paused.load(std::sync::atomic::Ordering::Relaxed));
 
         // resume handler (native): global_paused=false + beklerenler uyandırılır.
         {
-            let mut d = state.write();
-            d.global_paused = false;
+            let d = state.write();
+            state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
             d.pause_resume.notify_waiters();
         }
-        assert!(!state.read().global_paused);
+        assert!(!state.global_paused.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[tokio::test]
@@ -2444,21 +2464,21 @@ mod tests {
         // native_ddl_download loop-top global pause kontrolünü taklit eder:
         // global_paused iken indirme başlamaz, resume sonrası devam eder.
         let state = AppState::empty();
-        state.write().global_paused = true;
+        state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
         let s = state.clone();
         let handle = tokio::spawn(async move {
             // loop başı: pause kontrolü
-            if s.read().global_paused {
+            if s.global_paused.load(std::sync::atomic::Ordering::Relaxed) {
                 let pr = s.read().pause_resume.clone();
                 pr.notified().await;
             }
-            assert!(!s.read().global_paused);
+            assert!(!s.global_paused.load(std::sync::atomic::Ordering::Relaxed));
         });
         // görev beklerken kısa süre bekle
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         {
-            let mut d = state.write();
-            d.global_paused = false;
+            let d = state.write();
+            state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
             d.pause_resume.notify_waiters();
         }
         handle.await.unwrap();

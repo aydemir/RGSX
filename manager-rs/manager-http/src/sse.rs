@@ -12,6 +12,7 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::broadcast::error::RecvError;
@@ -113,6 +114,21 @@ pub async fn broadcast_loop(state: AppState) {
     let mut last_snapshot = Instant::now();
     loop {
         ticker.tick().await;
+        // 30s tam-snapshot: `dirty` bayrağından BAĞIMSIZ (keep-alive + tam state
+        // refresh). Bir `dirty` set'i atlanırsa en fazla 30s bayatlar, kalıcı
+        // SSE uyumsuzluğu oluşmaz.
+        if last_snapshot.elapsed() >= Duration::from_secs(30) {
+            let snap = { let d = state.read(); snapshot_json(&d) };
+            publish(&state.events, "snapshot", &snap);
+            last_snapshot = Instant::now();
+            state.dirty.store(false, Ordering::Relaxed);
+            continue;
+        }
+        // Değişim yoksa serialization'ı tamamen atla (idle daemon CPU tasarrufu).
+        // Yalnızca durum değiştiğinde (`dirty == true`) serileştir + yayın yapılır.
+        if !state.dirty.load(Ordering::Relaxed) {
+            continue;
+        }
         // Okuma kilidi yalnızca serileştirme kadar tutulur (F3-F4 lock granularity).
         let (history, queue, active, progress, downloaded) = {
             let d = state.read();
@@ -140,11 +156,7 @@ pub async fn broadcast_loop(state: AppState) {
             last_downloaded = Some(downloaded.clone());
             publish(&state.events, "downloaded", &json!({ "downloaded": parse_value(&downloaded) }));
         }
-        if last_snapshot.elapsed() >= Duration::from_secs(30) {
-            last_snapshot = Instant::now();
-            let snap = { let d = state.read(); snapshot_json(&d) };
-            publish(&state.events, "snapshot", &snap);
-        }
+        state.dirty.store(false, Ordering::Relaxed);
     }
 }
 
