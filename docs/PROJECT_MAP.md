@@ -180,7 +180,7 @@ ADR dizini yok; mimari/akış/roadmap ayrı klasörlerde.
 | İndeks | `docs/README.md` | Tüm docs ağacı |
 | Mimari | `docs/architecture/{NETWORK_PACKAGE,DOWNLOAD_STATE_MACHINE,WEBUI_API,CONTROLS_PACKAGE,UTILS_PACKAGE,CONCURRENCY,DOWNLOAD_MANAGER,DISPLAY_PACKAGE}.md` | Paket/katman haritaları |
 | Akışlar | `docs/flows/{DOWNLOAD_PIPELINE,FILTER_PIPELINE,STARTUP,QBITTORRENT_PASSWORD}.md` | Uçtan uca akışlar |
-| Roadmap | `docs/roadmap/{ROADMAP,ROADMAP_DOWNLOAD_MANAGER,ROADMAP_FAZ12_RUST_WEBUI_TVUI,FAZ10C3_CONTRACT_MAP}.md` | Faz planı; Faz 10b + librqbit opt-in; Faz 13 (Rust download gap'leri) burada |
+| Roadmap | `docs/roadmap/{ROADMAP,ROADMAP_DOWNLOAD_MANAGER,ROADMAP_FAZ12_RUST_WEBUI_TVUI,FAZ12_PARITY_STRATEGY,FAZ10C3_CONTRACT_MAP}.md` | Faz planı; Faz 10b + librqbit opt-in; Faz 13 (Rust download gap'leri) burada; parity stratejisi Faz 12 kontrollü ayrılma rehberi |
 | İş akışı | `docs/PYTHON_WORKFLOW.md` | Python indirme akışı haritası (queue.py/one_fichier.py/qbittorrent_backend.py/rgsx_manager.py) — her karar noktası düğüm (W/D/T/H/F/R/P/Q/RD/M/OF/MW); Rust eşleme tablosu + eksik düğümler. `tasks/gap/*.md` ile çapraz bağıntılı |
 | Rehber | `docs/guides/{TESTING,DEVELOPMENT}.md` | Test / geliştirme kuralları |
 | Özellikler | `docs/features/FEATURES.md` | Değişiklik günlüğü (Faz 10/10b girişleri) |

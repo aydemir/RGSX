@@ -34,6 +34,15 @@ ortamlar için düşünülür; ayrı bir alt faz olarak not edilir (Faz 12b-alt)
 
 ---
 
+## 0.5 Parity stratejisi (kontrollü ayrılma)
+
+Geçiş sırasında Python'dan **ne zaman ve nasıl** bilerek ayrılacağımız:
+[`FAZ12_PARITY_STRATEGY.md`](FAZ12_PARITY_STRATEGY.md). Özet: davranış parity'si
+zorunlu, yapı parity'si serbest; ayrılma Q1/Q2/Q3 kriteriyle ve flag-gated geçişle
+yapılır, her ayrılma divergence-note ile belgelenir.
+
+---
+
 ## 1. Teknoloji yığını + bağımlılıklar
 
 ### Backend (mevcut workspace'e eklenir)
