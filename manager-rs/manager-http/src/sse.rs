@@ -20,7 +20,7 @@ use tokio::time::interval;
 
 use manager_core::contract;
 
-use crate::state::{AppState, StateData};
+use crate::state::{AppState, QueueStatus, StateData};
 
 use futures_util::StreamExt;
 use serde_json::json;
@@ -44,13 +44,24 @@ pub fn publish(sender: &Sender<String>, event_type: &str, data: &serde_json::Val
 
 /// `_build_snapshot()` (rgsx_manager.py:86-109) ile birebir snapshot yükü.
 pub fn snapshot_json(data: &StateData) -> serde_json::Value {
-    contract::snapshot(
+    let mut snap = contract::snapshot(
         &serde_json::json!(data.history),
         &serde_json::json!(data.queue),
         data.active,
         &data.progress,
         &data.downloaded,
-    )
+    );
+    // F2/gap-30: webui'nin duraklatma durumunu görmesi için `status`'u snapshot'a ekle.
+    // QueueStatus Serialize derive'ı yok → açık string'e çevir.
+    let s = match data.status {
+        QueueStatus::Running => "Running",
+        QueueStatus::Paused => "Paused",
+        QueueStatus::Stopped => "Stopped",
+    };
+    if let Some(obj) = snap.as_object_mut() {
+        obj.insert("status".into(), serde_json::json!(s));
+    }
+    snap
 }
 
 /// SSE endpoint handler: bağlantıda snapshot, sonra canlı olaylar.

@@ -307,6 +307,11 @@ async fn run(paths: paths::RgsxPaths) {
             dirty: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
         tokio::spawn(manager_http::api::queue_worker(rx, state.clone()));
+        // F6: 250ms throttled SSE (queue/history/progress/downloaded) yayını —
+        // `AppState` burada constructor (empty/with_data) yerine struct literal
+        // ile kurulduğu için broadcast_loop'u ayrıca spawn etmek gerekir;
+        // aksi halde UI canlı güncellenmez (yalnız F5/REST state görünür).
+        tokio::spawn(manager_http::sse::broadcast_loop(state.clone()));
         state
     });
 
@@ -351,7 +356,52 @@ async fn run(paths: paths::RgsxPaths) {
     if let Some(tray) = tray {
         run_with_tray(tray, port, bridge, app, listener, shutdown.clone()).await;
     } else {
-        axum::serve(listener, app).await.unwrap();
+        // Linux (tray yok): SIGTERM/SIGINT (Ctrl+C) VEYA AppState.shutdown
+        // (POST /api/shutdown) → graceful shutdown + bridge/session temizliği.
+        // Önceden `axum::serve(...).await` idi; sinyal yoktu → process "ölümsüz"
+        // kalıyordu (kill -9 gerekliydi).
+        axum::serve(listener, app)
+            .with_graceful_shutdown(graceful_shutdown_signal(shutdown.clone(), bridge.clone()))
+            .await
+            .unwrap();
+    }
+}
+
+/// Ortak graceful shutdown koordinatörü: OS sinyali (SIGTERM/SIGINT/Ctrl+C) VEYA
+/// `AppState.shutdown` Notify'i tetiklenince tüm download/retry waiter'larını
+/// uyandırır (notify_waiters) ve bridge/session + subprocess temizliğini yapar.
+///
+/// Hem tray'lı (Windows) hem traysız (Linux) yolda `axum::serve().with_graceful_shutdown`
+/// için kullanılır; tek noktadan kapanış guarantee'si sağlar.
+async fn graceful_shutdown_signal(
+    shutdown: Arc<Notify>,
+    bridge: Option<Arc<dyn TorrentBackend>>,
+) {
+    // OS sinyali VEYA AppState.shutdown Notify'i → kapanışı tetikle.
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM dinlenemedi");
+        let mut sigint = signal(SignalKind::interrupt()).expect("SIGINT dinlenemedi");
+        tokio::select! {
+            _ = sigterm.recv() => {}
+            _ = sigint.recv() => {}
+            _ = shutdown.notified() => {}
+        }
+    }
+    #[cfg(windows)]
+    {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = shutdown.notified() => {}
+        }
+    }
+    // Çoklu download/retry waiter'ı + (yeniden) axum graceful shutdown waiter'ı
+    // uyansın. `notify_one` yalnız BİR waiter'ı uyandırırdı → yapışkan process.
+    shutdown.notify_waiters();
+    // Bridge session (librqbit session.stop) + Python subprocess kill.
+    if let Some(b) = bridge {
+        let _ = b.call("shutdown", serde_json::json!({})).await;
     }
 }
 
@@ -365,10 +415,13 @@ async fn run_with_tray(
     shutdown: Arc<Notify>,
 ) {
     let base = format!("http://localhost:{port}");
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    // Tray task'ı `bridge`'i move eder; graceful_shutdown_signal için ayrı clone.
+    let bridge_for_tray = bridge.clone();
 
     // Tray eylemlerini izleyen task; Quit gelince shutdown sinyali verir.
-    // `shutdown_notify` = AppState.shutdown ile AYNI Arc (retry döngülerini keser).
+    // `shutdown_notify` = AppState.shutdown ile AYNI Arc (retry döngülerini keser
+    // ve `graceful_shutdown_signal`'ı uyandırır). Bridge temizliği tek noktadan
+    // `graceful_shutdown_signal` içinde yapılır (çift çağrı önlenir).
     let shutdown_notify = shutdown.clone();
     let tray_task = tokio::spawn(async move {
         loop {
@@ -381,7 +434,7 @@ async fn run_with_tray(
                         TrayAction::OpenDownloads | TrayAction::OpenLogs => {
                             // Klasör yolunu bridge'den al; yoksa uyarı düş.
                             let is_downloads = action == TrayAction::OpenDownloads;
-                            let bridge = bridge.as_ref();
+                            let bridge = bridge_for_tray.as_ref();
                             let paths = match bridge {
                                 Some(b) => b.get_app_paths().await.ok(),
                                 None => None,
@@ -400,11 +453,11 @@ async fn run_with_tray(
                             }
                         }
                         TrayAction::Quit => {
-                            tracing::info!("tray Exit — kapanıyor");
-                            // İki bağımsız sinyal: `shutdown_tx` axum'ın graceful
-                            // shutdown'ı; `shutdown_notify` aktif retry döngülerini keser.
-                            shutdown_notify.notify_one();
-                            let _ = shutdown_tx.send(());
+                            tracing::info!("tray Exit — graceful shutdown");
+                            // Tüm waiter'lar (retry döngüleri + axum graceful
+                            // shutdown) uyanır; bridge/session temizliği
+                            // `graceful_shutdown_signal` içinde yapılır.
+                            shutdown_notify.notify_waiters();
                             break;
                         }
                     }
@@ -416,11 +469,9 @@ async fn run_with_tray(
         }
     });
 
-    // Sunucuyu çalıştır; tray Quit → graceful shutdown.
+    // Sunucuyu çalıştır; tray Quit (notify_waiters) VEYA OS sinyali → graceful shutdown.
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = shutdown_rx.await;
-        })
+        .with_graceful_shutdown(graceful_shutdown_signal(shutdown.clone(), bridge.clone()))
         .await
         .unwrap();
 

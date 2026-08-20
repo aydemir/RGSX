@@ -712,6 +712,9 @@
   "cancel": "Cancel",
   "settings": "Settings",
   "confirm_download_all_title": "Batch download",
+  "queue_paused": "⏸ Queue paused",
+  "paused_state": "Paused",
+  "download_all_paused_warn": "The queue is paused — if you confirm, games are queued but will not download until you resume.",
   "saved": "Settings saved",
   "ui_language": "UI Language"
 }

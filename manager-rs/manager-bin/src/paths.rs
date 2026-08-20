@@ -24,6 +24,7 @@ pub struct RgsxPaths {
     pub downloads_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub manager_script: PathBuf,
+    pub roms_folder: PathBuf,
 }
 
 /// `current_exe()`'den yukarı çıkarak `roms/ports/RGSX` imzasını arar.
@@ -126,6 +127,10 @@ pub fn resolve_paths() -> RgsxPaths {
     let downloads_dir = env_or(&data_dir.join("downloads"), "RGSX_DOWNLOADS_FOLDER");
     let logs_dir = env_or(&data_dir.join("logs"), "RGSX_LOGS_FOLDER");
     let manager_script = env_or(&rgsx_dir.join("qbittorrent_backend.py"), "RGSX_MANAGER_SCRIPT");
+    // gap-29: indirme hedefi ROM klasörü. `effective_roms_folder()` (api.rs) yalnızca
+    // env/settings'a bakıyordu → set EDİLMEZSE dosyalar `downloads/` staging'e düşüyordu.
+    // Burada `root/roms`'u türetip uyguluyoruz (gap-26 parity: env varsa öncelikli).
+    let roms_folder = env_or(&root.join("roms"), "RGSX_ROMS_FOLDER");
 
     // Downstream crates (catalog/settings/api) bu env'leri okur → geri yaz.
     apply("RGSX_WEBUI_DIR", &webui_dir);
@@ -134,6 +139,7 @@ pub fn resolve_paths() -> RgsxPaths {
     apply("RGSX_DOWNLOADS_FOLDER", &downloads_dir);
     apply("RGSX_LOGS_FOLDER", &logs_dir);
     apply("RGSX_MANAGER_SCRIPT", &manager_script);
+    apply("RGSX_ROMS_FOLDER", &roms_folder);
 
     RgsxPaths {
         root,
@@ -144,5 +150,6 @@ pub fn resolve_paths() -> RgsxPaths {
         downloads_dir,
         logs_dir,
         manager_script,
+        roms_folder,
     }
 }

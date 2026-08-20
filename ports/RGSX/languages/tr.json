@@ -708,6 +708,9 @@
   "cancel": "İptal",
   "settings": "Ayarlar",
   "confirm_download_all_title": "Toplu indirme",
+  "queue_paused": "⏸ Kuyruk duraklatıldı",
+  "paused_state": "Duraklatıldı",
+  "download_all_paused_warn": "Kuyruk duraklatılmış — onaylarsanız oyunlar kuyruğa eklenir ama duraklatma kalkana kadar indirilmez.",
   "saved": "Ayarlar kaydedildi",
   "ui_language": "Arayüz Dili"
 }

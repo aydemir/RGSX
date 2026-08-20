@@ -15,7 +15,7 @@ use std::sync::mpsc::TryRecvError;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, MSG};
+use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, PostQuitMessage, MSG};
 
 use crate::autostart;
 
@@ -159,7 +159,15 @@ fn drain_menu_events(tx: &mpsc::Sender<TrayAction>, autostart_item: Option<&Chec
             }
             ID_DOWNLOADS => { let _ = tx.send(TrayAction::OpenDownloads); }
             ID_LOGS => { let _ = tx.send(TrayAction::OpenLogs); }
-            ID_QUIT => { let _ = tx.send(TrayAction::Quit); }
+            ID_QUIT => {
+                let _ = tx.send(TrayAction::Quit);
+                // Tray thread'i `GetMessageW` pump döngüsünde; Quit'te `WM_QUIT`
+                // post etmezsek thread (ve dolayısıyla process) ölü kalır —
+                // "systray Exit kapatmıyor" sorununun Windows kök nedeni.
+                // `drain_menu_events` zaten bu thread'de çalıştığı için doğrudan
+                // `PostQuitMessage` güvenlidir.
+                unsafe { PostQuitMessage(0); }
+            }
             _ => {}
         }
     }

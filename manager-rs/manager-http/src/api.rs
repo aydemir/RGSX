@@ -546,12 +546,10 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         let dest_path = match body.get("dest_path").and_then(Value::as_str) {
             Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
             _ => {
-                let roms_dest = match effective_roms_folder() {
-                    Some(rf) => rf
-                        .join(platform_folder_for(&platform))
-                        .join(sanitize_file_name(&gname)),
-                    None => dest_path_for(&downloads, &game_url, &gname),
-                };
+        let roms_dest = match effective_roms_folder() {
+            Some(rf) => rom_dest_for(&rf, &platform, &gname, &game_url),
+            None => dest_path_for(&downloads, &game_url, &gname),
+        };
                 // gap-28: BIOS benzeri platformlar USERDATA_FOLDER'a yönlenir.
                 redirect_bios_dest(roms_dest, &platform, &gname)
             }
@@ -889,6 +887,12 @@ pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState)
             },
             // Paused→Running geçişinde `pending_notify.notify_waiters()` ile çalar.
             _ = resume.notified() => {}
+            // gap-30: missed-wakeup koruması. `notify_waiters()` bekleyen yokken
+            // çağrılırsa notify KAYBOLUR → worker sonsuza dek park kalır (status
+            // Running olmasına rağmen indirme durur, "devam etmiyor"). Periyodik
+            // timeout ile döngü tepesine dönülür; `while status==Running` yeniden
+            // dispatch eder. Paused iken 1sn'de bir uyanıp yeniden park (önemsiz).
+            _ = tokio::time::sleep(Duration::from_millis(1000)) => {}
         }
     }
 }
@@ -1329,14 +1333,30 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
     }
     let task_id = body.as_ref().and_then(|b| b.get("task_id")).and_then(Value::as_str);
     if let Some(bridge) = &state.bridge {
-        let paused = match task_id {
-            Some(id) => match bridge.pause_torrent(id).await {
-                Ok(()) => 1,
-                Err(_) => 0,
-            },
-            None => bridge.pause_all().await.unwrap_or(0),
-        };
-        return ok(contract::ok(json!({ "paused": paused })));
+        match task_id {
+            Some(id) => {
+                let paused = match bridge.pause_torrent(id).await {
+                    Ok(()) => 1,
+                    Err(_) => 0,
+                };
+                return ok(contract::ok(json!({ "paused": paused })));
+            }
+            None => {
+                // "Pause All": aktif torrentleri duraklat (pause_active) VE kuyruk
+                // worker'ını dondur. Aksi halde `status` Running kalır, worker
+                // `pending_set`'teki bekleyen öğeleri başlatmaya devam eder →
+                // "Pause All" kuyruğu gerçekten durdurmaz (native yol parity'si).
+                let paused = bridge.pause_all().await.unwrap_or(0);
+                let mut d = state.write();
+                state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+                d.status = QueueStatus::Paused;
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                for sig in d.pause_signals.values() {
+                    sig.notify_one();
+                }
+                return ok(contract::ok(json!({ "paused": paused })));
+            }
+        }
     }
     // TASK-002-gap-29: native modda global pause — devam eden HTTP-direct
     // indirmeleri abort eder (pause_signals) ve yeni başlatmaları engeller.
@@ -1345,6 +1365,7 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
     let mut d = state.write();
     state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
     d.status = QueueStatus::Paused;
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     let paused = d.pause_signals.len();
     for sig in d.pause_signals.values() {
         sig.notify_one();
@@ -1363,14 +1384,28 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
     }
     let task_id = body.as_ref().and_then(|b| b.get("task_id")).and_then(Value::as_str);
     if let Some(bridge) = &state.bridge {
-        let resumed = match task_id {
-            Some(id) => match bridge.resume_torrent(id).await {
-                Ok(()) => 1,
-                Err(_) => 0,
-            },
-            None => bridge.resume_all().await.unwrap_or(0),
-        };
-        return ok(contract::ok(json!({ "resumed": resumed })));
+        match task_id {
+            Some(id) => {
+                let resumed = match bridge.resume_torrent(id).await {
+                    Ok(()) => 1,
+                    Err(_) => 0,
+                };
+                return ok(contract::ok(json!({ "resumed": resumed })));
+            }
+            None => {
+                // "Resume All": torrentleri sürdür (resume_active) VE kuyruk
+                // worker'ını yeniden çalıştır. `status=Running` + `pending_notify`
+                // ile bekleyen worker uyanır, `pending_set` drene edilir.
+                let resumed = bridge.resume_all().await.unwrap_or(0);
+                let mut d = state.write();
+                state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+                d.status = QueueStatus::Running;
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                d.pause_resume.notify_waiters();
+                d.pending_notify.notify_waiters();
+                return ok(contract::ok(json!({ "resumed": resumed })));
+            }
+        }
     }
     // TASK-002-gap-29: native modda global resume — duraklatılmış indirme
     // döngülerini uyandırır (pause_resume.notify_all).
@@ -1379,6 +1414,7 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
     let mut d = state.write();
     state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
     d.status = QueueStatus::Running;
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     d.pause_resume.notify_waiters();
     d.pending_notify.notify_waiters();
     ok(contract::ok(json!({ "resumed": 0 })))
@@ -1861,9 +1897,7 @@ async fn native_ddl_download(
     // Aksi halde geriye uyumlu `downloads_dir` kullanılır.
     let dest = {
         let roms_dest = match effective_roms_folder() {
-            Some(rf) => rf
-                .join(platform_folder_for(&platform))
-                .join(sanitize_file_name(&game_name)),
+            Some(rf) => rom_dest_for(&rf, &platform, &game_name, &game_url),
             None => dest_path_for(&downloads, &game_url, &game_name),
         };
         // gap-28: BIOS benzeri platformlar USERDATA_FOLDER'a yönlenir.
@@ -1946,7 +1980,12 @@ async fn native_ddl_download(
             // resume sinyaline kadar bekle (Python pause_all_downloads parity'si).
             if c_state.global_paused.load(std::sync::atomic::Ordering::Relaxed) {
                 let pr = c_state.read().pause_resume.clone();
-                pr.notified().await;
+                // gap-30: missed-wakeup koruması. `notify_waiters()` bekleyen yokken
+                // çağrılırsa notify KAYBOLUR → indirme sonsuza dek park kalır
+                // (resume sonrası devam etmez, "indirme durdu" gözükür). 1s timeout
+                // ile `global_paused` tekrar kontrol edilir; kaçırılan sinyal telafi
+                // edilir, resume en geç 1s'de etkisini gösterir.
+                let _ = tokio::time::timeout(Duration::from_millis(1000), pr.notified()).await;
                 continue;
             }
             let progress_state = c_state.clone();
@@ -2013,10 +2052,15 @@ async fn native_ddl_download(
                     break;
                 }
                 Err(e) => {
-                    // TASK-002-gap-29: global pause abort'u → retry akışına gir
-                    // (loop başı global_paused kontrolü resume'a kadar bekletir).
+                    // TASK-002-gap-29: global pause abort'u → loop başına dön;
+                    // `global_paused` kontrolü resume'a kadar bekler. ÖNEMLİ:
+                    // `current_task_id` DEĞİŞTİRİLMEZ. Queue/history satırı
+                    // enqueue anındaki `task_id` ile etiketlenir; `finalize`
+                    // (1686) o `task_id` ile eşleştirip öğeyi kuyruktan siler.
+                    // Burada yeni `task_id` üretilirse eşleşme bozulur ve
+                    // tamamlanan öğe kuyruktan silinmez → "kuyruk donuyor
+                    // ama indirilenler artıyor" hatası (gap-31).
                     if paused_now {
-                        current_task_id = web_task_id();
                         continue;
                     }
                     let cls = classify_download_error(&e);
@@ -2109,6 +2153,31 @@ pub fn dest_path_for(downloads_folder: &str, url: &str, game_name: &str) -> std:
         .map(|s| s.to_string().replace("%20", " "))
         .unwrap_or(fallback);
     base.join(from_url)
+}
+
+/// `effective_roms_folder()` set edildiğinde indirme hedefi `ROMS/<platform>/<oyun>`
+/// altına düşer. `game_name` çoğu zaman uzantısızdır; burada kaynak URL'in uzantısı
+/// (.zip/.rar/.adf vb.) korunur ki RetroBat/ES dosyayı tanısın. Aksi halde
+/// `RGSX_ROMS_FOLDER` set iken `dest_path_for`'un eklediği uzantı kaybolurdu (regresyon).
+fn rom_dest_for(
+    roms_folder: &std::path::Path,
+    platform: &str,
+    game_name: &str,
+    url: &str,
+) -> std::path::PathBuf {
+    let sanitized = sanitize_file_name(game_name);
+    let mut name = sanitized.clone();
+    if std::path::Path::new(&sanitized).extension().is_none() {
+        if let Some(seg) = url.split('/').filter(|s| !s.is_empty()).next_back() {
+            if let Some(ext) = std::path::Path::new(seg).extension() {
+                let ext = ext.to_string_lossy();
+                if !ext.is_empty() {
+                    name = format!("{}.{}", sanitized, ext);
+                }
+            }
+        }
+    }
+    roms_folder.join(platform_folder_for(platform)).join(name)
 }
 
 /// Faz 12.6e — indirme tamamlandığında, `settings.symlink` etkinse nihai dosyayı

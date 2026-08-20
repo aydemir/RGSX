@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { connectSSE, apiGet, apiPost } from './api.js'
 import { t as _t, getLocale, setLocale, applyLocale, hasExplicitLocale, STRINGS } from './i18n.js'
 import Support from './components/Support.vue'
@@ -7,8 +7,9 @@ import BrowseDirectories from './components/BrowseDirectories.vue'
 
 const connected = ref(false)
 const lastEvent = ref('')
-const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {} })
+const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {}, status: 'Running' })
 const progress = reactive({})
+const isPaused = computed(() => snapshot.status === 'Paused')
 
 const tt = (k, vars) => {
   let s = (STRINGS[locale.value] && STRINGS[locale.value][k]) || (STRINGS.en && STRINGS.en[k]) || STRINGS.tr[k] || k
@@ -129,6 +130,7 @@ function applySnapshot(data) {
   if (typeof data.active === 'boolean') snapshot.active = data.active
   if (data.progress) Object.assign(progress, data.progress)
   if (data.downloaded) snapshot.downloaded = data.downloaded
+  if (data.status) snapshot.status = data.status
   lastEvent.value = 'snapshot'
 }
 onMounted(async () => {
@@ -425,7 +427,8 @@ async function downloadGame(g, mode) {
 async function downloadAll() {
   const names = filteredGames.value.map((g) => g.name)
   if (!names.length) return
-  openConfirm(tt('confirm_download_all_title'), tt('confirm_download_all_msg', { platform: selectedPlatform.value, n: names.length }), async () => {
+  const msg = tt('confirm_download_all_msg', { platform: selectedPlatform.value, n: names.length }) + (isPaused.value ? '\n\n' + tt('download_all_paused_warn') : '')
+  openConfirm(tt('confirm_download_all_title'), msg, async () => {
     try {
       const r = await apiPost('/api/download/batch', { platform: selectedPlatform.value, game_names: names })
       if (r && r.success) pushToast(tt('download_queued', { n: r.queued || names.length }), 'success')
@@ -436,6 +439,29 @@ async function downloadAll() {
 
 // ===================== Queue / Progress =====================
 const queueItems = computed(() => snapshot.queue || [])
+
+// --- Queue virtualization (P0): bağımlılıksız windowing ---
+// Backend O(1)/buffer modelini taşıdı; DOM hâlâ N satır çiziyordu. Queue sekmesi
+// yüzlerce–binlerce öğe alabildiğinden (Download All) düz `v-for` kasılma yaratır.
+// Sabit satır yüksekliğiyle `offset/limit` penceresi: yalnız görünür dilim DOM'a basılır
+// (N=1000'de ~20-40 satır). SSE `queue` olayı `snapshot.queue`'yu değiştirir; `windowedQueue`
+// computed olduğu için yalnız görünür slice yeniden çizilir.
+const ROW = 70
+const OVERSCAN = 8
+const queueScrollTop = ref(0)
+const queueViewportH = ref(560)
+const queueWin = ref(null)
+function onQueueScroll(e) {
+  queueScrollTop.value = e.target.scrollTop
+  if (e.target.clientHeight) queueViewportH.value = e.target.clientHeight
+}
+const windowedQueue = computed(() => {
+  const all = queueItems.value
+  const start = Math.max(0, Math.floor(queueScrollTop.value / ROW) - OVERSCAN)
+  const visible = Math.ceil(queueViewportH.value / ROW) + OVERSCAN * 2
+  const end = Math.min(all.length, start + visible)
+  return { start, end, slice: all.slice(start, end), totalH: all.length * ROW }
+})
 function queuePct(item) {
   const p = progress[item.url]
   if (!p) return null
@@ -458,16 +484,49 @@ async function removeFromQueue(taskId) {
 async function clearQueue() {
   openConfirm(tt('confirm_clear_queue_title'), tt('confirm_clear_queue_msg'), async () => {
     try { await apiPost('/api/queue/clear', {}) } catch (e) {}
+    queueScrollTop.value = 0
   })
 }
 async function cancelDownload(item) {
   try { await apiPost('/api/cancel', item.task_id ? { task_id: item.task_id } : { url: item.url }) } catch (e) {}
 }
-async function pauseAll() { try { await apiPost('/api/pause', {}) } catch (e) {} }
-async function resumeAll() { try { await apiPost('/api/resume', {}) } catch (e) {} }
+async function pauseAll() { try { await apiPost('/api/pause', {}); snapshot.status = 'Paused' } catch (e) {} }
+async function resumeAll() { try { await apiPost('/api/resume', {}); snapshot.status = 'Running' } catch (e) {} }
 
 // ===================== History =====================
 const historyItems = computed(() => snapshot.history || [])
+
+// --- History virtualization (P1): bağımlılıksız windowing ---
+// SSE her `history` event'inde tüm diziyi `snapshot.history = list` ile replace eder;
+// uzun oturumda N büyür → Queue'dan sonra en çok kazanç burada. Satır yüksekliği
+// opsiyonel `message` satırı nedeniyle değişken; HISTORY_ROW_H'i varsayılan (tek satırlı)
+// yüksekliğe göre abartılı tuttuk (taşma yerine alt boşluk tercih edilir).
+const HISTORY_ROW_H = 88
+const HISTORY_OVERSCAN = 8
+const historyScrollTop = ref(0)
+const historyViewportH = ref(560)
+const historyWin = ref(null)
+function onHistoryScroll(e) {
+  historyScrollTop.value = e.target.scrollTop
+  if (e.target.clientHeight) historyViewportH.value = e.target.clientHeight
+}
+const windowedHistory = computed(() => {
+  const all = historyItems.value
+  const start = Math.max(0, Math.floor(historyScrollTop.value / HISTORY_ROW_H) - HISTORY_OVERSCAN)
+  const visible = Math.ceil(historyViewportH.value / HISTORY_ROW_H) + HISTORY_OVERSCAN * 2
+  const end = Math.min(all.length, start + visible)
+  return { start, end, slice: all.slice(start, end), totalH: all.length * HISTORY_ROW_H }
+})
+
+// max-height artık sabit CSS'te (60vh); kutu içeriğe göre küçülmez, feedback loop yok.
+// Sekme açılınca/resize'da gerçek viewport yüksekliğini bir kez ölç (scroll loop'u değil).
+function measureViewports() {
+  if (tab.value === 'queue' && queueWin.value) queueViewportH.value = queueWin.value.clientHeight
+  if (tab.value === 'history' && historyWin.value) historyViewportH.value = historyWin.value.clientHeight
+}
+watch(tab, async () => { await nextTick(); measureViewports() })
+onMounted(() => window.addEventListener('resize', measureViewports))
+onUnmounted(() => window.removeEventListener('resize', measureViewports))
 
 // Rust backend durum dizgeleri (büyük/küçük harf + entity_state) -> rozet eşlemesi.
 // Eski Python tasarımının renkleri birebir korunur (app.js 1966-1989):
@@ -512,6 +571,7 @@ function queueStatus(item) {
 async function clearHistory() {
   openConfirm(tt('confirm_clear_history_title'), tt('confirm_clear_history_msg'), async () => {
     try { await apiPost('/api/clear-history', {}) } catch (e) {}
+    historyScrollTop.value = 0
   })
 }
 
@@ -741,27 +801,34 @@ async function switchTab(t) {
     <section v-if="tab === 'queue'" class="panel">
       <h2>{{ tt('tab_queue') }} <small>({{ queueItems.length }})</small>
         <span class="qacts">
-          <button @click="pauseAll">{{ tt('pause_all') }}</button>
-          <button @click="resumeAll">{{ tt('resume_all') }}</button>
+          <button :class="{ 'is-paused': isPaused }" :disabled="isPaused" @click="pauseAll">{{ isPaused ? tt('paused_state') : tt('pause_all') }}</button>
+          <button :class="{ 'is-active': isPaused }" :disabled="!isPaused" @click="resumeAll">{{ tt('resume_all') }}</button>
           <button class="danger" @click="clearQueue">{{ tt('clear') }}</button>
         </span>
       </h2>
+      <p v-if="isPaused" class="paused-banner">{{ tt('queue_paused') }}</p>
       <p v-if="!queueItems.length" class="muted">{{ tt('queue_empty') }}</p>
-      <ul class="dl">
-        <li v-for="(item, i) in queueItems" :key="item.task_id || item.url || i">
-          <div class="row">
-            <span class="name">{{ item.game_name || item.name || item.url }}</span>
-            <span class="badge" :style="{ background: statusMeta(queueStatus(item)).color }">{{ statusMeta(queueStatus(item)).label }}</span>
-            <span class="pct" v-if="queuePct(item) != null">{{ queuePct(item) }}%</span>
+      <div v-else class="qwin" ref="queueWin" @scroll="onQueueScroll">
+        <div :style="{ height: windowedQueue.totalH + 'px' }">
+          <div :style="{ transform: 'translateY(' + (windowedQueue.start * ROW) + 'px)' }">
+            <ul class="dl" style="margin:0">
+              <li v-for="(item, i) in windowedQueue.slice" :key="item.task_id || item.url || i">
+                <div class="row">
+                  <span class="name">{{ item.game_name || item.name || item.url }}</span>
+                  <span class="badge" :style="{ background: statusMeta(queueStatus(item)).color }">{{ statusMeta(queueStatus(item)).label }}</span>
+                  <span class="pct" v-if="queuePct(item) != null">{{ queuePct(item) }}%</span>
+                </div>
+                <div class="bar" v-if="queuePct(item) != null"><div class="fill" :style="{ width: queuePct(item) + '%' }"></div></div>
+                <div class="qmeta">
+                  <span class="muted">{{ item.platform }}</span>
+                  <span class="muted" v-if="queueSpeed(item)">{{ queueSpeed(item) }}</span>
+                  <button class="dlbtn danger" @click="cancelDownload(item)">{{ tt('cancel') }}</button>
+                </div>
+              </li>
+            </ul>
           </div>
-          <div class="bar" v-if="queuePct(item) != null"><div class="fill" :style="{ width: queuePct(item) + '%' }"></div></div>
-          <div class="qmeta">
-            <span class="muted">{{ item.platform }}</span>
-            <span class="muted" v-if="queueSpeed(item)">{{ queueSpeed(item) }}</span>
-            <button class="dlbtn danger" @click="cancelDownload(item)">{{ tt('cancel') }}</button>
-          </div>
-        </li>
-      </ul>
+        </div>
+      </div>
     </section>
 
     <!-- HISTORY TAB -->
@@ -770,20 +837,26 @@ async function switchTab(t) {
         <button class="danger" v-if="historyItems.length" @click="clearHistory">{{ tt('history_clear') }}</button>
       </h2>
       <p v-if="!historyItems.length" class="muted">{{ tt('history_empty') }}</p>
-      <ul class="hist">
-        <li v-for="(item, i) in historyItems" :key="item.task_id || i" :class="statusMeta(item.status).cls">
-          <div class="row">
-            <span class="name">{{ item.game_name || item.name }}</span>
-            <span class="badge" :style="{ background: statusMeta(item.status).color }">{{ statusMeta(item.status).label }}</span>
+      <div v-else class="hwin" ref="historyWin" @scroll="onHistoryScroll">
+        <div :style="{ height: windowedHistory.totalH + 'px' }">
+          <div :style="{ transform: 'translateY(' + (windowedHistory.start * HISTORY_ROW_H) + 'px)' }">
+            <ul class="hist" style="margin:0">
+              <li v-for="(item, i) in windowedHistory.slice" :key="item.task_id || i" :class="statusMeta(item.status).cls">
+                <div class="row">
+                  <span class="name">{{ item.game_name || item.name }}</span>
+                  <span class="badge" :style="{ background: statusMeta(item.status).color }">{{ statusMeta(item.status).label }}</span>
+                </div>
+                <div class="qmeta">
+                  <span class="muted">{{ item.platform }}</span>
+                  <span class="muted" v-if="item.total_size">{{ item.total_size }}</span>
+                  <span class="muted" v-if="item.timestamp">{{ item.timestamp }}</span>
+                </div>
+                <div class="muted" v-if="item.message">{{ item.message }}</div>
+              </li>
+            </ul>
           </div>
-          <div class="qmeta">
-            <span class="muted">{{ item.platform }}</span>
-            <span class="muted" v-if="item.total_size">{{ item.total_size }}</span>
-            <span class="muted" v-if="item.timestamp">{{ item.timestamp }}</span>
-          </div>
-          <div class="muted" v-if="item.message">{{ item.message }}</div>
-        </li>
-      </ul>
+        </div>
+      </div>
     </section>
 
     <!-- SETTINGS TAB -->
@@ -1054,19 +1127,26 @@ small { color: #666; font-weight: normal; }
 .badge.sm { padding: 1px 7px; font-size: 0.72em; }
 
 /* Queue / downloads */
-.dl { list-style: none; padding: 0; margin: 0; }
-.dl li { padding: 10px 0; border-bottom: 1px solid #eee; }
+.qwin { overflow-y: auto; overflow-x: hidden; width: 100%; box-sizing: border-box; position: relative; border: 1px solid #eee; border-radius: 8px; max-height: 60vh; }
+.dl { list-style: none; padding: 0; margin: 0; width: 100%; box-sizing: border-box; }
+.dl li { padding: 10px 0; border-bottom: 1px solid #eee; width: 100%; box-sizing: border-box; min-height: 70px; }
 .dl .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
 .pct { color: #007bff; font-variant-numeric: tabular-nums; font-weight: bold; }
 .bar { height: 8px; background: #e0e0e0; border-radius: 6px; margin-top: 6px; overflow: hidden; }
 .fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width .3s ease; }
 .qmeta { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
-.qacts { margin-left: auto; display: flex; gap: 6px; }
+  .qacts { margin-left: auto; display: flex; gap: 6px; }
+  .qacts button:disabled { opacity: .5; cursor: not-allowed; }
+  .qacts button.is-paused { background: #b8860b; color: #fff; border-color: #b8860b; }
+  .qacts button.is-active { background: #28a745; color: #fff; border-color: #28a745; }
+  .paused-banner { margin: 8px 0 0; padding: 8px 12px; background: #fff3cd; color: #856404; border: 1px solid #ffe69c; border-radius: 8px; font-weight: 600; }
 .danger { background: #dc3545; color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
 .danger:hover { background: #c82333; }
 
 /* History */
-.hist { list-style: none; padding: 0; margin: 0; }
+.hwin { overflow-y: auto; overflow-x: hidden; width: 100%; box-sizing: border-box; position: relative; border: 1px solid #eee; border-radius: 8px; max-height: 60vh; }
+.hist { list-style: none; padding: 0; margin: 0; width: 100%; box-sizing: border-box; }
+.hist li { width: 100%; box-sizing: border-box; min-height: 88px; }
 .hist li { padding: 10px; margin-bottom: 8px; background: #f9f9f9; border-radius: 8px; border-left: 4px solid #28a745; }
 .hist li.st-err { border-left-color: #dc3545; }
 .hist li.st-cancel { border-left-color: #ffc107; }
@@ -1145,7 +1225,7 @@ h3 { font-size: calc(13px * var(--font-scale, 1)); }
   max-width: 90%; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.4);
 }
 .modal-title { margin: 0 0 8px; font-size: 16px; }
-.modal-msg { margin: 0 0 16px; font-size: 14px; line-height: 1.4; }
+  .modal-msg { margin: 0 0 16px; font-size: 14px; line-height: 1.4; white-space: pre-line; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .modal-actions .btn { min-height: 40px; padding: 8px 16px; border: 1px solid #ccc; background: #f1f1f1; border-radius: 8px; }
 .modal-actions .btn.primary { background: #007bff; border-color: #007bff; color: #fff; }

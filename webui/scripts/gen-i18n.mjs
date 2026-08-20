@@ -38,7 +38,7 @@ function scanDir(dir, keys) {
     } else if (/\.(vue|js|mjs|ts)$/.test(e.name)) {
       if (e.name === 'i18n.strings.js') continue; // kendini taramayacağız
       const txt = readFileSync(full, 'utf8');
-      const re = /(?<![A-Za-z0-9_])(?:tt|loc|t)\(\s*['"]([A-Za-z0-9_]+)['"]\s*\)/g;
+      const re = /(?<![A-Za-z0-9_])(?:tt|loc|t)\(\s*['"]([A-Za-z0-9_]+)['"]/g;
       let m;
       while ((m = re.exec(txt))) keys.add(m[1]);
     }
