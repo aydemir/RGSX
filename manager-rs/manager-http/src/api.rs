@@ -2552,4 +2552,53 @@ mod tests {
         }
         handle.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn failed_native_ddl_is_removed_from_queue() {
+        // TASK-002-gap-fail: hatalı/başarısız indirme kuyrukta asılı kalmamalı.
+        // native_ddl_download bir dead-host URL ile çağrılır; indirme hatası
+        // (Network → Transient) retry envelope'i tükettikten sonra Stop'a düşer ve
+        // finalize_download_in_state(ok=false) kuyruk kaydını task_id ile siler.
+        let state = AppState::empty();
+        let dead = "http://127.0.0.1:1/dead.zip".to_string();
+        let _ = native_ddl_download(
+            state.clone(),
+            dead.clone(),
+            dead.clone(),
+            "Test".to_string(),
+            "Dead Game".to_string(),
+        )
+        .await;
+
+        // Öğe önce kuyruğa girdi (takip ediliyor, kaybolmadı).
+        assert!(
+            state
+                .read()
+                .queue
+                .iter()
+                .any(|q| q["game_name"] == "Dead Game"),
+            "failed item should be enqueued first"
+        );
+
+        // Retry'ler tükendikten sonra kuyruktan silinmeli (asılı kalmamalı).
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            if state.read().queue.is_empty() {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("FAILED: başarısız indirme kuyrukta asılı kaldı (120s sonra hâlâ mevcut)");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+
+        // Geçmişte "Erreur" (kalıcı hata) olarak işaretlenmiş olmalı.
+        let hist = state.read();
+        assert!(
+            hist.history
+                .iter()
+                .any(|e| e["game_name"] == "Dead Game" && e["status"] == "Erreur"),
+            "history must record the failed download as Erreur"
+        );
+    }
 }
