@@ -446,10 +446,11 @@ const queueItems = computed(() => snapshot.queue || [])
 // Sabit satır yüksekliğiyle `offset/limit` penceresi: yalnız görünür dilim DOM'a basılır
 // (N=1000'de ~20-40 satır). SSE `queue` olayı `snapshot.queue`'yu değiştirir; `windowedQueue`
 // computed olduğu için yalnız görünür slice yeniden çizilir.
-const ROW = 70
+const ROW = 90
+const QUEUE_MIN_ROWS = 5
 const OVERSCAN = 8
 const queueScrollTop = ref(0)
-const queueViewportH = ref(560)
+const queueViewportH = ref(QUEUE_MIN_ROWS * ROW)
 const queueWin = ref(null)
 function onQueueScroll(e) {
   queueScrollTop.value = e.target.scrollTop
@@ -808,7 +809,7 @@ async function switchTab(t) {
       </h2>
       <p v-if="isPaused" class="paused-banner">{{ tt('queue_paused') }}</p>
       <p v-if="!queueItems.length" class="muted">{{ tt('queue_empty') }}</p>
-      <div v-else class="qwin" ref="queueWin" @scroll="onQueueScroll">
+      <div v-else class="qwin" ref="queueWin" :style="{ minHeight: (QUEUE_MIN_ROWS * ROW) + 'px' }" @scroll="onQueueScroll">
         <div :style="{ height: windowedQueue.totalH + 'px' }">
           <div :style="{ transform: 'translateY(' + (windowedQueue.start * ROW) + 'px)' }">
             <ul class="dl" style="margin:0">
@@ -1129,7 +1130,8 @@ small { color: #666; font-weight: normal; }
 /* Queue / downloads */
 .qwin { overflow-y: auto; overflow-x: hidden; width: 100%; box-sizing: border-box; position: relative; border: 1px solid #eee; border-radius: 8px; max-height: 60vh; }
 .dl { list-style: none; padding: 0; margin: 0; width: 100%; box-sizing: border-box; }
-.dl li { padding: 10px 0; border-bottom: 1px solid #eee; width: 100%; box-sizing: border-box; min-height: 70px; }
+    .dl li { padding: 10px 0; border-bottom: 1px solid #eee; width: 100%; box-sizing: border-box; height: 90px; }
+    .dl .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
 .pct { color: #007bff; font-variant-numeric: tabular-nums; font-weight: bold; }
 .bar { height: 8px; background: #e0e0e0; border-radius: 6px; margin-top: 6px; overflow: hidden; }
