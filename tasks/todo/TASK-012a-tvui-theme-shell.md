@@ -2,7 +2,8 @@
 
 - **id:** TASK-012a
 - **title:** TVUI SPA shell (CSS tema değişkenleri) + `RGSX_TVUI` flag hook
-- **status:** todo
+- **status:** superseded
+- **superseded_by:** Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)
 - **priority:** P1
 - **created:** 2026-08-21
 - **environment:** both

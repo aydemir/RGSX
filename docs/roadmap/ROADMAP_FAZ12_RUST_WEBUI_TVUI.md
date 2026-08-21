@@ -13,24 +13,30 @@
 
 ---
 
-## 0. Stratejik karar (en kritik nokta)
+## 0. Stratejik karar (en kritik nokta) — GÜNCEL: native SDL2 + `.json` tema yönü SEÇİLDİ
 
 **TVUI bir web arayüzü DEĞİL.** `ports/RGSX/tvui.py` + `display/*` + `controls/*` saf
-**pygame** ile çizilen native bir 10-foot UI'dır (TV/monitörde tam ekran). Bunu birebir
-Rust'a pygame benzeri bir grafik kütüphanesiyle (macroquad/egui/bevy) port etmek en büyük
-ve en düşük ROI'li iş olurdu.
+**pygame** ile çizilen native bir 10-foot UI'dır (TV/monitörde tam ekran). Bu, EmulationStation
+tarzı bir UI'dır (platform/oyun ızgarası, menüler, sanal klavye) ve ES'in XML tema
+yaklaşımından esinlenir — ANCAK temaları **`.json`** olarak portluyoruz (XML ayrıştırma yok;
+`serde_json` ile tip-güvenli yükleme).
 
-**Öneri: İki UI'ı TEK bir web frontend'te birleştir.**
-- Aynı **Vue 3 SPA**, iki "shell" ile çalışır:
-  - **WebUI shell:** tarayıcıda (mevcut `RGSX_RUST_WEBUI` akışı).
-  - **TVUI shell:** SPA tam ekran kiosk modunda (`?mode=tv`), gamepad/IR remote JS
-    Gamepad API + tuş olaylarıyla; Rust binary'si bunu ya (a) kiosk Chromium ya da
-    (b) `wry`+`tao` webview ile native pencerede gösterir.
-- Böylece `display/*` (30+ dosya) ve `controls/*` emektar pygame kodu **retire** edilir,
-  tek bir SPA bakımı kalır. Bu, geçiş maliyetini yarıdan fazla düşürür.
+**SEÇİLEN YÖN (B): Native Rust + SDL2, EmulationStation-tarzı, `.json` tema.**
+- **Render:** `rust-sdl2` ile tam ekran 10-foot çizim; pygame `draw_*` fonksiyonları birebir
+  SDL2 primitives'e portlanır (rect / text+font / image+box-art / transition).
+- **Tema:** `display/colors.py` + `fonts.py` + `transitions.py` + `icons.py` → **`theme.json`**
+  şeması (renk paleti + arka plan preset'leri + font ailesi + geçiş efektleri + ikon seti).
+  Kullanıcı `.json` tema dosyasıyla görünümü serbestçe değiştirir (ES `theme.xml` yerine).
+- **Girdi:** `manager-tvui/src/native_input.rs` (gilrs/SDL gamepad) ZATEN portlu (TASK-005) —
+  SDL2 yolunda doğrudan kullanılır; webview'in JS Gamepad API'sine gerek kalmaz.
+- `display/*` (30+ dosya) + `controls/*` emektar pygame kodu, port tamamlanınca **retire**
+  edilir; yerine `manager-tvui` (SDL2) + `.json` tema altyapısı geçer.
+- Davranış parity'si ZORUNLU (bkz. `FAZ12_PARITY_STRATEGY.md`); yapı parity'si serbest.
 
-Alternatif (önerilmez): pygame→Rust native render. Sadece offline/webkit-yasaklı
-ortamlar için düşünülür; ayrı bir alt faz olarak not edilir (Faz 12b-alt).
+**Superseded alternatif:** Vue 3 SPA + `?mode=tv` webview (`wry`+`tao`). Webkit2gtk/webview2
+native bağımlılık yükü ve TV/RetroBat ortamlarında webview güvenilirliği nedeniyle tercih
+edilmedi. SPA/webview TVUI görevleri (**TASK-012a..f**) **superseded** olarak işaretlendi;
+yerine native SDL2 görevleri (**TASK-012g..l**) geçti. WebUI (tarayıcı SPA) hattı etkilenmez.
 
 ---
 
@@ -61,7 +67,7 @@ Yeni eklenmesi gerekenler:
 | `dirs` / `directories` | platform cache/config yolları | 12c/12d |
 | `sha2`+`base64` | image/catalog cache anahtarı | 12c |
 | `fluent` / `i18n-embed` | dil/çeviri (`language.py` yerine) | 12e |
-| `wry` + `tao` | TVUI native webview shell (bkz. §0) | 12b |
+| `sdl2` (rust-sdl2) | TVUI native SDL2 render shell + `.json` tema yükleyici (bkz. §0) | 12g |
 | `igd` / `miniupnpc` | UPnP port mapping (`network/upnp.py` yerine) | 12e |
 | `reqwest` (mevcut) | TheGamesDB + debrid/1Fichier istemcisi | 12c |
 
@@ -71,13 +77,15 @@ Yeni eklenmesi gerekenler:
   SSE/Gamepad entegrasyonu saf JS'te daha olgun.
 - Canlı akış: `EventSource('/api/events')` → reaktif store → progress bar otomatik render.
   (Backend SSE `manager-http/src/sse.rs` zaten var — TASK-002m.)
-- TV modu: `@media` kiosk CSS + Gamepad API + uzak kumanda tuş eşlemesi.
+- (Not: TVUI artık native SDL2 — bkz. §0; WebUI SPA yalnız tarayıcı modunda kalır, TV/Gamepad
+  katmanı `manager-tvui`'dedir, webview/`wry` bağımlılığı yok.)
 
 ### Build/paketleme
 - `webui/` Vite build → `manager-http` tarafından `ServeDir` ile sunulur.
 - `RGSX_WEBUI_DIR` (zaten var) statik kök override eder.
 - Windows cross-compile: mevcut `rust-toolchain.toml` + `cfg(windows)` deseni korunur;
-  `wry` Linux'ta webkit2gtk, Windows'ta webview2 gerektirir (build runner not edilecek).
+  TVUI native SDL2 olduğundan `wry`/`webview2` bağımlılığı yok; SDL2 cross-compile
+  (Windows'ta `SDL2.dll`, Linux'ta `libSDL2`) build runner not edilecek.
 
 ---
 
@@ -90,12 +98,15 @@ Yeni eklenmesi gerekenler:
 - `RGSX_RUST_WEBUI=1` → Rust placeholder yerine gerçek SPA.
 - Test: contract testleri yeşil kalır; SPA build CI'da çalışır.
 
-### Faz 12b — TVUI shell (webview)
-- Yeni `manager-tvui` crate: `wry`+`tao` ile aynı SPA'yı tam ekran kiosk render eder.
-  Gamepad/IR remote → JS olayları. `?mode=tv` ile SPA TV layout'u.
-- `ports/RGSX/display/*` ve `controls/*` **retire** edilir (sözleşme: aynı endpoint'ler).
-- Fallback: webview binary yoksa kiosk Chromium spawn (Windows Retrobat senaryosu).
-- Test: TV modu contract (aynı JSON), gamepad eşleme birim testi.
+### Faz 12b — TVUI shell (native SDL2)  ← bkz. §0, yön (B)
+- Yeni `manager-tvui` crate: `rust-sdl2` ile `display/*`+`controls/*` pygame `draw_*`'larını
+  birebir SDL2 primitives'e portlar (rect/text+font/image+box-art/transition). `?mode=tv`
+  SPA yok — native 10-foot render. `theme.json` (`colors.py`+`fonts.py`+`transitions.py`+
+  `icons.py`) `serde_json` ile yüklenir (ES `theme.xml` yerine).
+- `ports/RGSX/display/*` ve `controls/*` port tamamlanınca **retire** edilir (TASK-012l).
+- Girdi: `native_input.rs` (gilrs) zaten portlu (TASK-005); webview JS Gamepad API'sine gerek yok.
+- Test: 102 contract (loading/platform_grid/game_list/progress) + SSE yeşil; `RGSX_TVUI=0`
+  → Python fallback korunur, `RGSX_TVUI=1` → SDL2 native.
 
 ### Faz 12c — Catalog native port (Python→Rust)  ← "catalog indirme"
 Mevcut `CatalogSource` trait (`catalog.rs`) `PythonCatalog`'tan `NativeCatalog`'a döner.
@@ -135,7 +146,7 @@ Mevcut `CatalogSource` trait (`catalog.rs`) `PythonCatalog`'tan `NativeCatalog`'
 
 ## 3. Aklına gelmeyen ama geçişte ZORUNLU modüller (kör nokta listesi)
 
-1. **TVUI pygame native'dir, web DEĞİL** — en büyük gizli maliyet. §0 birleştirme önerisi.
+1. **TVUI pygame native'dir, web DEĞİL** — SEÇİLEN yön native SDL2 + `.json` tema (bkz. §0). SPA/webview alternatifi superseded.
 2. **gamelist.xml (EmulationStation) üretimi** — `update_gamelist.py` (Linux) +
    `update_gamelist_windows.py` (Windows) ayrı mantık; ikisi de port edilmeli (Faz 12d).
 3. **History matching** (`history_matches.py`) — moved_paths çözümü; sessiz bağımlılık.
@@ -146,26 +157,28 @@ Mevcut `CatalogSource` trait (`catalog.rs`) `PythonCatalog`'tan `NativeCatalog`'
    otomatik güncelleme; port veya Python'da tutulmalı.
 7. **i18n/dil algılama** (`language.py`, TASK-003-faz11) → `fluent` (Faz 12e).
 8. **Controls mapper** (`controls_mapper.py`, `controls/*`) — gamepad/keyboard eşleme;
-   webview senaryosunda JS Gamepad API + config şemasına dönüşür.
+    native SDL2'de `native_input.rs` (gilrs) gamepad eşlemesi doğrudan kullanılır.
 9. **Accessibility** (`accessibility.py`) — yüksek kontrast, font ölçekleme; yeni UI'de korunmalı.
 10. **Settings kalıcılığı** (`rgsx_settings.py`, `config.py`) — yalnız okuma/yazma değil,
     şema + validasyon sözleşmesi port edilmeli.
 11. **UPnP** (`network/upnp.py`) — router port mapping; `igd` krate (Faz 12e).
 12. **Virtual keyboard / folder browser** (`display/virtual_keyboard.py`,
-    `display/folder_browser.py`) — SPA bileşenlerine dönüşür.
+     `display/folder_browser.py`) — SDL2 native bileşenlerine (virtual_keyboard.rs/folder_browser.rs) dönüşür.
 13. **Embedded cache** (`build_embedded_caches.py`) — Python'ın bellek/embed cache'i;
     Rust eşdeğer cache geçersizleme mantığı gerektirir.
 14. **Cross-platform build** — Windows-only tray/firewall zaten `cfg(windows)`; webview
-    da Windows/Linux/macOS farklı native dep gerektirir (webkit2gtk vs webview2).
+     da Windows/Linux farklı native dep gerektirir (SDL2.dll / libSDL2); proot/CI'de SDL2 bulunmayabilir (build runner not edilecek).
 15. **Gamepad/IR remote input katmanı** — UI değil, girdi cihazı katmanı; webview'te
-    Gamepad API, native'de `gilrs` (Rust gamepad) ile çözülür.
+     native SDL2'de `gilrs` (Rust gamepad) ile çözülür.
 16. **Proxy contract birebir korunmalı** — geçiş boyunca `FakeCatalog`/`FakeProgressEngine`
     benzeri contract testleri (102 contract + 9 engine) her fazda yeşil kalmalı.
 
 ---
 
 ## 4. Risk ve sıralama
-- Düşük riskten yükseğe: 12a (SPA, zaten SSE var) → 12c (catalog native) →
-  12d (HDD scan) → 12b (TVUI webview) → 12e (download/çevre).
+- Düşük riskten yükseğe: 12c (catalog native) → 12d (HDD scan) →
+  12g (TVUI SDL2 shell + `.json` tema) → 12h (çekirdek ekranlar) → 12i (menüler) →
+  12j (klavye/folder) → 12k (erişilebilirlik) → 12l (cutover). 12e (download/çevre) bağımsız;
+  12a/12b SPA/webview superseded.
 - Her faz flag-gated; Python fallback korunur (Faz 10c deseni).
 - TVUI birleştirme kararı (§0) onaylanmadan 12b'ye başlanmamalı.

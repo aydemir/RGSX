@@ -2,7 +2,8 @@
 
 - **id:** TASK-012b
 - **title:** TVUI çekirdek ekranlar — loading / platform_grid / game_list / download_progress
-- **status:** todo
+- **status:** superseded
+- **superseded_by:** Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)
 - **priority:** P0
 - **created:** 2026-08-21
 - **environment:** both

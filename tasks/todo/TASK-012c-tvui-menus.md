@@ -2,7 +2,8 @@
 
 - **id:** TASK-012c
 - **title:** TVUI menü ekranları — pause_menu, display_menu, filter_*, global_sort_menu, global_search
-- **status:** todo
+- **status:** superseded
+- **superseded_by:** Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)
 - **priority:** P2
 - **created:** 2026-08-21
 - **environment:** both

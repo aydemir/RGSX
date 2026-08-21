@@ -2,7 +2,8 @@
 
 - **id:** TASK-012f
 - **title:** TVUI cutover — `RGSX_TVUI=1` ile Python fallback kapat, divergence-notları yaz
-- **status:** todo
+- **status:** superseded
+- **superseded_by:** Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)
 - **priority:** P1
 - **created:** 2026-08-21
 - **environment:** both

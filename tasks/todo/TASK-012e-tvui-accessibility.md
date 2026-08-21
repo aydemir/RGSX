@@ -2,7 +2,8 @@
 
 - **id:** TASK-012e
 - **title:** TVUI erişilebilirlik — font_scale / footer_font_scale / yüksek kontrast
-- **status:** todo
+- **status:** superseded
+- **superseded_by:** Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)
 - **priority:** P2
 - **created:** 2026-08-21
 - **environment:** both

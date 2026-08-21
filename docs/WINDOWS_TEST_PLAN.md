@@ -30,9 +30,9 @@
 - `webui/dist/` Windows'ta `RGSX_RUST_WEBUI=1` ile sunulur; `ServeDir` traversal koruması Windows yolları (`\`) ile doğrulanır.
 - SPA route'ları (`/settings`, `/downloads`) hydrate edilmiş `index.html` döndürür.
 
-### Faz 12b — TVUI (TASK-002q)
-- `RGSX_TVUI=1` → SPA `?mode=tv` kiosk tarayıcıda (Windows'ta varsayılan tarayıcı). `wry`+`tao` webview feature **kapalı** (gdk-3 yok; Windows'ta webview2 gerekir) — harici tarayıcı yolu test edilir.
-- Gamepad/ok tuş navigasyonu gerçek gamepad ile Windows'ta doğrulanır.
+### Faz 12b — TVUI (TASK-002q)  ← yön (B): native SDL2
+- `RGSX_TVUI=1` → `manager-tvui` `rust-sdl2` ile tam ekran 10-foot native render (SPA/webview yok). `theme.json` `serde_json` ile yüklenir. `wry`+`tao` webview bağımlılığı **yok**.
+- Gamepad/ok tuş navigasyonu `native_input.rs` (gilrs) ile; gerçek gamepad Windows'ta doğrulanır.
 
 ### Faz 12c — Catalog native (TASK-002o)
 - `RGSX_NATIVE_CATALOG=1` ile `systems_list.json`/`games/<platform>.json`/`images/` Windows `RGSX_DATA_DIR` altından okunur; yol ayraçları (`\`) ve `RGSX_ENTRY_WINDOWS` platform eşlemesi doğrulanır.
@@ -57,7 +57,7 @@
 
 ## 3. Bilinen engeller (bu ortamda test EDİLEMEZ)
 - `\` yol ayraçları, registry, Windows Defender/Firewall — yalnız statik doğrulama.
-- `manager-tvui` webview2 feature kapalı.
+- `manager-tvui` SDL2 native (webview2 feature yok).
 - Canlı torrent/DDL indirme — sandbox ağ sınırı.
 
 ---
