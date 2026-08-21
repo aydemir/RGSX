@@ -79,13 +79,30 @@ impl From<std::io::Error> for DownloadError {
 
 impl From<reqwest::Error> for DownloadError {
     fn from(e: reqwest::Error) -> Self {
-        if e.is_timeout() {
-            DownloadError::Network(format!("timeout: {e}"))
-        } else if e.is_connect() {
-            DownloadError::Network(format!("bağlantı: {e}"))
-        } else {
-            DownloadError::Http(e.to_string())
+        // TASK-002-gap-32: bağlantı/gönderme hataları AĞ hatası sayılmalı ki
+        // ardışık hata sayacı (`network_error_streak`) artsın ve `network_down`
+        // bayrağı set edilsin. `is_connect()` yalnız "Connect" kind'i yakalar;
+        // ama "error sending request for url" gibi hatalar `Request` kind'i
+        // altında gelir (içinde ConnectionRefused olmasına rağmen) ve
+        // `is_connect()` false döner → `DownloadError::Http`'a düşüp streak
+        // artmazdı. Bu da gerçek WiFi kesintisinde banner'ın tetiklenmemesine
+        // yol açardı. Bu yüzden `is_request()` + mesaj tabanlı kontrol de ekli.
+        if e.is_timeout() || e.is_connect() || e.is_request() {
+            return DownloadError::Network(format!("ağ: {e}"));
         }
+        let msg = e.to_string().to_ascii_lowercase();
+        if msg.contains("connection")
+            || msg.contains("refused")
+            || msg.contains("resolve")
+            || msg.contains("dns")
+            || msg.contains("sending request")
+            || msg.contains("timed out")
+            || msg.contains("no route")
+            || msg.contains("host")
+        {
+            return DownloadError::Network(format!("ağ: {e}"));
+        }
+        DownloadError::Http(e.to_string())
     }
 }
 
@@ -289,11 +306,31 @@ impl HttpDownloader {
         // archive.org alt-URL'leri (4d): metadata → view_archive.php fallback.
         let mut alt_urls: Vec<String> = Vec::new();
         if req.url.to_lowercase().contains("archive.org/download/") {
-            if let Some(meta) =
-                self::archive_org::fetch_archive_metadata(&self.client(), &req.url, archive_cookie.as_deref()).await
-            {
-                alt_urls = self::archive_org::build_alt_urls(&req.url, &meta);
+            let m_t0 = std::time::Instant::now();
+            eprintln!("[TRACE-MD] archive metadata fetch start {}", req.url);
+            // TASK-002-gap-32 izleme: archive.org metadata API'sı anonim IP'lerde
+            // 5-44s arası yavaş/rate-limit oluyor ve `alt_urls` neredeyse hep 0.
+            // Bu yüzden fetch'i best-effort + kısa timeout (3s) ile sarıyoruz:
+            // responsive ise 403 fallback'i korunur, yavaşsa atlanır (≤3s gecikme).
+            let meta = tokio::time::timeout(
+                Duration::from_secs(3),
+                self::archive_org::fetch_archive_metadata(
+                    &self.client(),
+                    &req.url,
+                    archive_cookie.as_deref(),
+                ),
+            )
+            .await;
+            let timed_out = meta.is_err();
+            if let Ok(Some(meta)) = &meta {
+                alt_urls = self::archive_org::build_alt_urls(&req.url, meta);
             }
+            eprintln!(
+                "[TRACE-MD] archive metadata fetch done in {}ms (alt_urls={}, timed_out={})",
+                m_t0.elapsed().as_millis(),
+                alt_urls.len(),
+                timed_out
+            );
         }
 
         let variants = self.header_variants(req, resolved_referer.as_deref(), archive_cookie.as_deref());
@@ -312,9 +349,23 @@ impl HttpDownloader {
                 builder = builder.header("Range", format!("bytes={resume}-"));
             }
 
+            let s_t0 = std::time::Instant::now();
+            eprintln!("[TRACE-MD] GET {}", effective_url);
             let resp = match builder.send().await {
-                Ok(r) => r,
+                Ok(r) => {
+                    eprintln!(
+                        "[TRACE-MD] GET status={} in {}ms",
+                        r.status().as_u16(),
+                        s_t0.elapsed().as_millis()
+                    );
+                    r
+                }
                 Err(e) => {
+                    eprintln!(
+                        "[TRACE-MD] GET error after {}ms: {}",
+                        s_t0.elapsed().as_millis(),
+                        e
+                    );
                     // timeout/connection → kısa bekle + yeniden dene (Python transiente).
                     if attempt >= self.max_retries {
                         return Err(DownloadError::from(e));

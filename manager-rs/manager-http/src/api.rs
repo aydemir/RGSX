@@ -705,7 +705,7 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                         Err(e) => {
                             let cls = classify_bridge_error(&e);
                             let is_network = matches!(e, BridgeError::Timeout(_));
-                            match decide_retry(&state2, &current_url, &n, &current_task_id, &e.to_string(), cls, is_network) {
+                            match decide_retry(&state2, &current_url, &n, &current_task_id, &e.to_string(), cls, is_network).await {
                                 RetryDecision::Retry { new_task_id, delay } => {
                                     let dur = Duration::from_secs_f64(delay.max(0.0));
                                     tokio::select! {
@@ -935,6 +935,7 @@ pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState)
 /// Tek bir `QueuedItem`'ı `download()` handler'ına yönlendirir. `download` kendi
 /// içinde arka plan task spawn eder ve hızlı döner; worker yalnız kurulumu bekler.
 async fn dispatch_queued(state: &AppState, item: QueuedItem) {
+    eprintln!("[TRACE] dispatch url={}", item.url);
     let single = json!({
         "url": item.url,
         "platform": item.platform,
@@ -1865,20 +1866,29 @@ fn classify_download_error(err: &DownloadError) -> ErrorClass {
 /// "geri döndü" kabul edilir. DNS literal kullanıldığından offline iken DNS
 /// çözümlemesi takılmaz; connect 2s timeout ile sınırlıdır.
 async fn probe_connectivity() -> bool {
+    let p_t0 = std::time::Instant::now();
+    eprintln!("[TRACE] probe_connectivity start");
     const PROBES: [&str; 2] = ["8.8.8.8:53", "1.1.1.1:53"];
+    let mut result = false;
     for addr in PROBES {
         if tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr))
             .await
             .map(|r| r.is_ok())
             .unwrap_or(false)
         {
-            return true;
+            result = true;
+            break;
         }
     }
-    false
+    eprintln!(
+        "[TRACE] probe_connectivity -> {} in {}ms",
+        result,
+        p_t0.elapsed().as_millis()
+    );
+    result
 }
 
-fn decide_retry(
+async fn decide_retry(
     state: &AppState,
     url: &str,
     name: &str,
@@ -1887,19 +1897,26 @@ fn decide_retry(
     err_class: ErrorClass,
     is_network: bool,
 ) -> RetryDecision {
-    let mut data = state.write();
     // TASK-002-gap-32: ağ-koptu tespiti — ardışık Network hatası sayacı.
     if is_network {
         // Ağ zaten aşağıysa ek retry budget yakma; loop-top park gate yakalar.
-        if data.network_down.load(Ordering::Relaxed) {
+        if state.read().network_down.load(Ordering::Relaxed) {
             return RetryDecision::Retry {
                 new_task_id: current_task_id.to_string(),
                 delay: 0.0,
             };
         }
-        let streak = data.network_error_streak.fetch_add(1, Ordering::SeqCst) + 1;
+        let streak = {
+            let mut data = state.write();
+            data.network_error_streak.fetch_add(1, Ordering::SeqCst) + 1
+        };
         if streak >= NETWORK_DOWN_THRESHOLD {
+            let mut data = state.write();
             data.network_down.store(true, Ordering::SeqCst);
+            eprintln!(
+                "[TRACE] network_down -> TRUE (streak={}, url={})",
+                streak, url
+            );
             // Park edilecek indirmelerin durumunu "Ağ bekleniyor" yap (UI).
             for q in data.queue.iter_mut() {
                 let s = q.get("status").and_then(Value::as_str).unwrap_or("");
@@ -1914,10 +1931,39 @@ fn decide_retry(
                 delay: 0.0,
             };
         }
+        // TASK-002-gap-32 (tek-indirme duyarlılığı): eşik altında ama gerçek bir
+        // ağ hatası. Proaktif sonda çalıştır; ağ gerçekten erişilemezse tek
+        // indirme (concurrency=1) senaryosunda da bayrağı çevir ki UI
+        // "bağlantı kesildi" uyarısını göstersin. Sonda erişilebilirse (yalnızca
+        // bu sunucu çöktü) yanlış pozitif olmaz, olağan retry'ye düşer.
+        // Lock, async sonda öncesi bırakılır (await boyunca tutulmaz).
+        if !probe_connectivity().await {
+            let mut data = state.write();
+            if !data.network_down.load(Ordering::SeqCst) {
+                data.network_down.store(true, Ordering::SeqCst);
+                eprintln!(
+                    "[TRACE] network_down -> TRUE (probe, url={})",
+                    url
+                );
+                for q in data.queue.iter_mut() {
+                    let s = q.get("status").and_then(Value::as_str).unwrap_or("");
+                    if s == "Downloading" || s == "Retrying" || s == "Connecting" || s == "Verifying" {
+                        q["status"] = json!("Ağ bekleniyor");
+                    }
+                }
+                state.dirty.store(true, Ordering::SeqCst);
+            }
+            return RetryDecision::Retry {
+                new_task_id: current_task_id.to_string(),
+                delay: 0.0,
+            };
+        }
     } else {
         // Ağ-dışı hata → streak'i sıfırla (flapping'i önler).
+        let mut data = state.write();
         data.network_error_streak.store(0, Ordering::SeqCst);
     }
+    let mut data = state.write();
     let failures = *data.retries.get(url).unwrap_or(&0);
     if err_class == ErrorClass::Transient && failures < retry::DEFAULT_MAX_RETRIES {
         let new_failures = failures + 1;
@@ -2030,13 +2076,22 @@ async fn native_ddl_download(
     };
     let shutdown = c_state.shutdown.clone();
     tokio::spawn(async move {
+        let dl_t0 = std::time::Instant::now();
+        eprintln!("[TRACE] dl={} name={} spawned, waiting permit", c_task, c_name);
         // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
         // `queue_clear` (stop-all) semaphore'u kapatınca `acquire` Err döner → görev
         // iptal edilir. Ayrıca `aborting` bayrağı geç klonlanan görevleri yakalar.
         let _dl_permit = {
             let sem = c_state.read().download_semaphore.clone();
             match sem.acquire_owned().await {
-                Ok(p) => p,
+                Ok(p) => {
+                    eprintln!(
+                        "[TRACE] dl={} permit acquired ({}ms since spawn)",
+                        c_task,
+                        dl_t0.elapsed().as_millis()
+                    );
+                    p
+                }
                 Err(_) => {
                     let mut d = c_state.write();
                     d.retry_in_flight.remove(&c_url);
@@ -2078,6 +2133,10 @@ async fn native_ddl_download(
                     if probe_connectivity().await {
                         let mut d = c_state.write();
                         d.network_down.store(false, Ordering::SeqCst);
+                        eprintln!(
+                            "[TRACE] network_down -> FALSE (restored, url={})",
+                            current_url
+                        );
                         d.network_error_streak.store(0, Ordering::SeqCst);
                         for q in d.queue.iter_mut() {
                             if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
@@ -2108,10 +2167,26 @@ async fn native_ddl_download(
             };
             let cancel_flag = CancelFlag::new();
             let cf = cancel_flag.clone();
+            let first_pb = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let pb_t0 = dl_t0;
+            let trace_task = c_task.clone();
             let downloader = manager_download::http::HttpDownloader::new()
                 .with_cancel(cancel_flag)
-                .with_retry(1, Duration::from_secs(5))
+                .with_retry(3, Duration::from_secs(5))
                 .with_progress(move |downloaded, total| {
+                    if !first_pb.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        let p = if total > 0 {
+                            (downloaded * 100 / total) as u32
+                        } else {
+                            0
+                        };
+                        eprintln!(
+                            "[TRACE] dl={} first progress {}% ({}ms since spawn)",
+                            trace_task,
+                            p,
+                            pb_t0.elapsed().as_millis()
+                        );
+                    }
                     let pct = if total > 0 {
                         (downloaded * 100 / total) as u32
                     } else {
@@ -2149,6 +2224,11 @@ async fn native_ddl_download(
             match result {
                 Ok(path) => {
                     c_state.write().network_error_streak.store(0, Ordering::SeqCst);
+                    eprintln!(
+                        "[TRACE] dl={} download OK, finalizing ({}ms since spawn)",
+                        current_task_id,
+                        dl_t0.elapsed().as_millis()
+                    );
                     finalize_download_in_state(
                         &c_state,
                         &current_task_id,
@@ -2183,7 +2263,7 @@ async fn native_ddl_download(
                         &e.message(),
                         cls,
                         is_network,
-                    ) {
+                    ).await {
                         RetryDecision::Retry { new_task_id, delay } => {
                             let dur = Duration::from_secs_f64(delay.max(0.0));
                             tokio::select! {
@@ -2727,12 +2807,12 @@ mod tests {
         assert_eq!(cls, ErrorClass::Transient);
         // İlk iki hata: henüz aşağı değil, sıradan Retry döner.
         for _ in 0..2 {
-            let r = decide_retry(&state, "u", "x", "t1", "sim", cls, true);
+            let r = decide_retry(&state, "u", "x", "t1", "sim", cls, true).await;
             assert!(matches!(r, RetryDecision::Retry { .. }));
             assert!(!state.read().network_down.load(Ordering::Relaxed));
         }
         // Üçüncü hata: ağ aşağıya geçer.
-        let r = decide_retry(&state, "u", "x", "t1", "sim", cls, true);
+        let r = decide_retry(&state, "u", "x", "t1", "sim", cls, true).await;
         assert!(matches!(r, RetryDecision::Retry { .. }));
         assert!(state.read().network_down.load(Ordering::Relaxed));
         let s = state.read().queue[0]
@@ -2749,11 +2829,11 @@ mod tests {
         let state = AppState::empty();
         let ncls = classify_download_error(&DownloadError::Network("sim".to_string()));
         for _ in 0..2 {
-            let _ = decide_retry(&state, "u", "x", "t1", "sim", ncls, true);
+            let _ = decide_retry(&state, "u", "x", "t1", "sim", ncls, true).await;
         }
         assert_eq!(state.read().network_error_streak.load(Ordering::Relaxed), 2);
         let pcls = classify_download_error(&DownloadError::Canceled);
-        let _ = decide_retry(&state, "u", "x", "t1", "cancelled", pcls, false);
+        let _ = decide_retry(&state, "u", "x", "t1", "cancelled", pcls, false).await;
         assert_eq!(state.read().network_error_streak.load(Ordering::Relaxed), 0);
     }
 }

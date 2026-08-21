@@ -6,6 +6,7 @@
 //! üretilir ve 401/403'te fallback olarak denenir.
 
 use percent_encoding::{percent_decode_str, percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use std::path::PathBuf;
 
 /// Python `quote(..., safe="/@:$&'()*+,;=-._~")` eşleniği: `/` ve çoğu yazım
 /// karakteri encode edilmez.
@@ -139,11 +140,41 @@ pub fn build_alt_urls(url: &str, meta: &ArchiveMeta) -> Vec<String> {
     out
 }
 
-/// Cookie'yi `RGSX_ARCHIVE_ORG_COOKIE_PATH` dosyasından okur (Python `load_archive_org_cookie`).
-/// "Cookie: ..." ön ekini soyar.
+/// Cookie'yi okur (Python `load_archive_org_cookie` eşleniği). Öncelik sırası:
+/// 1. `RGSX_ARCHIVE_ORG_COOKIE_PATH` env değişkeni (açık yol, en yüksek öncelik).
+/// 2. Upstream parity: `./assets/ArchiveOrgCookie.txt` ve `./ArchiveOrgCookie.txt`
+///    (CWD'ye göre), sonra çalıştırılabilirin dizinine göre aynı iki yol.
+/// "Cookie: ..." ön ekini soyar. Dosya yoksa anonim moda (None) devam edilir.
 pub fn load_archive_org_cookie() -> Option<String> {
-    let path = std::env::var("RGSX_ARCHIVE_ORG_COOKIE_PATH").ok()?;
-    let value = std::fs::read_to_string(&path).ok()?.trim().to_string();
+    // 1) Env var (açık, en yüksek öncelik)
+    if let Ok(path) = std::env::var("RGSX_ARCHIVE_ORG_COOKIE_PATH") {
+        if !path.trim().is_empty() {
+            if let Some(c) = read_cookie_file(&path) {
+                return Some(c);
+            }
+        }
+    }
+    // 2) Upstream parity: varsayılan dosya konumları
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    candidates.push(PathBuf::from("assets/ArchiveOrgCookie.txt"));
+    candidates.push(PathBuf::from("ArchiveOrgCookie.txt"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("assets/ArchiveOrgCookie.txt"));
+            candidates.push(dir.join("ArchiveOrgCookie.txt"));
+        }
+    }
+    for p in candidates {
+        if let Some(c) = read_cookie_file(&p) {
+            return Some(c);
+        }
+    }
+    None
+}
+
+/// Dosyadan çerez metnini okur, "Cookie:" ön ekini soyar, boşsa None döner.
+fn read_cookie_file<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
+    let value = std::fs::read_to_string(path).ok()?.trim().to_string();
     if value.is_empty() {
         return None;
     }
