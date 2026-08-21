@@ -700,8 +700,10 @@
   "browse_title": "Selecionar pasta",
   "queue_empty": "Fila vazia",
   "pause_all": "⏸ Pausar",
-  "games": "jogos",
-  "search_results": "Jogos",
+
+  "network_down_banner": "Sem conexão com a Internet — os downloads estão em pausa e serão retomados automaticamente quando a conexão voltar.",  "games": "jogos",
+
+  "network_restored_toast": "Conexão restabelecida — os downloads foram retomados automaticamente.",  "search_results": "Jogos",
   "browse_error": "Não foi possível listar o diretório: ",
   "clear": "Limpar",
   "system_info": "Informações do sistema",

@@ -7,7 +7,7 @@ import BrowseDirectories from './components/BrowseDirectories.vue'
 
 const connected = ref(false)
 const lastEvent = ref('')
-const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {}, status: 'Running' })
+const snapshot = reactive({ history: [], queue: [], active: false, progress: {}, downloaded: {}, status: 'Running', network_down: false })
 const progress = reactive({})
 const isPaused = computed(() => snapshot.status === 'Paused')
 
@@ -131,6 +131,7 @@ function applySnapshot(data) {
   if (data.progress) Object.assign(progress, data.progress)
   if (data.downloaded) snapshot.downloaded = data.downloaded
   if (data.status) snapshot.status = data.status
+  if (typeof data.network_down === 'boolean') snapshot.network_down = data.network_down
   lastEvent.value = 'snapshot'
 }
 onMounted(async () => {
@@ -165,6 +166,11 @@ onMounted(async () => {
     downloaded: (data) => {
       lastEvent.value = 'downloaded'
       snapshot.downloaded = (data && data.downloaded) || data || snapshot.downloaded
+    },
+    // TASK-002-gap-32: gerçek kesinti sonrası bağlantı geri geldiğinde kısa teyit toast'u.
+    // (Down durumu zaten üstteki sarı banner ile gösteriliyor; orada ayrı bildirim yok.)
+    network_restored: () => {
+      pushToast(tt('network_restored_toast'), 'success')
     },
   })
   await loadPlatforms()
@@ -556,6 +562,8 @@ function statusMeta(raw) {
     return { label: 'SEEDING', color: '#17a2b8', cls: 'st-run' }
   if (s === 'Downloading' || s === 'Connecting' || s === 'Verifying' || s.startsWith('Try') || s === 'downloading')
     return { label: 'DOWNLOADING', color: '#ffcc00', cls: 'st-run' }
+  if (s === 'Ağ bekleniyor')
+    return { label: 'AĞ BEKLENİYOR', color: '#17a2b8', cls: 'st-netdown' }
   return { label: s || 'UNKNOWN', color: '#6c757d', cls: 'st-info' }
 }
 
@@ -687,6 +695,8 @@ async function switchTab(t) {
       <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" :title="tt('settings_title')" :aria-label="tt('settings_title')">⚙</button>
       <Support />
     </header>
+
+    <p v-if="snapshot.network_down" class="netdown-banner">⚠ {{ tt('network_down_banner') }}</p>
 
     <!-- Global search -->
     <div class="searchbar">
@@ -1059,6 +1069,9 @@ h1 { font-size: 20px; margin: 0; }
 }
 .gear:hover { background: rgba(255,255,255,0.32); }
 .gear.on { background: #fff; color: #667eea; }
+
+.netdown-banner { background: #fff3cd; color: #856404; border: 1px solid #ffe69c; padding: 12px 16px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; font-weight: 600; }
+.st-netdown { border-left: 4px solid #17a2b8; }
 
 .searchbar { display: flex; gap: 8px; margin: 16px 0; }
 .searchbar input { flex: 1; background: #fff; border: 2px solid #ddd; border-radius: 8px; padding: 8px 12px; color: #333; font-size: 13px; }

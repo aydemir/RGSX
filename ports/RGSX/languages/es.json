@@ -700,8 +700,10 @@
   "browse_title": "Seleccionar carpeta",
   "queue_empty": "Cola vacía",
   "pause_all": "⏸ Pausa",
-  "games": "juegos",
-  "search_results": "Juegos",
+
+  "network_down_banner": "Sin conexión a Internet — las descargas están en pausa y se reanudarán automáticamente al recuperar la conexión.",  "games": "juegos",
+
+  "network_restored_toast": "Conexión restablecida — las descargas se han reanudado automáticamente.",  "search_results": "Juegos",
   "browse_error": "No se pudo listar el directorio: ",
   "clear": "Limpiar",
   "system_info": "Información del sistema",

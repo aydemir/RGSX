@@ -5,7 +5,7 @@
 //! placeholder: gerçek persist/worker bağlantısı TASK-002c.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
@@ -163,6 +163,24 @@ pub struct StateData {
     /// TASK-002-gap-29: URL başına pause sinyali. Global pause'da devam eden
     /// native HTTP-direct indirmelerin `CancelFlag`'i tetiklenir (abort).
     pub pause_signals: HashMap<String, Arc<Notify>>,
+    /// TASK-002-gap-32: ağ bağlantısı koptuğunda indirmeleri PARK eden global bayrak.
+    /// `true` iken tüm indirme döngüleri duraklatılır (retry budget yakılmaz); bağlantı
+    /// geri gelince `network_resume` ile uyandırılıp kaldığı yerden devam eder.
+    /// `StateData` içinde tutulur (global_paused gibi dış AppState değil) çünkü hem
+    /// park gate (okuma) hem decide_retry/reconnect-probe (yazma) zaten kilitliyken
+    /// erişir; ayrıca SSE snapshot'ına `network_down` alanı olarak kolayca eklenir.
+    pub network_down: Arc<AtomicBool>,
+    /// `network_down`→`false` geçişinde (yeniden bağlanınca) bekleyen döngüleri uyandırır.
+    pub network_resume: Arc<Notify>,
+    /// Ardışık Network hatası sayacı — `NETWORK_DOWN_THRESHOLD`'a ulaşınca `network_down`
+    /// `true` yapılır. Ağ tekrar dönünce veya Network-dışı hata olunca sıfırlanır.
+    pub network_error_streak: Arc<AtomicU32>,
+    /// TASK-002-gap-32: GERÇEK kesinti onayı. Park gate'de probe BAŞARISIZ olunca
+    /// (`network_down` zaten `true`) `true` set edilir; probe başarılı olup `network_down`
+    /// `false`'a çekilirken yalnızca bu bayrak `true` ise `network_restored` SSE olayı
+    /// yayınlanır (sonra temizlenir). Böylece tek bir ölü host (internet yukarı) titreşimi
+    /// sahte "bağlantı geri geldi" bildirimi üretmez — bayrak yalnız gerçek outage'da set edilir.
+    pub network_outage_confirmed: Arc<AtomicBool>,
 }
 
 impl StateData {
@@ -196,6 +214,10 @@ impl StateData {
             status: QueueStatus::Running,
             pause_resume: Arc::new(Notify::new()),
             pause_signals: HashMap::new(),
+            network_down: Arc::new(AtomicBool::new(false)),
+            network_resume: Arc::new(Notify::new()),
+            network_error_streak: Arc::new(AtomicU32::new(0)),
+            network_outage_confirmed: Arc::new(AtomicBool::new(false)),
         }
     }
 

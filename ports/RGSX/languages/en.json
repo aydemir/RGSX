@@ -700,8 +700,10 @@
   "browse_title": "Select Folder",
   "queue_empty": "Queue empty",
   "pause_all": "⏸ Pause",
-  "games": "games",
-  "search_results": "Games",
+
+  "network_down_banner": "No internet connection — downloads are paused and will resume automatically when the connection returns.",  "games": "games",
+
+  "network_restored_toast": "Connection restored — downloads have resumed automatically.",  "search_results": "Games",
   "browse_error": "Could not list directory: ",
   "clear": "Clear",
   "system_info": "System Info",

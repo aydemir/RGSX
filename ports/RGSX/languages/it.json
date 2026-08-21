@@ -700,8 +700,10 @@
   "browse_title": "Seleziona cartella",
   "queue_empty": "Coda vuota",
   "pause_all": "⏸ Pausa",
-  "games": "giochi",
-  "search_results": "Giochi",
+
+  "network_down_banner": "Nessuna connessione Internet — i download sono in pausa e riprenderanno automaticamente al ritorno della connessione.",  "games": "giochi",
+
+  "network_restored_toast": "Connessione ripristinata — i download sono ripresi automaticamente.",  "search_results": "Giochi",
   "browse_error": "Impossibile elencare la directory: ",
   "clear": "Pulisci",
   "system_info": "Informazioni di sistema",

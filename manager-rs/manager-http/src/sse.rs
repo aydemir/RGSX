@@ -60,6 +60,8 @@ pub fn snapshot_json(data: &StateData) -> serde_json::Value {
     };
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("status".into(), serde_json::json!(s));
+        // TASK-002-gap-32: UI'nin ağ-koptu durumunu görmesi (banner + "Ağ bekleniyor").
+        obj.insert("network_down".into(), serde_json::json!(data.network_down.load(Ordering::Relaxed)));
     }
     snap
 }

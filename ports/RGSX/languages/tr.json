@@ -696,8 +696,10 @@
   "browse_title": "Klasör Seç",
   "queue_empty": "Kuyruk boş",
   "pause_all": "⏸ Duraklat",
-  "games": "oyun",
-  "search_results": "Oyunlar",
+
+  "network_down_banner": "İnternet bağlantısı yok — indirmeler duraklatıldı, bağlantı gelince otomatik devam edecek.",  "games": "oyun",
+
+  "network_restored_toast": "Bağlantı geri geldi — indirmeler otomatik olarak devam ediyor.",  "search_results": "Oyunlar",
   "browse_error": "Dizin listelenemedi: ",
   "clear": "Temizle",
   "system_info": "Sistem Bilgisi",

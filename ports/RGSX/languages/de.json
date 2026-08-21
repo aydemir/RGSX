@@ -700,8 +700,10 @@
   "browse_title": "Ordner auswählen",
   "queue_empty": "Warteschlange leer",
   "pause_all": "⏸ Pause",
-  "games": "Spiele",
-  "search_results": "Spiele",
+
+  "network_down_banner": "Keine Internetverbindung — Downloads sind pausiert und werden bei Wiederverbindung automatisch fortgesetzt.",  "games": "Spiele",
+
+  "network_restored_toast": "Verbindung wiederhergestellt — Downloads wurden automatisch fortgesetzt.",  "search_results": "Spiele",
   "browse_error": "Verzeichnis konnte nicht aufgelistet werden: ",
   "clear": "Leeren",
   "system_info": "Systeminfo",

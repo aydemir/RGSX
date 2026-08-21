@@ -700,8 +700,10 @@
   "browse_title": "Sélectionner un dossier",
   "queue_empty": "File d'attente vide",
   "pause_all": "⏸ Pause",
-  "games": "jeux",
-  "search_results": "Jeux",
+
+  "network_down_banner": "Pas de connexion Internet — les téléchargements sont en pause et reprendront automatiquement à la reconnexion.",  "games": "jeux",
+
+  "network_restored_toast": "Connexion rétablie — les téléchargements ont repris automatiquement.",  "search_results": "Jeux",
   "browse_error": "Impossible de lister le répertoire : ",
   "clear": "Effacer",
   "system_info": "Infos système",

@@ -19,6 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Notify};
 
 use manager_core::contract;
@@ -33,6 +34,11 @@ use crate::state::{AppState, QueueCommand, QueueStatus, QueuedItem, TaskState};
 
 /// CORS başlığı (tüm yanıtlarda; handlers.py `_set_headers`).
 const CORS: [(&str, &str); 1] = [("Access-Control-Allow-Origin", "*")];
+
+/// TASK-002-gap-32: ardışık ağ hatası eşiği. Bu sayıda üst üste Network hatası
+/// olursa `network_down` bayrağı set edilir (indirmeler park edilir). Kısa
+/// (tek seferlik) blip'lerde false-positive'i önler; 3 hata ~15-20s sürer.
+const NETWORK_DOWN_THRESHOLD: u32 = 3;
 
 fn cors_response(status: StatusCode, value: Value) -> Response {
     (status, CORS, Json(value)).into_response()
@@ -606,6 +612,33 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                 let current_url = u.clone();
                 let mut aborted: Option<String> = None;
                 loop {
+                    // TASK-002-gap-32: ağ koptuysa indirmeyi başlatmadan PARK et
+                    // (retry budget yakma). Bağlantı dönünce reconnect-probe ile uyan.
+                    let down = state2.read().network_down.load(Ordering::Relaxed);
+                    if down {
+                        if probe_connectivity().await {
+                            let mut d = state2.write();
+                            d.network_down.store(false, Ordering::SeqCst);
+                            d.network_error_streak.store(0, Ordering::SeqCst);
+                            for q in d.queue.iter_mut() {
+                                if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
+                                    q["status"] = json!("Downloading");
+                                }
+                            }
+                            d.network_resume.notify_waiters();
+                            state2.dirty.store(true, Ordering::SeqCst);
+                            // TASK-002-gap-32: yalnızca GERÇEK kesinti sonrası restore bildirimi
+                            // (ölü-host titreşiminde spam olmasın). Onay bayrağı tek emitçi garantiler.
+                            if d.network_outage_confirmed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                                crate::sse::publish(&state2.events, "network_restored", &serde_json::json!({ "network_down": false }));
+                            }
+                        } else {
+                            state2.write().network_outage_confirmed.store(true, Ordering::SeqCst);
+                            let nr = state2.read().network_resume.clone();
+                            let _ = tokio::time::timeout(Duration::from_millis(1000), nr.notified()).await;
+                            continue;
+                        }
+                    }
                     let cb_state = state2.clone();
                     let cb_url = current_url.clone();
                     // F6: progress SSE'i artık `broadcast_loop` (250ms batched delta)
@@ -665,12 +698,14 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                         .await;
                     match res {
                         Ok(src) => {
+                            state2.write().network_error_streak.store(0, Ordering::SeqCst);
                             finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, true, src.to_string_lossy().as_ref()).await;
                             break;
                         }
                         Err(e) => {
                             let cls = classify_bridge_error(&e);
-                            match decide_retry(&state2, &current_url, &n, &current_task_id, &e.to_string(), cls) {
+                            let is_network = matches!(e, BridgeError::Timeout(_));
+                            match decide_retry(&state2, &current_url, &n, &current_task_id, &e.to_string(), cls, is_network) {
                                 RetryDecision::Retry { new_task_id, delay } => {
                                     let dur = Duration::from_secs_f64(delay.max(0.0));
                                     tokio::select! {
@@ -1825,6 +1860,24 @@ fn classify_download_error(err: &DownloadError) -> ErrorClass {
     }
 }
 
+/// TASK-002-gap-32: hafif bağlantı sondası. DNS gerektirmeyen iyi bilinen
+/// IP'lere (8.8.8.8 / 1.1.1.1) TCP connect dener; herhangi biri açılırsa ağ
+/// "geri döndü" kabul edilir. DNS literal kullanıldığından offline iken DNS
+/// çözümlemesi takılmaz; connect 2s timeout ile sınırlıdır.
+async fn probe_connectivity() -> bool {
+    const PROBES: [&str; 2] = ["8.8.8.8:53", "1.1.1.1:53"];
+    for addr in PROBES {
+        if tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr))
+            .await
+            .map(|r| r.is_ok())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn decide_retry(
     state: &AppState,
     url: &str,
@@ -1832,8 +1885,39 @@ fn decide_retry(
     current_task_id: &str,
     err_msg: &str,
     err_class: ErrorClass,
+    is_network: bool,
 ) -> RetryDecision {
     let mut data = state.write();
+    // TASK-002-gap-32: ağ-koptu tespiti — ardışık Network hatası sayacı.
+    if is_network {
+        // Ağ zaten aşağıysa ek retry budget yakma; loop-top park gate yakalar.
+        if data.network_down.load(Ordering::Relaxed) {
+            return RetryDecision::Retry {
+                new_task_id: current_task_id.to_string(),
+                delay: 0.0,
+            };
+        }
+        let streak = data.network_error_streak.fetch_add(1, Ordering::SeqCst) + 1;
+        if streak >= NETWORK_DOWN_THRESHOLD {
+            data.network_down.store(true, Ordering::SeqCst);
+            // Park edilecek indirmelerin durumunu "Ağ bekleniyor" yap (UI).
+            for q in data.queue.iter_mut() {
+                let s = q.get("status").and_then(Value::as_str).unwrap_or("");
+                if s == "Downloading" || s == "Retrying" || s == "Connecting" || s == "Verifying" {
+                    q["status"] = json!("Ağ bekleniyor");
+                }
+            }
+            state.dirty.store(true, Ordering::SeqCst);
+            // Sıfır gecikmeyle retry döngüsüne dön; loop-top park gate park eder.
+            return RetryDecision::Retry {
+                new_task_id: current_task_id.to_string(),
+                delay: 0.0,
+            };
+        }
+    } else {
+        // Ağ-dışı hata → streak'i sıfırla (flapping'i önler).
+        data.network_error_streak.store(0, Ordering::SeqCst);
+    }
     let failures = *data.retries.get(url).unwrap_or(&0);
     if err_class == ErrorClass::Transient && failures < retry::DEFAULT_MAX_RETRIES {
         let new_failures = failures + 1;
@@ -1988,7 +2072,32 @@ async fn native_ddl_download(
                 let _ = tokio::time::timeout(Duration::from_millis(1000), pr.notified()).await;
                 continue;
             }
-            let progress_state = c_state.clone();
+                // TASK-002-gap-32: ağ koptuysa indirmeyi başlatmadan PARK et.
+                let down = c_state.read().network_down.load(Ordering::Relaxed);
+                if down {
+                    if probe_connectivity().await {
+                        let mut d = c_state.write();
+                        d.network_down.store(false, Ordering::SeqCst);
+                        d.network_error_streak.store(0, Ordering::SeqCst);
+                        for q in d.queue.iter_mut() {
+                            if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
+                                q["status"] = json!("Downloading");
+                            }
+                        }
+                        d.network_resume.notify_waiters();
+                        c_state.dirty.store(true, Ordering::SeqCst);
+                        // TASK-002-gap-32: yalnızca GERÇEK kesinti sonrası restore bildirimi.
+                        if d.network_outage_confirmed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                            crate::sse::publish(&c_state.events, "network_restored", &serde_json::json!({ "network_down": false }));
+                        }
+                    } else {
+                        c_state.write().network_outage_confirmed.store(true, Ordering::SeqCst);
+                        let nr = c_state.read().network_resume.clone();
+                        let _ = tokio::time::timeout(Duration::from_millis(1000), nr.notified()).await;
+                        continue;
+                    }
+                }
+                let progress_state = c_state.clone();
             let progress_url = current_url.clone();
             let req = manager_download::http::DownloadRequest {
                 url: resolved.clone(),
@@ -2039,6 +2148,7 @@ async fn native_ddl_download(
 
             match result {
                 Ok(path) => {
+                    c_state.write().network_error_streak.store(0, Ordering::SeqCst);
                     finalize_download_in_state(
                         &c_state,
                         &current_task_id,
@@ -2064,6 +2174,7 @@ async fn native_ddl_download(
                         continue;
                     }
                     let cls = classify_download_error(&e);
+                    let is_network = matches!(e, DownloadError::Network(_));
                     match decide_retry(
                         &c_state,
                         &current_url,
@@ -2071,6 +2182,7 @@ async fn native_ddl_download(
                         &current_task_id,
                         &e.message(),
                         cls,
+                        is_network,
                     ) {
                         RetryDecision::Retry { new_task_id, delay } => {
                             let dur = Duration::from_secs_f64(delay.max(0.0));
@@ -2600,5 +2712,48 @@ mod tests {
                 .any(|e| e["game_name"] == "Dead Game" && e["status"] == "Erreur"),
             "history must record the failed download as Erreur"
         );
+    }
+
+    #[tokio::test]
+    async fn gap32_network_streak_flips_down_and_parks_status() {
+        // TASK-002-gap-32: 3 ardışık Network hatası → network_down=true ve
+        // aktif kuyruk öğesi "Ağ bekleniyor" durumuna geçer (park edilir).
+        let state = AppState::empty();
+        {
+            let mut d = state.write();
+            d.queue.push(json!({"task_id":"t1","status":"Downloading","game_name":"x","url":"u"}));
+        }
+        let cls = classify_download_error(&DownloadError::Network("simulated".to_string()));
+        assert_eq!(cls, ErrorClass::Transient);
+        // İlk iki hata: henüz aşağı değil, sıradan Retry döner.
+        for _ in 0..2 {
+            let r = decide_retry(&state, "u", "x", "t1", "sim", cls, true);
+            assert!(matches!(r, RetryDecision::Retry { .. }));
+            assert!(!state.read().network_down.load(Ordering::Relaxed));
+        }
+        // Üçüncü hata: ağ aşağıya geçer.
+        let r = decide_retry(&state, "u", "x", "t1", "sim", cls, true);
+        assert!(matches!(r, RetryDecision::Retry { .. }));
+        assert!(state.read().network_down.load(Ordering::Relaxed));
+        let s = state.read().queue[0]
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(s, "Ağ bekleniyor");
+    }
+
+    #[tokio::test]
+    async fn gap32_non_network_error_resets_streak() {
+        // Ağ-dışı hata, birikmiş streak'i sıfırlar (flapping'i önler).
+        let state = AppState::empty();
+        let ncls = classify_download_error(&DownloadError::Network("sim".to_string()));
+        for _ in 0..2 {
+            let _ = decide_retry(&state, "u", "x", "t1", "sim", ncls, true);
+        }
+        assert_eq!(state.read().network_error_streak.load(Ordering::Relaxed), 2);
+        let pcls = classify_download_error(&DownloadError::Canceled);
+        let _ = decide_retry(&state, "u", "x", "t1", "cancelled", pcls, false);
+        assert_eq!(state.read().network_error_streak.load(Ordering::Relaxed), 0);
     }
 }
