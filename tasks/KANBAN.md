@@ -50,6 +50,12 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 
 ---
 
+## DİĞER TAMAMLANAN GÖREVLER
+
+- [x] `TASK-011` Native `load_games` Python list-of-lists games json formatını parse edemiyor — `tasks/done/TASK-011-games-parser.md` (✅ 2026-08-21: `catalog.rs:393-422` her iki formatı çözüyor + `games_list_format` contract testi; görev yanlışlıkla silinmişti, `done/`'a taşındı)
+
+---
+
 ## BELİRSİZ MADDELER (kullanıcı onayı gerekir)
 
 - gap-12: concurrency gate mekanizması (Semaphore mı / slot sayacı mı) ve FIFO worker şekli — BELİRSİZ
