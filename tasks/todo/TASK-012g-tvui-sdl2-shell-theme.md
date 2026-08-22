@@ -2,7 +2,7 @@
 
 - **id:** TASK-012g
 - **title:** Native TVUI shell (rust-sdl2) + `theme.json` yükleyici + `RGSX_TVUI` flag hook
-- **status:** todo
+- **status:** completed
 - **priority:** P1
 - **created:** 2026-08-21
 - **environment:** both
@@ -72,3 +72,7 @@ tek bir **`theme.json`** şemasına portlanır; `serde_json` ile tip-güvenli y�
 ## İlerleme
 
 - 2026-08-21 — plan.md §5.1 + yön (B) kararıyla çıkarıldı (SPA TASK-012a..f superseded).
+- 2026-08-22 — `theme.rs`, `sdl2_shell.rs`, `assets/theme.json`, `lib.rs` yazıldı; build yeşil (SDL2
+  bundled, cmake 4.x için `CMAKE_POLICY_VERSION_MINIMUM=3.5`). `cargo test -p manager-tvui` →
+  7/7 yeşil (tema birim testleri + native_input). `RGSX_TVUI=1` canlı SDL2 penceresi manuel doğr.
+  bekliyor (palet gözle kontrol).

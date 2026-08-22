@@ -1,57 +1,35 @@
-//! Faz 12b — TVUI native shell.
+//! Faz 12b (yön B) — TVUI native shell (rust-sdl2).
 //!
-//! Strateji (ROADMAP_FAZ12): pygame TVUI'yi Rust'a port etmek yerine, mevcut WebUI
-//! SPA'sını (`?mode=tv` ile 10-foot layout + gamepad/kumanda nav) native bir
-//! pencerede gösteririz. Böylece tek bir frontend bakımı kalır.
-//!
-//! Varsayılan yol: harici kiosk tarayıcı (chromium/chrome)
-//! `http://127.0.0.1:<port>/?mode=tv` ile tam ekran açılır (webkit2gtk gerektirmez).
-//!
-//! Gelecek: `wry`+`tao` ile bağımlılıksız webview penceresi (ayrı `webview` feature)
-//! bu ortamdaki gdk-3 link çakışması nedeniyle şimdilik devre dışı; uygun makinede
-//! eklenecek.
+//! `ports/RGSX/tvui.py` + `display/*` + `controls/*` (pygame native) Rust'a birebir
+//! SDL2 primitives ile portlanır; temalar `theme.json` (`colors.py`+`fonts.py`+
+//! `transitions.py`+`icons.py`) ile serde_json yüklenir (ES `theme.xml` yerine).
+//! `RGSX_TVUI=1` → SDL2 native shell; `RGSX_TVUI=0` → eski Python pygame fallback
+//! (bu crate o durumda çağrılmaz).
 
-/// TASK-005-B — native SDL2/gilrs gamepad girdi yolu (yalnız `native-input`
-/// feature ile derlenir; varsayılan build'de boş modül).
 pub mod native_input;
+pub mod sdl2_shell;
+pub mod theme;
 
-/// TVUI URL'i — WebUI SPA'sı, TV modu etkin.
-pub fn tv_url(port: u16) -> String {
-    format!("http://127.0.0.1:{port}/?mode=tv")
+use std::path::PathBuf;
+
+use crate::theme::Theme;
+
+/// Tema yükler: `RGSX_TVUI_THEME` env → dosya; yoksa gömülü varsayılan (`theme.json`).
+pub fn load_theme() -> Theme {
+    if let Ok(p) = std::env::var("RGSX_TVUI_THEME") {
+        let path = PathBuf::from(p.clone());
+        if let Ok(t) = Theme::load(&path) {
+            eprintln!("TVUI tema yüklendi (dosya): {}", path.display());
+            return t;
+        }
+        eprintln!("TVUI tema dosyası okunamadı, gömülü varsayılana dönülüyor: {p}");
+    }
+    theme::default_theme()
 }
 
-/// Harici kiosk tarayıcı bulup tam ekran açar. Tarayıcı bulunamazsa `Err`.
-pub fn launch(port: u16) -> Result<(), String> {
-    let url = tv_url(port);
-    for exe in [
-        "chromium",
-        "chromium-browser",
-        "google-chrome",
-        "chrome",
-        "chrome.exe",
-    ] {
-        // Çalıştırılabilir mevcut mu?
-        if std::process::Command::new(exe)
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            let mut cmd = std::process::Command::new(exe);
-            cmd.args([
-                "--kiosk",
-                "--start-fullscreen",
-                "--app",
-                &url,
-                "--noerrdialogs",
-                "--disable-translate",
-                "--disable-infobars",
-            ]);
-            match cmd.spawn() {
-                Ok(_) => return Ok(()),
-                Err(e) => return Err(format!("{exe} başlatılamadı: {e}")),
-            }
-        }
-    }
-    Err("kiosk tarayıcı bulunamadı (chromium/chrome). Yüklü bir tarayıcı gerekli.".into())
+/// `RGSX_TVUI=1` iken manager-bin tarafından çağrılır: SDL2 native shell'i açar
+/// (bloklayıcı — ayrı thread'de çalışır). `port` ileride SSE bağlantısı için saklanır.
+pub fn launch(_port: u16) -> Result<(), String> {
+    let theme = load_theme();
+    sdl2_shell::run_native_shell(&theme)
 }

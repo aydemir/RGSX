@@ -3,19 +3,19 @@ name = "manager-tvui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "TVUI native shell — aynı SPA'yı kiosk tarayıcıda tam ekran render eder (Faz 12b)"
+description = "TVUI native shell — rust-sdl2 ile 10-foot native render (Faz 12b, yön B)"
 
-# NOT: Native webview embedding (wry+tao) bu crate'e eklenebilir bir `webview`
-# feature ile planlandı, ancak bu build ortamında tao'nun gdk-3 `links` çakışması
-# yüzünden workspace lockfile'ı çözümlenemiyor. Bu nedenle varsayılan yol harici
-# kiosk tarayıcı (chromium/chrome) spawn'ıdır; webview embedding uygun bir makinede
-# (webkit2gtk/webview2 yüklü) ayrı bir alt görev olarak eklenecek.
+# Yön (B): `display/*`+`controls/*` (pygame native) SDL2 primitives'e birebir portlanır;
+# temalar `theme.json` (`colors.py`+`fonts.py`+`transitions.py`+`icons.py`) serde_json ile
+# yüklenir (ES `theme.xml` yerine). `RGSX_TVUI=1` → SDL2 native; `=0` → Python fallback.
 
 [dependencies]
 manager-http = { path = "../manager-http" }
 manager-core = { path = "../manager-core" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
+sdl2 = { version = "0.37", default-features = false, features = ["bundled"] }
 
 # TASK-005-B — native SDL2/gilrs gamepad girdi yolu (yalnız `native-input` feature
 # ile gelir; böylece libudev gerektiren gilrs varsayılan Linux sandbox build'ini
