@@ -174,6 +174,8 @@ pub struct StateData {
     pub catalog_ready: Arc<AtomicBool>,
     /// Bootstrap başarısızsa hata nedeni (snapshot'ta TVUI'ye düşer).
     pub catalog_error: Option<String>,
+    /// TASK-012m — manager self-update mevcutsa `{available,version,url,sha256}` (snapshot'ta TVUI'ye).
+    pub manager_update: Option<serde_json::Value>,
     /// `network_down`→`false` geçişinde (yeniden bağlanınca) bekleyen döngüleri uyandırır.
     pub network_resume: Arc<Notify>,
     /// Ardışık Network hatası sayacı — `NETWORK_DOWN_THRESHOLD`'a ulaşınca `network_down`
@@ -221,6 +223,7 @@ impl StateData {
             network_down: Arc::new(AtomicBool::new(false)),
             catalog_ready: Arc::new(AtomicBool::new(false)),
             catalog_error: None,
+            manager_update: None,
             network_resume: Arc::new(Notify::new()),
             network_error_streak: Arc::new(AtomicU32::new(0)),
             network_outage_confirmed: Arc::new(AtomicBool::new(false)),

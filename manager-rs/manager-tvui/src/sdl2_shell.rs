@@ -12,6 +12,7 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
+use crate::net::trigger_update_download;
 use crate::net::SharedTvuiState;
 use crate::theme::Theme;
 
@@ -116,6 +117,34 @@ fn draw_grid(
     }
 }
 
+/// TASK-012m — güncelleme mevcutsa üstte placeholder banner (metin yok; ttf erte).
+/// `update_status` varsa renk değişir (indirme sonucu görünür).
+fn draw_update_banner(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    state: &SharedTvuiState,
+    (w, _h): (u32, u32),
+) {
+    let (avail, status) = {
+        let s = state.lock().unwrap();
+        (s.update_available.clone(), s.update_status.clone())
+    };
+    if avail.is_none() {
+        return;
+    }
+    let bw = ((w as i32) * 60 / 100).max(40) as u32;
+    let bx = ((w as i32 - bw as i32) / 2).max(0) as i32;
+    let by = 8i32;
+    let bh: u32 = 28;
+    let color = if status.is_some() {
+        theme.color("neon")
+    } else {
+        theme.color("error_text")
+    };
+    canvas.set_draw_color(to_color(color));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx, by, bw, bh));
+}
+
 /// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere
 /// kapatma ile çıkılır. Bloklayıcıdır; manager-bin ayrı thread'de çağırır.
 /// `state`: SSE `catalog_update` ilerlemesini çizen loading bar'ının kaynağı.
@@ -145,10 +174,26 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+                // TASK-012m: yalnızca ready/grid iken Enter → download tetikle
+                // (katalog loading sırasında Enter yutulmaz ama bir şey yapmaz).
+                Event::KeyDown {
+                    keycode: Some(Keycode::Return),
+                    ..
+                } => {
+                    let (avail, ready, port) = {
+                        let s = state.lock().unwrap();
+                        (s.update_available.clone(), s.ready, s.port)
+                    };
+                    if avail.is_some() && ready {
+                        let st = trigger_update_download(port);
+                        state.lock().unwrap().update_status = Some(st);
+                    }
+                }
                 _ => {}
             }
         }
         let dims = draw_background(&mut canvas, theme, &preset);
+        draw_update_banner(&mut canvas, theme, state, dims);
         // Loading → ready → platform_grid geçişi (012h omurgası).
         let ready = state.lock().unwrap().ready;
         if ready {

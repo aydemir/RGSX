@@ -20,6 +20,7 @@ pub mod catalog_bootstrap;
 pub mod es_input;
 pub mod persist;
 pub mod sse;
+pub mod self_update;
 pub mod state;
 
 use axum::routing::{get, post, get_service};
@@ -53,6 +54,8 @@ pub fn router(app: AppState) -> Router {
         .route("/api/es-input", get(api::es_input))
         .route("/api/favicon", get(api::favicon))
         .route("/api/update-cache", get(api::update_cache))
+        .route("/api/manager-update", get(api::manager_update_status))
+        .route("/api/manager-update/download", post(api::manager_update_download))
         .route("/api/download", post(api::download))
         .route("/api/download/batch", post(api::download_batch))
         .route("/api/cancel", post(api::cancel))

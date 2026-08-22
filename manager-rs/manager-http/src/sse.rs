@@ -65,6 +65,8 @@ pub fn snapshot_json(data: &StateData) -> serde_json::Value {
         // Faz 2c-race: katalog bootstrap durumu TVUI'ye snapshot'ta sinyal (geç abone kurtulur).
         obj.insert("catalog_ready".into(), serde_json::json!(data.catalog_ready.load(Ordering::Relaxed)));
         obj.insert("catalog_error".into(), serde_json::json!(data.catalog_error));
+        // TASK-012m: manager self-update durumu TVUI'ye snapshot'ta sinyal.
+        obj.insert("manager_update".into(), serde_json::json!(data.manager_update));
     }
     snap
 }

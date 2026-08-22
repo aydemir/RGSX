@@ -324,6 +324,13 @@ async fn run(paths: paths::RgsxPaths) {
         tokio::spawn(async move {
             manager_http::catalog_bootstrap::ensure_catalog_ready(Some(&boot_ev), Some(boot_data)).await;
         });
+        // TASK-012m: manager self-update arka plan kontrolü (RGSX_UPDATE_MANIFEST_URL
+        // yapılandırılmışsa; aksi halde no-op). Yeniyse SSE `manager_update` + StateData.
+        let upd_ev = events.clone();
+        let upd_data = state.data.clone();
+        tokio::spawn(async move {
+            manager_http::self_update::check_update(upd_ev, upd_data).await;
+        });
         state
     });
 

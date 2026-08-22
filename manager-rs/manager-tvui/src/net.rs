@@ -19,6 +19,12 @@ pub struct TvuiState {
     pub error: Option<String>,
     /// `ready` olunca `/api/platforms`'tan çekilen platformlar (grid kaynağı).
     pub platforms: Vec<PlatformTile>,
+    /// TASK-012m — manager self-update mevcutsa versiyon (placeholder prompt için).
+    pub update_available: Option<String>,
+    /// İndirme denemesinin sonucu (placeholder banner renk/state için).
+    pub update_status: Option<String>,
+    /// SSE/HTTP bağlantı portu (Enter→download tetiklemede kullanılır).
+    pub port: u16,
 }
 
 /// Tek bir platform kutusu (grid tile'ı). `name` görünen etiket, `folder` disk
@@ -123,9 +129,57 @@ fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
     }
 }
 
+/// TASK-012m — `manager_update` olayını (ya da snapshot'taki `manager_update`'i) işler:
+/// güncelleme mevcutsa `update_available`'a versiyonu yazar (placeholder prompt).
+/// Hem stream event'i (`available` kökte) hem snapshot (`data["manager_update"]`
+/// içinde nested) şeklini çözer — aksi halde snapshot yolu sessiz kalır.
+fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
+    // Stream event: available kökte. Snapshot: data["manager_update"] nested.
+    let obj = if data.get("available").is_some() {
+        data
+    } else if let Some(m) = data.get("manager_update") {
+        m
+    } else {
+        return;
+    };
+    if obj.get("available").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if let Some(v) = obj.get("version").and_then(|x| x.as_str()) {
+            state.lock().unwrap().update_available = Some(v.to_string());
+        }
+    }
+}
+
+/// TASK-012m (Faz 4) — kullanıcı onaylayınca (`Enter`) manager-http'e indirme isteği
+/// gönderir; sunucu indirir + SHA256 doğrular (üzerine yazmaz). Sonuç mesajı döner.
+pub fn trigger_update_download(port: u16) -> String {
+    let url = format!("http://127.0.0.1:{port}/api/manager-update/download");
+    match ureq::post(&url).call() {
+        Ok(r) => match r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(v) => parse_download_response(&v),
+            None => "yanıt çözülemedi".to_string(),
+        },
+        Err(e) => format!("istek hatası: {e}"),
+    }
+}
+
+/// `manager-update/download` yanıtını (contract zarfı: `{"success":true,"ok":..,"path"|"error":..}`)
+/// placeholder mesaja çözer. Saf fonksiyon → birim testle kilitlenir (en kırılgan nokta).
+fn parse_download_response(v: &serde_json::Value) -> String {
+    if v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false) {
+        format!("indirildi: {}", v.get("path").and_then(|x| x.as_str()).unwrap_or(""))
+    } else {
+        format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
+    }
+}
+
 /// `port` izerindeki manager-http'e SSE baglanir, `catalog_update` olaylarini `state`'e yazar.
 /// Baglanti kurulamazsa `state.error` set edip doner (UI yine render eder, bar 0'da kalir).
 pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
+    state.lock().unwrap().port = port;
     let url = format!("http://127.0.0.1:{port}/api/events");
     // Yalnizca connect timeout; SSE akisi uzun omurlu oldugu icin read timeout YOK.
     let agent = ureq::AgentBuilder::new()
@@ -150,6 +204,9 @@ pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
                     // Race düzeltmesi: geç bağlanan TVUI, başlangıç snapshot'ından katalogun
                     // hazır olduğunu görür ve loading bar'ını kapatır (catalog_update kaçırılsa da).
                     apply_snapshot(&state, &data);
+                    apply_manager_update(&state, &data);
+                } else if ev == "manager_update" {
+                    apply_manager_update(&state, &data);
                 }
             }
             // Faz 2e: ready olunca bir kez platformları çek (grid kaynağı).
@@ -244,5 +301,45 @@ mod tests {
     fn parse_platforms_empty_when_no_array() {
         assert!(parse_platforms(&serde_json::json!({"count": 0})).is_empty());
         assert!(parse_platforms(&serde_json::json!(null)).is_empty());
+    }
+
+    #[test]
+    fn apply_manager_update_sets_version_when_available() {
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        apply_manager_update(
+            &state,
+            &serde_json::json!({"available": true, "version": "2.0.0", "url": "x", "sha256": "y"}),
+        );
+        assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("2.0.0"));
+        // available:false → ayarlanmaz.
+        apply_manager_update(&state, &serde_json::json!({"available": false, "version": "9.9.9"}));
+        assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("2.0.0"));
+    }
+
+    #[test]
+    fn apply_manager_update_handles_snapshot_nesting() {
+        // Snapshot şekli: manager_update nested obje (kök `available` YOK).
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        apply_manager_update(
+            &state,
+            &serde_json::json!({
+                "catalog_ready": true,
+                "manager_update": {"available": true, "version": "3.1.0", "url": "u", "sha256": "s"}
+            }),
+        );
+        assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("3.1.0"));
+        // Stream event şekli: available kökte.
+        let s2: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        apply_manager_update(&s2, &serde_json::json!({"available": true, "version": "4.0.0"}));
+        assert_eq!(s2.lock().unwrap().update_available.as_deref(), Some("4.0.0"));
+    }
+
+    #[test]
+    fn parse_download_response_reads_ok_and_path() {
+        // contract zarfı: success + ok/path aynı seviyede.
+        let ok_v = serde_json::json!({"success": true, "ok": true, "path": "/tmp/x.bin"});
+        assert!(parse_download_response(&ok_v).contains("indirildi"));
+        let err_v = serde_json::json!({"success": true, "ok": false, "error": "SHA256 uyumsuz"});
+        assert!(parse_download_response(&err_v).contains("SHA256 uyumsuz"));
     }
 }

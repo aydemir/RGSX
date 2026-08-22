@@ -416,6 +416,41 @@ pub async fn update_cache() -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// TASK-012m — manager self-update (Faz 1-4 güvenli iskelet; Faz 5 replace yok)
+// ---------------------------------------------------------------------------
+
+/// GET `/api/manager-update` — bekleyen self-update durumunu döndürür
+/// (`{available,version,url,sha256}` ya da `null`).
+pub async fn manager_update_status(State(state): State<AppState>) -> Response {
+    let info = state.data.read().unwrap().manager_update.clone();
+    ok(contract::ok(json!({ "update": info })))
+}
+
+/// POST `/api/manager-update/download` — Faz 4: indir + SHA256 doğrula
+/// (üzerine YAZMA yapılmaz). Bekleyen güncelleme `StateData`'dan alınır.
+pub async fn manager_update_download(State(state): State<AppState>) -> Response {
+    let pending = state.data.read().unwrap().manager_update.clone();
+    let Some(info) = pending else {
+        return ok(contract::ok(json!({ "ok": false, "error": "bekleyen güncelleme yok" })));
+    };
+    let url = match info.get("url").and_then(|v| v.as_str()) {
+        Some(u) if !u.is_empty() => u.to_string(),
+        _ => return ok(contract::ok(json!({ "ok": false, "error": "url yok" }))),
+    };
+    let sha = info
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    match crate::self_update::download_and_verify(&url, sha.as_deref()).await {
+        Ok(path) => ok(contract::ok(json!({
+            "ok": true,
+            "path": path.display().to_string(),
+        }))),
+        Err(e) => ok(contract::ok(json!({ "ok": false, "error": e }))),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // POST — web
 // ---------------------------------------------------------------------------
 
