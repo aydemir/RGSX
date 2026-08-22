@@ -188,6 +188,21 @@ fn open_folder(path: &str) {
 }
 
 fn main() {
+    // TASK-012m Faz 5 — `--recover`: önceki apply'ın .old yedeğinden geri yükle
+    // (rollback). Sunucu BAŞLAMADAN tek-seferlik çalışır ve çıkar.
+    if std::env::args().any(|a| a == "--recover") {
+        match manager_http::self_update::recover_update(None) {
+            Ok(()) => {
+                eprintln!("recover: .old yedeğinden geri yüklendi");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("recover hatası: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // gap-26: tracing İLK (path-resolution logları görünsün), ardından single-thread
     // resolve_paths() + tokio runtime. std::env::set_var thread-safe DEĞİL (Rust 1.80+
     // unsafe) — run() öncesi tek thread'de güvenli.

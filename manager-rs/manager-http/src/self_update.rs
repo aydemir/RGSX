@@ -335,12 +335,45 @@ pub async fn apply_update(state: AppState, events: Sender<String>) -> Result<(),
         }
     }
     set_manager_stage(&state, &events, "applying", None);
+    // Hedef: varsayılan current_exe; test için RGSX_SELF_APPLY_TARGET izole kopya.
+    let target = if let Ok(t) = std::env::var("RGSX_SELF_APPLY_TARGET") {
+        PathBuf::from(t)
+    } else {
+        std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?
+    };
     // .old yedeği (rollback: manager-bin --recover).
-    let current = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let old = current.with_extension("old");
+    let old = target.with_extension("old");
     let _ = std::fs::remove_file(&old);
-    std::fs::copy(&current, &old).map_err(|e| format!(".old yedek: {e}"))?;
-    replace_and_relaunch(&path, &current)
+    std::fs::copy(&target, &old).map_err(|e| format!(".old yedek: {e}"))?;
+    // Test modu: gerçek process exit yerine senkron replace + probe relaunch.
+    // (Test process'ini öldürmemek ve izole kopya üzerinde çalışmak için.)
+    if std::env::var("RGSX_SELF_APPLY_TEST").map(|v| v == "1").unwrap_or(false) {
+        std::fs::rename(&path, &target).map_err(|e| format!("rename: {e}"))?;
+        let mut child = std::process::Command::new(&target)
+            .arg("--exact")
+            .arg("__rgsx_apply_relaunch_probe__")
+            .spawn()
+            .map_err(|e| format!("relaunch: {e}"))?;
+        let _ = child.wait();
+        return Ok(());
+    }
+    replace_and_relaunch(&path, &target)
+}
+
+/// `.old` yedeğinden çalışan exe'yi geri yükler (rollback). `manager-bin --recover`
+/// ve Faz 5 testleri tarafından kullanılır. `target_override` verilirse (test) o
+/// yolu, aksi halde `current_exe`'yi kullanır.
+pub fn recover_update(target_override: Option<PathBuf>) -> Result<(), String> {
+    let current = match target_override {
+        Some(t) => t,
+        None => std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?,
+    };
+    let old = current.with_extension("old");
+    if !old.exists() {
+        return Err("rollback yedeği (.old) bulunamadı".into());
+    }
+    std::fs::copy(&old, &current).map_err(|e| format!(".old geri yükleme: {e}"))?;
+    Ok(())
 }
 
 #[cfg(windows)]
