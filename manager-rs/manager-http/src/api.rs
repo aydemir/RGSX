@@ -450,6 +450,19 @@ pub async fn manager_update_download(State(state): State<AppState>) -> Response 
     }
 }
 
+/// POST `/api/catalog/retry` — TASK-012h bootstrap-fail UX: katalog hazırlanması
+/// başarısız olduysa (no_source / download_failed / extract_failed) yeniden dener.
+/// `ensure_catalog_ready` arka planda tetiklenir; ilerleme yine SSE `catalog_update`
+/// olaylarıyla TVUI/WebUI'ye ulaşır. Hemen `{retrying:true}` döner.
+pub async fn catalog_retry(State(state): State<AppState>) -> Response {
+    let events = state.events.clone();
+    let data = state.data.clone();
+    tokio::spawn(async move {
+        crate::catalog_bootstrap::ensure_catalog_ready(Some(&events), Some(data)).await;
+    });
+    ok(contract::ok(json!({ "retrying": true })))
+}
+
 // ---------------------------------------------------------------------------
 // POST — web
 // ---------------------------------------------------------------------------

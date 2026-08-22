@@ -12,6 +12,7 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
+use crate::net::trigger_catalog_retry;
 use crate::net::trigger_update_download;
 use crate::net::SharedTvuiState;
 use crate::theme::Theme;
@@ -50,6 +51,7 @@ fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) -> 
 
 /// Açılış loading bar'ı: SSE `catalog_update` ilerlemesini `state`'ten okur.
 /// `ready` oluncaya kadar (ya da hata varsa) ekranın ortasında çubuk çizer.
+/// Hata varsa belirgin kırmızı çerçeve çizer (metin yok — TTF erte).
 fn draw_loading(canvas: &mut Canvas<Window>, theme: &Theme, state: &SharedTvuiState, (w, h): (u32, u32)) {
     let (pct, error) = {
         let s = state.lock().unwrap();
@@ -59,19 +61,22 @@ fn draw_loading(canvas: &mut Canvas<Window>, theme: &Theme, state: &SharedTvuiSt
     let bar_h: u32 = 24;
     let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
     let y = (h as i32 / 2).max(0) as i32;
-    // Çerçeve (button_idle rengi).
+
+    if error.is_some() {
+        // Hata ekranı: üstte tam genişlik kırmızı şerit + orta çerçeve.
+        canvas.set_draw_color(to_color(theme.color("error_text")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, (y - 40).max(0) as i32, w, 6));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+        return;
+    }
+
+    // Normal ilerleme: çerçeve (button_idle) + dolum (neon).
     canvas.set_draw_color(to_color(theme.color("button_idle")));
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
-    // Dolum (neon rengi).
     let fill_w = (bar_w as f32 * pct) as i32;
     if fill_w > 0 {
         canvas.set_draw_color(to_color(theme.color("neon")));
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w as u32, bar_h));
-    }
-    if error.is_some() {
-        // Hata: bar altına kırmızı çerçeve (metin yok — font yükleme henüz yok).
-        canvas.set_draw_color(to_color(theme.color("error_text")));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 4));
     }
 }
 
@@ -84,7 +89,15 @@ fn draw_grid(
     state: &SharedTvuiState,
     (w, _h): (u32, u32),
 ) {
-    let platforms = state.lock().unwrap().platforms.clone();
+    let (platforms, offline) = {
+        let s = state.lock().unwrap();
+        (s.platforms.clone(), s.offline)
+    };
+    // Çevrimdışı mod: üstte kırmızı şerit (metin yok — TTF erte).
+    if offline {
+        canvas.set_draw_color(to_color(theme.color("error_text")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, 6));
+    }
     if platforms.is_empty() {
         return;
     }
@@ -174,17 +187,47 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
-                // TASK-012m: yalnızca ready/grid iken Enter → download tetikle
-                // (katalog loading sırasında Enter yutulmaz ama bir şey yapmaz).
+                // TASK — bootstrap fail iken R → katalogu yeniden dene (retry).
+                // Yerel durumu sıfırla; ilerleme SSE `catalog_update` ile gelir.
+                Event::KeyDown {
+                    keycode: Some(Keycode::R),
+                    ..
+                } => {
+                    let (err, port) = {
+                        let s = state.lock().unwrap();
+                        (s.error.clone(), s.port)
+                    };
+                    if err.is_some() {
+                        {
+                            let mut s = state.lock().unwrap();
+                            s.loading = true;
+                            s.ready = false;
+                            s.error = None;
+                            s.pct = 0;
+                            s.offline = false;
+                        }
+                        let _ = trigger_catalog_retry(port);
+                    }
+                }
+                // Enter: hata ekranında → çevrimdışı devam (grid'e geç);
+                // hazır/grid iken → manager güncelleme indir.
                 Event::KeyDown {
                     keycode: Some(Keycode::Return),
                     ..
                 } => {
-                    let (avail, ready, port) = {
+                    let (avail, ready, err, offline, port) = {
                         let s = state.lock().unwrap();
-                        (s.update_available.clone(), s.ready, s.port)
+                        (
+                            s.update_available.clone(),
+                            s.ready,
+                            s.error.clone(),
+                            s.offline,
+                            s.port,
+                        )
                     };
-                    if avail.is_some() && ready {
+                    if err.is_some() && !offline {
+                        state.lock().unwrap().offline = true;
+                    } else if avail.is_some() && ready {
                         let st = trigger_update_download(port);
                         state.lock().unwrap().update_status = Some(st);
                     }
@@ -194,9 +237,12 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
         }
         let dims = draw_background(&mut canvas, theme, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
-        // Loading → ready → platform_grid geçişi (012h omurgası).
-        let ready = state.lock().unwrap().ready;
-        if ready {
+        // Loading → ready/offline → platform_grid geçişi (012h omurgası).
+        let show_grid = {
+            let s = state.lock().unwrap();
+            s.ready || s.offline
+        };
+        if show_grid {
             draw_grid(&mut canvas, theme, state, dims);
         } else {
             draw_loading(&mut canvas, theme, state, dims);

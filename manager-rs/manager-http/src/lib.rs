@@ -56,6 +56,7 @@ pub fn router(app: AppState) -> Router {
         .route("/api/update-cache", get(api::update_cache))
         .route("/api/manager-update", get(api::manager_update_status))
         .route("/api/manager-update/download", post(api::manager_update_download))
+        .route("/api/catalog/retry", post(api::catalog_retry))
         .route("/api/download", post(api::download))
         .route("/api/download/batch", post(api::download_batch))
         .route("/api/cancel", post(api::cancel))

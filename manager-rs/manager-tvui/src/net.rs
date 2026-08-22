@@ -25,6 +25,9 @@ pub struct TvuiState {
     pub update_status: Option<String>,
     /// SSE/HTTP bağlantı portu (Enter→download tetiklemede kullanılır).
     pub port: u16,
+    /// TASK: bootstrap fail sonrası kullanıcı "çevrimdışı devam" seçtiyse true
+    /// (grid boş kategoriyle, kırmızı şeritle işaretli gösterilir).
+    pub offline: bool,
 }
 
 /// Tek bir platform kutusu (grid tile'ı). `name` görünen etiket, `folder` disk
@@ -62,10 +65,17 @@ fn apply_catalog_update(state: &SharedTvuiState, data: &serde_json::Value) {
         s.stage = stage.to_string();
         if stage == "ready" {
             let ok = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-            s.ready = true;
             s.loading = false;
-            s.pct = if ok { 100 } else { s.pct };
-            if !ok {
+            if ok {
+                // Başarı: hazır say, hata temizle.
+                s.ready = true;
+                s.pct = 100;
+                s.error = None;
+                s.offline = false;
+            } else {
+                // Başarısızlık: hazır SAYMA (eski davranış boş grid'e atlıyordu).
+                // Hata ekranı kalır; kullanıcı retry / offline devam karar verir.
+                s.ready = false;
                 let reason = data
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -176,6 +186,33 @@ fn parse_download_response(v: &serde_json::Value) -> String {
     }
 }
 
+/// TASK — bootstrap fail sonrası katalog hazırlanmasını yeniden dener
+/// (manager-http `/api/catalog/retry`). Sunucu arka planda bootstrap'i tekrar
+/// çalıştırır; ilerleme SSE `catalog_update` ile gelir. Sonuç mesajı döner.
+pub fn trigger_catalog_retry(port: u16) -> String {
+    let url = format!("http://127.0.0.1:{port}/api/catalog/retry");
+    match ureq::post(&url).call() {
+        Ok(r) => match r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(v) => parse_retry_response(&v),
+            None => "yanıt çözülemedi".to_string(),
+        },
+        Err(e) => format!("istek hatası: {e}"),
+    }
+}
+
+/// `/api/catalog/retry` yanıtını placeholder mesaja çözer.
+fn parse_retry_response(v: &serde_json::Value) -> String {
+    if v.get("success").and_then(|x| x.as_bool()).unwrap_or(false) {
+        "yeniden deneniyor".to_string()
+    } else {
+        format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
+    }
+}
+
 /// `port` izerindeki manager-http'e SSE baglanir, `catalog_update` olaylarini `state`'e yazar.
 /// Baglanti kurulamazsa `state.error` set edip doner (UI yine render eder, bar 0'da kalir).
 pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
@@ -262,6 +299,29 @@ mod tests {
         assert!(s.ready);
         assert!(!s.loading);
         assert_eq!(s.pct, 100);
+    }
+
+    #[test]
+    fn apply_catalog_update_failure_keeps_not_ready() {
+        // Bootstrap fail olunca ready=true olmamali (eski bug: bos grid'e atliyordu).
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        apply_catalog_update(
+            &state,
+            &serde_json::json!({"stage":"ready","success":false,"reason":"no_source"}),
+        );
+        let s = state.lock().unwrap();
+        assert!(!s.ready, "fail olunca ready=true olmamali");
+        assert!(!s.loading);
+        assert!(s.error.is_some());
+        assert!(s.error.as_ref().unwrap().contains("no_source"));
+    }
+
+    #[test]
+    fn parse_retry_response_reads_success() {
+        let ok_v = serde_json::json!({"success": true, "retrying": true});
+        assert!(parse_retry_response(&ok_v).contains("yeniden"));
+        let err_v = serde_json::json!({"success": false, "error": "kapali"});
+        assert!(parse_retry_response(&err_v).contains("kapali"));
     }
 
     #[test]
