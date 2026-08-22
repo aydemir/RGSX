@@ -258,14 +258,11 @@ async fn run(paths: paths::RgsxPaths) {
         .unwrap_or(true);
     let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> = if native_catalog {
         // Faz 12f: native katalog verisi (systems_list.json + games/) eksikse OTA'dan çek.
-        // Faz 2b: bloke etmek yerine arka plana alındı — sunucu anında başlar, TVUI/WebUI
-        // `catalog_update` SSE'iyle loading bar'ını doldurur; katalog hazır olunca UI yeniden çeker.
+        // Faz 2b: bootstrap arka plana alındı; spawn manager-bin router closure içinde,
+        // `state` (StateData) hazırken yapılır ki bootstrap bitince `catalog_ready` atomiği yazılabilsin.
+        // Sunucu anında başlar, TVUI/WebUI `catalog_update` SSE'iyle loading bar'ını doldurur.
         // İlk çalıştırmada dosyalar henüz inmediğinden NativeCatalog boş açılır (`from_env` yalnız
         // yolu saklar, paniklemez); `load_sources()` her çağrıda diskten okuduğundan ready sonrası dolulur.
-        let ev = events.clone();
-        tokio::spawn(async move {
-            manager_http::catalog_bootstrap::ensure_catalog_ready(Some(&ev)).await;
-        });
         Some(Arc::new(manager_http::catalog::NativeCatalog::from_env()))
     } else {
         std::env::var("RGSX_PYTHON_MANAGER_URL")
@@ -320,6 +317,13 @@ async fn run(paths: paths::RgsxPaths) {
         // ile kurulduğu için broadcast_loop'u ayrıca spawn etmek gerekir;
         // aksi halde UI canlı güncellenmez (yalnız F5/REST state görünür).
         tokio::spawn(manager_http::sse::broadcast_loop(state.clone()));
+        // Faz 2c-race: bootstrap tamamlanınca `StateData.catalog_ready` yazar; TVUI snapshot'tan
+        // hazır olduğunu anlar (geç SSE abonesi loading bar'da sonsuza dek takılmaz).
+        let boot_ev = events.clone();
+        let boot_data = state.data.clone();
+        tokio::spawn(async move {
+            manager_http::catalog_bootstrap::ensure_catalog_ready(Some(&boot_ev), Some(boot_data)).await;
+        });
         state
     });
 

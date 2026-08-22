@@ -170,6 +170,10 @@ pub struct StateData {
     /// park gate (okuma) hem decide_retry/reconnect-probe (yazma) zaten kilitliyken
     /// erişir; ayrıca SSE snapshot'ına `network_down` alanı olarak kolayca eklenir.
     pub network_down: Arc<AtomicBool>,
+    /// Katalog OTA bootstrap tamamlandı mı? (0/1 yerine bool — snapshot'ta TVUI'ye sinyal)
+    pub catalog_ready: Arc<AtomicBool>,
+    /// Bootstrap başarısızsa hata nedeni (snapshot'ta TVUI'ye düşer).
+    pub catalog_error: Option<String>,
     /// `network_down`→`false` geçişinde (yeniden bağlanınca) bekleyen döngüleri uyandırır.
     pub network_resume: Arc<Notify>,
     /// Ardışık Network hatası sayacı — `NETWORK_DOWN_THRESHOLD`'a ulaşınca `network_down`
@@ -215,6 +219,8 @@ impl StateData {
             pause_resume: Arc::new(Notify::new()),
             pause_signals: HashMap::new(),
             network_down: Arc::new(AtomicBool::new(false)),
+            catalog_ready: Arc::new(AtomicBool::new(false)),
+            catalog_error: None,
             network_resume: Arc::new(Notify::new()),
             network_error_streak: Arc::new(AtomicU32::new(0)),
             network_outage_confirmed: Arc::new(AtomicBool::new(false)),

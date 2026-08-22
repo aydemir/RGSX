@@ -63,6 +63,17 @@ fn apply_catalog_update(state: &SharedTvuiState, data: &serde_json::Value) {
     }
 }
 
+/// Başlangıç `snapshot` olayını işler (race düzeltmesi): `catalog_ready` true ise
+/// TVUI loading bar'ını kapatır — `catalog_update` kaçırılsa bile geç abone kurtulur.
+fn apply_snapshot(state: &SharedTvuiState, data: &serde_json::Value) {
+    if let Some(true) = data.get("catalog_ready").and_then(|v| v.as_bool()) {
+        let mut s = state.lock().unwrap();
+        s.ready = true;
+        s.loading = false;
+        s.pct = 100;
+    }
+}
+
 /// `port` izerindeki manager-http'e SSE baglanir, `catalog_update` olaylarini `state`'e yazar.
 /// Baglanti kurulamazsa `state.error` set edip doner (UI yine render eder, bar 0'da kalir).
 pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
@@ -86,6 +97,10 @@ pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
             if let Some((ev, data)) = parse_sse_frame(&acc) {
                 if ev == "catalog_update" {
                     apply_catalog_update(&state, &data);
+                } else if ev == "snapshot" {
+                    // Race düzeltmesi: geç bağlanan TVUI, başlangıç snapshot'ından katalogun
+                    // hazır olduğunu görür ve loading bar'ını kapatır (catalog_update kaçırılsa da).
+                    apply_snapshot(&state, &data);
                 }
             }
             acc.clear();
@@ -127,6 +142,21 @@ mod tests {
         apply_catalog_update(
             &state,
             &serde_json::json!({"stage":"ready","success":true}),
+        );
+        let s = state.lock().unwrap();
+        assert!(s.ready);
+        assert!(!s.loading);
+        assert_eq!(s.pct, 100);
+    }
+
+    #[test]
+    fn snapshot_catalog_ready_marks_ready() {
+        // Race düzeltmesi: geç SSE abonesi, başlangıç snapshot'ından katalogun hazır
+        // olduğunu görüp loading bar'ını kapatmalı (catalog_update kaçırılsa bile).
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        apply_snapshot(
+            &state,
+            &serde_json::json!({"catalog_ready": true, "network_down": false}),
         );
         let s = state.lock().unwrap();
         assert!(s.ready);

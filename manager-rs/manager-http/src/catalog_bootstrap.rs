@@ -11,8 +11,11 @@
 //! - custom değilse `RGSX_SOURCES_ZIP_URL` veya varsayılan OTA URL'i.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::state::StateData;
 use futures_util::StreamExt;
 use tokio::sync::broadcast::Sender;
 use tracing::{info, warn};
@@ -82,9 +85,23 @@ fn resolve_zip_source() -> Option<String> {
 ///
 /// `events` verilirse indirme ilerlemesi SSE `catalog_update` olayı olarak yayınlanır
 /// (TVUI/WebUI açılış loading bar'ı — Python parity). `None` → sessiz (mevcut davranış).
-pub async fn ensure_catalog_ready(events: Option<&Sender<String>>) -> bool {
+/// Bootstrap tamamlanınca `StateData.catalog_ready` atomiğini yazar (geç SSE abonesi
+/// race'ini kapatmak için — TVUI snapshot'tan hazır olduğunu anlar). `catalog_error`
+/// da başarısızlık nedenini taşır.
+fn mark_catalog_ready(app_data: Option<Arc<RwLock<StateData>>>, ok: bool, reason: Option<&str>) {
+    if let Some(d) = app_data {
+        let mut g = d.write().unwrap();
+        g.catalog_ready.store(ok, Ordering::Relaxed);
+        g.catalog_error = if ok { None } else { reason.map(|s| s.to_string()) };
+    }
+}
+
+pub async fn ensure_catalog_ready(
+    events: Option<&Sender<String>>,
+    app_data: Option<Arc<RwLock<StateData>>>,
+) -> bool {
     let data_dir = default_data_dir();
-    if catalog_present(&data_dir) {
+        if catalog_present(&data_dir) {
         if let Some(e) = events {
             crate::sse::publish(
                 e,
@@ -92,6 +109,7 @@ pub async fn ensure_catalog_ready(events: Option<&Sender<String>>) -> bool {
                 &serde_json::json!({ "stage": "ready", "success": true, "skipped": true }),
             );
         }
+        mark_catalog_ready(app_data, true, None);
         return true;
     }
 
@@ -111,6 +129,7 @@ pub async fn ensure_catalog_ready(events: Option<&Sender<String>>) -> bool {
                     &serde_json::json!({ "stage": "ready", "success": false, "reason": "no_source" }),
                 );
             }
+            mark_catalog_ready(app_data, false, Some("no_source"));
             return false;
         }
     };
@@ -126,6 +145,7 @@ pub async fn ensure_catalog_ready(events: Option<&Sender<String>>) -> bool {
                     &serde_json::json!({ "stage": "ready", "success": false, "reason": "download_failed" }),
                 );
             }
+            mark_catalog_ready(app_data, false, Some("download_failed"));
             return false;
         }
         p
@@ -151,6 +171,7 @@ pub async fn ensure_catalog_ready(events: Option<&Sender<String>>) -> bool {
             &serde_json::json!({ "stage": "ready", "success": ok }),
         );
     }
+    mark_catalog_ready(app_data, ok, if ok { None } else { Some("extract_failed") });
 
     if ok {
         info!("native katalog verisi indirildi/çıkarıldı: {}", data_dir.display());

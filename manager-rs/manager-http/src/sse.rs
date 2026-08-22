@@ -62,6 +62,9 @@ pub fn snapshot_json(data: &StateData) -> serde_json::Value {
         obj.insert("status".into(), serde_json::json!(s));
         // TASK-002-gap-32: UI'nin ağ-koptu durumunu görmesi (banner + "Ağ bekleniyor").
         obj.insert("network_down".into(), serde_json::json!(data.network_down.load(Ordering::Relaxed)));
+        // Faz 2c-race: katalog bootstrap durumu TVUI'ye snapshot'ta sinyal (geç abone kurtulur).
+        obj.insert("catalog_ready".into(), serde_json::json!(data.catalog_ready.load(Ordering::Relaxed)));
+        obj.insert("catalog_error".into(), serde_json::json!(data.catalog_error));
     }
     snap
 }
