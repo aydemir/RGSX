@@ -61,21 +61,28 @@
 
 ## Fazlar
 
-### Faz A — SSE dayanıklılığı (en düşük risk) ← şimdi
-- [ ] Reconnect döngüsü: connect hatası / stream EOF / read-timeout sonrası 3 sn backoff ile sonsuz yeniden
+### Faz A — SSE dayanıklılığı (en düşük risk)
+- [x] Reconnect döngüsü: connect hatası / stream EOF / read-timeout sonrası 3 sn backoff ile sonsuz yeniden
       bağlanma (Python parity `tvui.py:463`). Yalnızca İLK bağlantı hatası `state.error`'a yazılır;
       sonraki kopmalar loglanır, mevcut grid/hata durumu bozulmaz.
-- [ ] `timeout_read(90s)` (> 2× sunucu 30s keep-alive `sse.rs:138`) — stall'da read Err verir, döngü
+- [x] `timeout_read(90s)` (> 2× sunucu 30s keep-alive `sse.rs:138`) — stall'da read Err verir, döngü
       reconnect'e düşer. `lines()` hatası artık `""`'a ezilmez (busy-loop fix).
-- [ ] `trigger_*` + `fetch_platforms`: ortak agent, connect 3s + overall 5s timeout (donma üst sınırı).
-- [ ] `apply_snapshot` catalog_ready'de `error`/`offline` temizler (bootstrap hatası bayatlaması).
-- [ ] Poison-safe lock yardımcısı (`unwrap_or_else(|p| p.into_inner())`) — net.rs + sdl2_shell.rs.
-- [ ] Unit testler: ölü porta cycle error set eder; snapshot error temizler; mevcut testler korunur.
+- [x] `trigger_*` + `fetch_platforms`: ortak agent, connect 3s + overall 5s timeout (donma üst sınırı).
+- [x] `apply_snapshot` catalog_ready'de `error`/`offline` temizler (bootstrap hatası bayatlaması).
+- [x] Poison-safe lock yardımcısı (`unwrap_or_else(|p| p.into_inner())`) — net.rs + sdl2_shell.rs.
+- [x] Unit testler: ölü porta cycle error set eder; snapshot error temizler; mevcut testler korunur.
 
 ### Faz B — state makinesi + test edilebilirlik
-- [ ] `UiAction` karar mantığını saf fonksiyona çek (bulgu 15), `TriggerResult{ok}` tabanlı geçişler
-      (5, 6), restarting overlay timeout (7), stale banner temizliği (8), banner rengi (10).
-- [ ] HTTP çağrıları event-loop thread'inden arka plana taşınır (3'ün kalan yarısı).
+- [x] `UiAction`/`UiKey`/`ui_decision` SAF karar katmanı net.rs'te (bulgu 15) — SDL'siz unit test;
+      sdl2_shell yalnız Keycode→UiKey çevirisi + draw kaldı.
+- [x] `TriggerResult{ok,message}` (bulgu 5): tüm `trigger_*` artık makine-okunur ok döner,
+      string-eşleme (`contains("yeniden başlat")`) kaldırıldı.
+- [x] Stage yalnızca istek `ok:true` ise "downloading" olur; aksi halde "failed" (bulgu 6).
+- [x] Restart overlay koruması: `update_restarting_since` + `RESTART_OVERLAY_TIMEOUT(60s)` +
+      `expire_stale_restart_at()` her frame'de (bulgu 7); relaunch gelmezse overlay kapanır.
+- [x] `available:false` bayat banner temizliği (bulgu 8) — in-flight aşamada dokunulmaz.
+- [x] Banner rengi: available→warning_text (turuncu), kırmızı yalnız failed (bulgu 10).
+- [x] HTTP çağrıları event-loop thread'inden arka plana taşındı (bulgu 3'ün kalan yarısı).
 
 ### Faz C — parite
 - [ ] Gamepad köprüsü + key-repeat (9), render texture cache + vsync (12), windowed mod (13),
@@ -105,3 +112,16 @@
     (`cpp-14-aarch64-linux-gnu` reinstall) + `cmake` kurulumu. Tam test ağır makinede/Windows'ta koşulacak.
   - Etkilenen davranış: manager-http restart (self-update apply sonrası) artık TVUI loading barını
     dondurmuyor; ≤3 sn'de yeniden bağlanıyor.
+- 2026-08-22 — **Faz A commit+push:** `0f01262`.
+- 2026-08-22 — **Faz B uygulandı** (net.rs + sdl2_shell.rs):
+  - net.rs'e SDL'siz UI karar katmanı taşındı: `UiAction`, `UiKey`, `ui_decision()` (saf),
+    `apply_ui_action()` (yerel mutasyon senkron, HTTP arka plan thread'inde), `expire_stale_restart_at()`.
+  - `TriggerResult{ok,message}` — bulgu 5 string-eşlemesi yok; sdl2_shell.rs ~50 satır event-handler
+    bloğu yerine Keycode→UiKey eşlemesi + çağrı kaldı.
+  - Bulgu 6/7/8/10 düzeltmeleri (ayrıntı Faz B checklist).
+  - **Doğrulama:** izole crate'te **17/17 yeşil**; yeni: `ui_decision_covers_state_machine`,
+    `restart_overlay_expires_after_timeout`,
+    `apply_ui_action_runs_http_off_thread_and_marks_failed_on_dead_port`,
+    `available_false_keeps_inflight_update_flow`; `available:false` bekleyişi bulgu 8 kararıyla
+    değişti (idle'da temizler). Repo-içi full test ağır makineye bırakıldı (SDL2 bundled, bkz. üstte).
+- 2026-08-22 — **Faz B commit+push.**

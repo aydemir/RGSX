@@ -6,7 +6,7 @@
 
 use std::io::BufRead;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Self-update indirmesinin kuyruk görevi kimliği (manager-http ile aynı sabit).
 pub const MANAGER_UPDATE_TASK_ID: &str = "manager-update";
@@ -18,6 +18,10 @@ const SSE_READ_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Yeniden bağlanma gecikmesi (Python parity: tvui.py `_manager_sse_worker` 3 sn).
 const SSE_RECONNECT_DELAY: Duration = Duration::from_secs(3);
+
+/// Faz B (bulgu 7): apply sonrası relaunch normalde süreci anında devirir; bu
+/// sürede gelmediyse overlay kapanıp banner `failed`'e döner.
+pub const RESTART_OVERLAY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Poison-safe kilit: bir thread lock tutarken paniklese bile diğer thread
 /// domino gibi düşmesin (Python'daki her şeyi-saran try/except'in karşılığı).
@@ -56,6 +60,9 @@ pub struct TvuiState {
     pub update_pct: u32,
     /// Apply sonrası "Yeniden başlatılıyor…" ekranı için bayrak.
     pub update_restarting: bool,
+    /// `update_restarting`'in başladığı an (Faz B, bulgu 7): relaunch bu sürede
+    /// süreci devralmazsa overlay otomatik kapanır — ölü ekranda kilitlenme yok.
+    pub update_restarting_since: Option<Instant>,
     /// SSE/HTTP bağlantı portu (Enter→download tetiklemede kullanılır).
     pub port: u16,
     /// TASK: bootstrap fail sonrası kullanıcı "çevrimdışı devam" seçtiyse true
@@ -176,6 +183,142 @@ fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
     }
 }
 
+// ===== TASK-012-gap-01 Faz B — SDL'siz UI karar katmanı (bulgu 15) =====
+
+/// Shell'in üretebileceği yüksek seviye aksiyonlar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiAction {
+    RetryCatalog,
+    ContinueOffline,
+    UpdateDownload,
+    UpdateApply,
+    UpdateCancel,
+}
+
+/// Fiziksel tuşların (`Keycode`) shell tarafından çevrildiği semantik tuşlar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiKey {
+    Retry,
+    Confirm,
+    CancelUpdate,
+}
+
+/// SAF karar fonksiyonu: mevcut durum + semantik tuş → yapılacak aksiyon.
+/// HTTP ve SDL içermez; tüm geçiş kuralları burada toplanır ve unit-test edilir.
+pub fn ui_decision(s: &TvuiState, key: UiKey) -> Option<UiAction> {
+    match key {
+        UiKey::Retry => {
+            if s.error.is_some() {
+                Some(UiAction::RetryCatalog)
+            } else {
+                None
+            }
+        }
+        UiKey::CancelUpdate => {
+            if s.update_stage.as_deref() == Some("downloading") {
+                Some(UiAction::UpdateCancel)
+            } else {
+                None
+            }
+        }
+        UiKey::Confirm => {
+            if s.update_restarting {
+                None // Zaten yeniden başlatılıyor; ikinci Enter yok sayılır.
+            } else if s.error.is_some() && !s.offline {
+                Some(UiAction::ContinueOffline)
+            } else if s.update_available.is_some() {
+                match s.update_stage.as_deref().unwrap_or("available") {
+                    "ready" => Some(UiAction::UpdateApply),
+                    _ => Some(UiAction::UpdateDownload),
+                }
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Aksiyonu uygular: yerel state mutasyonları senkron, HTTP çağrıları ARKA PLAN
+/// thread'inde (bulgu 3 — SDL event loop'u asla ağ çağrısıyla bloklanmaz).
+pub fn apply_ui_action(state: &SharedTvuiState, action: UiAction) {
+    match action {
+        UiAction::ContinueOffline => {
+            tvui_lock(state).offline = true;
+        }
+        UiAction::RetryCatalog => {
+            {
+                let mut s = tvui_lock(state);
+                // Yerel durumu sıfırla; ilerleme SSE `catalog_update` ile gelir.
+                s.loading = true;
+                s.ready = false;
+                s.error = None;
+                s.pct = 0;
+                s.offline = false;
+            }
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_catalog_retry(port);
+                eprintln!("TVUI katalog retry: {}", r.message);
+            });
+        }
+        UiAction::UpdateDownload => {
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_update_download(port);
+                let mut s = tvui_lock(&st);
+                if r.ok {
+                    // Bulgu 6: stage yalnızca istek gerçekten kabul edildiyse set edilir.
+                    s.update_stage = Some("downloading".to_string());
+                } else {
+                    s.update_stage = Some("failed".to_string());
+                }
+                eprintln!("TVUI güncelleme indirme: {}", r.message);
+            });
+        }
+        UiAction::UpdateApply => {
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_update_apply(port);
+                let mut s = tvui_lock(&st);
+                if r.ok {
+                    s.update_restarting = true;
+                    s.update_restarting_since = Some(Instant::now());
+                } else {
+                    s.update_stage = Some("failed".to_string());
+                }
+                eprintln!("TVUI güncelleme apply: {}", r.message);
+            });
+        }
+        UiAction::UpdateCancel => {
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_update_cancel(port);
+                eprintln!("TVUI güncelleme iptal: {}", r.message);
+            });
+        }
+    }
+}
+
+/// Bulgu 7 — overlay takılma koruması: `RESTART_OVERLAY_TIMEOUT` içinde relaunch
+/// gelmediyse overlay kapanır ve banner `failed`'e döner. Her frame'de shell
+/// çağırır; saf olduğu için unit-test edilir.
+pub fn expire_stale_restart_at(s: &mut TvuiState, now: Instant) -> bool {
+    let expired = s.update_restarting
+        && s.update_restarting_since
+            .map(|t| now.duration_since(t) >= RESTART_OVERLAY_TIMEOUT)
+            .unwrap_or(true); // since kayıpsa da güvenli tarafta kal (overlay kapat).
+    if expired {
+        s.update_restarting = false;
+        s.update_restarting_since = None;
+        s.update_stage = Some("failed".to_string());
+    }
+    expired
+}
+
 /// TASK-012m — `manager_update` olayını (ya da snapshot'taki `manager_update`'i) işler:
 /// güncelleme mevcutsa `update_available`'a versiyonu yazar, akış aşamasını
 /// `update_stage`'e yazar (TVUI prompt + bar). Hem stream event'i (`available`/`stage`
@@ -193,6 +336,17 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
         if let Some(v) = obj.get("version").and_then(|x| x.as_str()) {
             tvui_lock(state).update_available = Some(v.to_string());
         }
+    } else {
+        // Faz B (bulgu 8): manager güncellemeyi geri çektiyse bayat banner
+        // temizlenir; yalnızca aktif akış aşaması yoksa (in-flight korunur).
+        let mut s = tvui_lock(state);
+        let in_flight = matches!(
+            s.update_stage.as_deref(),
+            Some("downloading") | Some("ready") | Some("applying")
+        );
+        if !in_flight {
+            s.update_available = None;
+        }
     }
     if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
         let mut s = tvui_lock(state);
@@ -206,9 +360,27 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
     }
 }
 
+/// Kullanıcı-tetiklemeli API çağrısı sonucu: makine-okunur `ok` + insan-okunur
+/// `message` (log/i18n kaynağı). State geçişleri YALNIZCA `ok` üzerinden alınır —
+/// human-message string-eşlemesi yasak (TASK-012-gap-01 bulgu 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerResult {
+    pub ok: bool,
+    pub message: String,
+}
+
+impl TriggerResult {
+    fn new(ok: bool, message: impl Into<String>) -> Self {
+        Self {
+            ok,
+            message: message.into(),
+        }
+    }
+}
+
 /// TASK-012m Faz 5 — kullanıcı `Enter` ile indirmeyi arka plana (kuyruğa) yollar.
 /// Non-blocking: hemen `{ok, queued}` döner; ilerleme SSE ile gelir.
-pub fn trigger_update_download(port: u16) -> String {
+pub fn trigger_update_download(port: u16) -> TriggerResult {
     let url = format!("http://127.0.0.1:{port}/api/manager-update/download");
     match api_agent().post(&url).call() {
         Ok(r) => match r
@@ -217,15 +389,15 @@ pub fn trigger_update_download(port: u16) -> String {
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         {
             Some(v) => parse_download_response(&v),
-            None => "yanıt çözülemedi".to_string(),
+            None => TriggerResult::new(false, "yanıt çözülemedi"),
         },
-        Err(e) => format!("istek hatası: {e}"),
+        Err(e) => TriggerResult::new(false, format!("istek hatası: {e}")),
     }
 }
 
 /// TASK-012m Faz 5 — `Enter` ile indirilmiş güncellemeyi uygular (replace + relaunch).
 /// GERİ ALINAMAZ; sunucu yalnız `RGSX_SELF_APPLY=1` ile gerçekleştirir.
-pub fn trigger_update_apply(port: u16) -> String {
+pub fn trigger_update_apply(port: u16) -> TriggerResult {
     let url = format!("http://127.0.0.1:{port}/api/manager-update/apply");
     match api_agent().post(&url).call() {
         Ok(r) => match r
@@ -234,15 +406,15 @@ pub fn trigger_update_apply(port: u16) -> String {
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         {
             Some(v) => parse_apply_response(&v),
-            None => "yanıt çözülemedi".to_string(),
+            None => TriggerResult::new(false, "yanıt çözülemedi"),
         },
-        Err(e) => format!("istek hatası: {e}"),
+        Err(e) => TriggerResult::new(false, format!("istek hatası: {e}")),
     }
 }
 
 /// TASK-012m Faz 5 — yanlış tık: self-update indirmesini kuyruktan iptal eder
 /// (WebUI/Python TVUI parity). `task_id = "manager-update"`.
-pub fn trigger_update_cancel(port: u16) -> String {
+pub fn trigger_update_cancel(port: u16) -> TriggerResult {
     let url = format!("http://127.0.0.1:{port}/api/queue/remove");
     let body = serde_json::json!({ "task_id": MANAGER_UPDATE_TASK_ID });
     match api_agent()
@@ -250,37 +422,55 @@ pub fn trigger_update_cancel(port: u16) -> String {
         .set("Content-Type", "application/json")
         .send_string(&body.to_string())
     {
-        Ok(_) => "indirme iptal edildi".to_string(),
-        Err(e) => format!("iptal hatası: {e}"),
+        Ok(_) => TriggerResult::new(true, "indirme iptal edildi"),
+        Err(e) => TriggerResult::new(false, format!("iptal hatası: {e}")),
     }
 }
 
-/// `manager-update/download` yanıtını placeholder mesaja çözer.
-fn parse_download_response(v: &serde_json::Value) -> String {
+/// `manager-update/download` yanıtını çözer (`ok` makine-alanı + placeholder mesaj).
+fn parse_download_response(v: &serde_json::Value) -> TriggerResult {
     if v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false) {
         if v.get("queued").and_then(|x| x.as_bool()).unwrap_or(false) {
-            "indirme kuyruğa alındı".to_string()
+            TriggerResult::new(true, "indirme kuyruğa alındı")
         } else {
-            format!("indirildi: {}", v.get("path").and_then(|x| x.as_str()).unwrap_or(""))
+            TriggerResult::new(
+                true,
+                format!(
+                    "indirildi: {}",
+                    v.get("path").and_then(|x| x.as_str()).unwrap_or("")
+                ),
+            )
         }
     } else {
-        format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
+        TriggerResult::new(
+            false,
+            format!(
+                "hata: {}",
+                v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+            ),
+        )
     }
 }
 
-/// `manager-update/apply` yanıtını placeholder mesaja çözer.
-fn parse_apply_response(v: &serde_json::Value) -> String {
+/// `manager-update/apply` yanıtını çözer (`ok` makine-alanı + placeholder mesaj).
+fn parse_apply_response(v: &serde_json::Value) -> TriggerResult {
     if v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false) {
-        "yeniden başlatılıyor".to_string()
+        TriggerResult::new(true, "yeniden başlatılıyor")
     } else {
-        format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
+        TriggerResult::new(
+            false,
+            format!(
+                "hata: {}",
+                v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+            ),
+        )
     }
 }
 
 /// TASK — bootstrap fail sonrası katalog hazırlanmasını yeniden dener
 /// (manager-http `/api/catalog/retry`). Sunucu arka planda bootstrap'i tekrar
-/// çalıştırır; ilerleme SSE `catalog_update` ile gelir. Sonuç mesajı döner.
-pub fn trigger_catalog_retry(port: u16) -> String {
+/// çalıştırır; ilerleme SSE `catalog_update` ile gelir.
+pub fn trigger_catalog_retry(port: u16) -> TriggerResult {
     let url = format!("http://127.0.0.1:{port}/api/catalog/retry");
     match api_agent().post(&url).call() {
         Ok(r) => match r
@@ -289,18 +479,24 @@ pub fn trigger_catalog_retry(port: u16) -> String {
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         {
             Some(v) => parse_retry_response(&v),
-            None => "yanıt çözülemedi".to_string(),
+            None => TriggerResult::new(false, "yanıt çözülemedi"),
         },
-        Err(e) => format!("istek hatası: {e}"),
+        Err(e) => TriggerResult::new(false, format!("istek hatası: {e}")),
     }
 }
 
-/// `/api/catalog/retry` yanıtını placeholder mesaja çözer.
-fn parse_retry_response(v: &serde_json::Value) -> String {
+/// `/api/catalog/retry` yanıtını çözer (`success` makine-alanı + placeholder mesaj).
+fn parse_retry_response(v: &serde_json::Value) -> TriggerResult {
     if v.get("success").and_then(|x| x.as_bool()).unwrap_or(false) {
-        "yeniden deneniyor".to_string()
+        TriggerResult::new(true, "yeniden deneniyor")
     } else {
-        format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
+        TriggerResult::new(
+            false,
+            format!(
+                "hata: {}",
+                v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+            ),
+        )
     }
 }
 
@@ -443,9 +639,13 @@ mod tests {
     #[test]
     fn parse_retry_response_reads_success() {
         let ok_v = serde_json::json!({"success": true, "retrying": true});
-        assert!(parse_retry_response(&ok_v).contains("yeniden"));
+        let ok = parse_retry_response(&ok_v);
+        assert!(ok.ok);
+        assert!(ok.message.contains("yeniden"));
         let err_v = serde_json::json!({"success": false, "error": "kapali"});
-        assert!(parse_retry_response(&err_v).contains("kapali"));
+        let err = parse_retry_response(&err_v);
+        assert!(!err.ok);
+        assert!(err.message.contains("kapali"));
     }
 
     #[test]
@@ -530,9 +730,25 @@ mod tests {
             &serde_json::json!({"available": true, "version": "2.0.0", "url": "x", "sha256": "y"}),
         );
         assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("2.0.0"));
-        // available:false → ayarlanmaz.
+        // Faz B (bulgu 8): available:false → bayat banner temizlenir.
         apply_manager_update(&state, &serde_json::json!({"available": false, "version": "9.9.9"}));
-        assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("2.0.0"));
+        assert_eq!(state.lock().unwrap().update_available, None);
+    }
+
+    #[test]
+    fn available_false_keeps_inflight_update_flow() {
+        // Bulgu 8 sınırı: aktif indirme/apply aşaması varken available:false
+        // dokunmaz (in-flight akış korunur).
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        {
+            let mut s = state.lock().unwrap();
+            s.update_available = Some("9.9.9".to_string());
+            s.update_stage = Some("downloading".to_string());
+        }
+        apply_manager_update(&state, &serde_json::json!({"available": false}));
+        let s = state.lock().unwrap();
+        assert_eq!(s.update_available.as_deref(), Some("9.9.9"));
+        assert_eq!(s.update_stage.as_deref(), Some("downloading"));
     }
 
     #[test]
@@ -557,9 +773,13 @@ mod tests {
     fn parse_download_response_reads_ok_and_queued() {
         // Faz 5: download non-blocking → {ok:true, queued:true}.
         let ok_v = serde_json::json!({"success": true, "ok": true, "queued": true});
-        assert!(parse_download_response(&ok_v).contains("kuyruğa"));
+        let ok = parse_download_response(&ok_v);
+        assert!(ok.ok);
+        assert!(ok.message.contains("kuyruğa"));
         let err_v = serde_json::json!({"success": true, "ok": false, "error": "SHA256 uyumsuz"});
-        assert!(parse_download_response(&err_v).contains("SHA256 uyumsuz"));
+        let err = parse_download_response(&err_v);
+        assert!(!err.ok);
+        assert!(err.message.contains("SHA256 uyumsuz"));
     }
 
     #[test]
@@ -573,5 +793,84 @@ mod tests {
         assert_eq!(s.update_available.as_deref(), Some("5.0.0"));
         assert_eq!(s.update_stage.as_deref(), Some("ready"));
         assert!(!s.update_restarting);
+    }
+
+    #[test]
+    fn ui_decision_covers_state_machine() {
+        // Bulgu 15: tüm geçiş kuralları SDL'siz tek tabloda test edilir.
+        let base = TvuiState::default();
+        // Boş durumda hiçbir tuş bir şey yapmaz.
+        assert_eq!(ui_decision(&base, UiKey::Confirm), None);
+        assert_eq!(ui_decision(&base, UiKey::Retry), None);
+        assert_eq!(ui_decision(&base, UiKey::CancelUpdate), None);
+        // Hata ekranında: R → retry, Enter → çevrimdışı devam.
+        let mut e = base.clone();
+        e.error = Some("katalog hazirlanamadi".to_string());
+        assert_eq!(ui_decision(&e, UiKey::Retry), Some(UiAction::RetryCatalog));
+        assert_eq!(ui_decision(&e, UiKey::Confirm), Some(UiAction::ContinueOffline));
+        // Çevrimdışıya geçildikten sonra tekrar Enter nötrdür.
+        let mut off = e.clone();
+        off.offline = true;
+        assert_eq!(ui_decision(&off, UiKey::Confirm), None);
+        // Güncelleme akışı: available → download, ready → apply, restarting → nötr.
+        let mut u = base.clone();
+        u.update_available = Some("2.0.0".to_string());
+        assert_eq!(ui_decision(&u, UiKey::Confirm), Some(UiAction::UpdateDownload));
+        u.update_stage = Some("ready".to_string());
+        assert_eq!(ui_decision(&u, UiKey::Confirm), Some(UiAction::UpdateApply));
+        u.update_restarting = true;
+        assert_eq!(ui_decision(&u, UiKey::Confirm), None);
+        // İptal yalnız downloading aşamasında anlamlı.
+        let mut c = base.clone();
+        c.update_stage = Some("downloading".to_string());
+        assert_eq!(ui_decision(&c, UiKey::CancelUpdate), Some(UiAction::UpdateCancel));
+    }
+
+    #[test]
+    fn restart_overlay_expires_after_timeout() {
+        // Bulgu 7: relaunch gelmezse overlay kapanır, banner failed'e döner.
+        let now = Instant::now();
+        let mut s = TvuiState::default();
+        s.update_restarting = true;
+        s.update_restarting_since = Some(now - Duration::from_secs(61));
+        assert!(expire_stale_restart_at(&mut s, now));
+        assert!(!s.update_restarting);
+        assert!(s.update_restarting_since.is_none());
+        assert_eq!(s.update_stage.as_deref(), Some("failed"));
+
+        // Henüz süre dolmadıysa dokunulmaz.
+        let mut fresh = TvuiState::default();
+        fresh.update_restarting = true;
+        fresh.update_restarting_since = Some(now - Duration::from_secs(10));
+        assert!(!expire_stale_restart_at(&mut fresh, now));
+        assert!(fresh.update_restarting);
+
+        // since kayıpsa güvenli tarafta kal: overlay kapatılır.
+        let mut orphan = TvuiState::default();
+        orphan.update_restarting = true;
+        assert!(expire_stale_restart_at(&mut orphan, now));
+    }
+
+    #[test]
+    fn apply_ui_action_runs_http_off_thread_and_marks_failed_on_dead_port() {
+        // Bulgu 3+6: HTTP arka plan thread'inde; başarısız istek stage'i
+        // downloading YAPMAZ — failed'e çeker (eski davranış banner'ı
+        // sonsuza dek downloading'de bırakıyordu).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState {
+            update_available: Some("1.0.1".to_string()),
+            ..TvuiState::default()
+        }));
+        state.lock().unwrap().port = port;
+        apply_ui_action(&state, UiAction::UpdateDownload);
+        for _ in 0..100 {
+            if state.lock().unwrap().update_stage.as_deref() == Some("failed") {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("arka plan isteği 2 sn içinde 'failed' yazmalı");
     }
 }

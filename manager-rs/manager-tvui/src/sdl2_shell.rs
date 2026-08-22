@@ -12,12 +12,9 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
-use crate::net::tvui_lock;
-use crate::net::trigger_catalog_retry;
-use crate::net::trigger_update_apply;
-use crate::net::trigger_update_cancel;
-use crate::net::trigger_update_download;
-use crate::net::SharedTvuiState;
+use crate::net::{
+    apply_ui_action, expire_stale_restart_at, tvui_lock, ui_decision, SharedTvuiState, UiKey,
+};
 use crate::theme::Theme;
 
 fn to_color((r, g, b, a): (u8, u8, u8, u8)) -> Color {
@@ -134,8 +131,8 @@ fn draw_grid(
 }
 
 /// TASK-012m Faz 5 — self-update banner (metin yok; ttf erte). Aşamaya göre renk:
-/// `available`=error_text (turuncu), `downloading`=neon (mavi, iç dolgu=percent),
-/// `ready`=success (yeşil), `failed`=error_text (kırmızı).
+/// `available`=warning_text (turuncu — bulgu 10 fix), `downloading`=neon (mavi,
+/// iç dolgu=percent), `ready`=success (yeşil), `failed`=error_text (kırmızı).
 fn draw_update_banner(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -154,7 +151,8 @@ fn draw_update_banner(
         "ready" => "success",
         "downloading" => "neon",
         "failed" => "error_text",
-        _ => "error_text",
+        // Bulgu 10: 'available' turuncu — kırmızı yalnızca gerçek hataya kalsın.
+        _ => "warning_text",
     };
     let bw = ((w as i32) * 60 / 100).max(40) as u32;
     let bx = ((w as i32 - bw as i32) / 2).max(0) as i32;
@@ -226,82 +224,32 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
-                // TASK — bootstrap fail iken R → katalogu yeniden dene (retry).
-                // Yerel durumu sıfırla; ilerleme SSE `catalog_update` ile gelir.
-                Event::KeyDown {
-                    keycode: Some(Keycode::R),
-                    ..
-                } => {
-                    let (err, port) = {
-                        let s = tvui_lock(state);
-                        (s.error.clone(), s.port)
+                // TASK-012-gap-01 Faz B (bulgu 15): kararlar SDL'siz `ui_decision`'da,
+                // HTTP arka planda (`apply_ui_action`) — event loop asla bloklanmaz.
+                Event::KeyDown { keycode: Some(kc), .. } => {
+                    let key = match kc {
+                        Keycode::R => Some(UiKey::Retry),
+                        Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
+                        Keycode::C => Some(UiKey::CancelUpdate),
+                        _ => None,
                     };
-                    if err.is_some() {
-                        {
-                            let mut s = tvui_lock(state);
-                            s.loading = true;
-                            s.ready = false;
-                            s.error = None;
-                            s.pct = 0;
-                            s.offline = false;
+                    if let Some(key) = key {
+                        let action = {
+                            let s = tvui_lock(state);
+                            ui_decision(&s, key)
+                        };
+                        if let Some(action) = action {
+                            apply_ui_action(state, action);
                         }
-                        let _ = trigger_catalog_retry(port);
-                    }
-                }
-                // Enter: hata ekranında → çevrimdışı devam (grid'e geç);
-                // güncelleme mevcutsa → önce indir (available), hazır olunca uygula (ready).
-                Event::KeyDown {
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => {
-                    let (avail, stage, restarting, err, offline, port) = {
-                        let s = tvui_lock(state);
-                        (
-                            s.update_available.clone(),
-                            s.update_stage.clone(),
-                            s.update_restarting,
-                            s.error.clone(),
-                            s.offline,
-                            s.port,
-                        )
-                    };
-                    if restarting {
-                        // Zaten yeniden başlatılıyor; ikinci Enter yok sayılır.
-                    } else if err.is_some() && !offline {
-                        tvui_lock(state).offline = true;
-                    } else if avail.is_some() {
-                        let stage = stage.unwrap_or_else(|| "available".to_string());
-                        if stage == "ready" {
-                            let st = trigger_update_apply(port);
-                            let mut s = tvui_lock(state);
-                            if st.contains("yeniden başlat") {
-                                s.update_restarting = true;
-                            } else {
-                                s.update_stage = Some("failed".to_string());
-                            }
-                        } else {
-                            let st = trigger_update_download(port);
-                            let mut s = tvui_lock(state);
-                            s.update_stage = Some("downloading".to_string());
-                            let _ = st;
-                        }
-                    }
-                }
-                // C: self-update indirmesi devam ediyorsa iptal et (kuyruktan iptal parity).
-                Event::KeyDown {
-                    keycode: Some(Keycode::C),
-                    ..
-                } => {
-                    let (stage, port) = {
-                        let s = tvui_lock(state);
-                        (s.update_stage.clone(), s.port)
-                    };
-                    if stage.unwrap_or_default() == "downloading" {
-                        let _ = trigger_update_cancel(port);
                     }
                 }
                 _ => {}
             }
+        }
+        // Bulgu 7: relaunch süreci devralmadıysa overlay'i kapat (ölü ekran koruması).
+        {
+            let mut s = tvui_lock(state);
+            expire_stale_restart_at(&mut s, std::time::Instant::now());
         }
         let dims = draw_background(&mut canvas, theme, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
