@@ -30,6 +30,10 @@ const gameStatuses = ref({}) // stem -> { status, progress, platform }
 const catalogLoading = ref(false)
 const catalogError = ref('')
 
+// --- Catalog bootstrap (012h) — TVUI ile birebir aynı state makinesi ---
+// ready (katalog hazır) / offline (kullanıcı çevrimdışı devam etti) / error (başarısız).
+const boot = reactive({ pct: 0, stage: '', ready: false, error: '', offline: false })
+
 // --- Per-platform game filters ---
 const REGIONS = ['USA', 'Canada', 'Europe', 'France', 'Germany', 'Japan', 'Korea', 'World', 'Other']
 const REGION_PRIORITY_DEFAULT = ['USA', 'Canada', 'World', 'Europe', 'Japan', 'Other']
@@ -132,6 +136,11 @@ function applySnapshot(data) {
   if (data.downloaded) snapshot.downloaded = data.downloaded
   if (data.status) snapshot.status = data.status
   if (typeof data.network_down === 'boolean') snapshot.network_down = data.network_down
+  // 012h: snapshot'tan katalog durumunu yakala (geç bağlanan istemci race'i).
+  if (typeof data.catalog_ready === 'boolean') {
+    if (data.catalog_ready) { boot.ready = true; boot.error = ''; boot.offline = false }
+    else if (data.catalog_error) { boot.ready = false; boot.error = String(data.catalog_error) }
+  }
   lastEvent.value = 'snapshot'
 }
 onMounted(async () => {
@@ -172,6 +181,18 @@ onMounted(async () => {
     network_restored: () => {
       pushToast(tt('network_restored_toast'), 'success')
     },
+    // 012h: katalog bootstrap ilerlemesi (download % / extract / ready).
+    // TVUI net.rs apply_catalog_update ile aynı sözleşme.
+    catalog_update: (data) => {
+      lastEvent.value = 'catalog_update'
+      if (typeof data.pct === 'number') boot.pct = data.pct
+      if (data.stage) boot.stage = data.stage
+      if (data.stage === 'ready') {
+        const ok = data.success === true
+        if (ok) { boot.ready = true; boot.error = ''; boot.offline = false; boot.pct = 100 }
+        else { boot.ready = false; boot.error = 'Katalog hazırlanamadı: ' + (data.reason || 'bilinmiyor') }
+      }
+    },
   })
   await loadPlatforms()
   loadFiltersFromSettings()
@@ -188,6 +209,16 @@ async function loadPlatforms() {
     platforms.value = (p.platforms || []).slice(0, 200)
   } catch (e) { catalogError.value = tt('catalog_error') }
 }
+
+// 012h bootstrap-fail UX — TVUI ile aynı davranış.
+// Retry: manager-http `/api/catalog/retry`'i tetikler; ilerleme SSE ile gelir.
+async function bootRetry() {
+  boot.pct = 0; boot.stage = 'retry'; boot.error = ''; boot.ready = false
+  try { await apiPost('/api/catalog/retry', {}) }
+  catch (e) { boot.error = 'Retry isteği başarısız' }
+}
+// Çevrimdışı devam: grid'e geç (boş kategori), kırmızı rozet gösterilir.
+function bootOffline() { boot.offline = true }
 
 async function updateGamesList() {
   try {
@@ -697,6 +728,23 @@ async function switchTab(t) {
     </header>
 
     <p v-if="snapshot.network_down" class="netdown-banner">⚠ {{ tt('network_down_banner') }}</p>
+
+    <!-- Catalog bootstrap (012h) — mirrors TVUI: ready / offline / error -->
+    <div v-if="!boot.ready && !boot.offline" class="boot">
+      <template v-if="boot.error">
+        <div class="boot-error">⚠ {{ boot.error }}</div>
+        <div class="boot-actions">
+          <button class="btn primary" @click="bootRetry">Tekrar dene</button>
+          <button class="btn" @click="bootOffline">Çevrimdışı devam</button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="boot-msg">Katalog hazırlanıyor… <span v-if="boot.stage">({{ boot.stage }})</span></div>
+        <div class="bar boot-bar"><div class="fill" :style="{ width: boot.pct + '%' }"></div></div>
+        <div class="boot-pct">{{ boot.pct }}%</div>
+      </template>
+    </div>
+    <p v-if="boot.offline" class="boot-offline">⚠ Çevrimdışı mod — katalog verisi eksik</p>
 
     <!-- Global search -->
     <div class="searchbar">
@@ -1253,4 +1301,15 @@ h3 { font-size: calc(13px * var(--font-scale, 1)); }
 .rp-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid #eee; }
 .rp-name { font-weight: 600; }
 .rp-ctrl { display: flex; gap: 4px; }
+
+/* ===== Catalog bootstrap (012h) — mirrors TVUI state machine ===== */
+.boot { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
+.boot-msg { font-size: 13px; color: #333; margin-bottom: 6px; }
+.boot-bar { height: 10px; background: #e0e0e0; border-radius: 6px; overflow: hidden; }
+.boot-pct { font-size: 12px; color: #666; margin-top: 4px; text-align: right; font-variant-numeric: tabular-nums; }
+.boot-error { color: #dc3545; font-weight: 600; margin-bottom: 8px; }
+.boot-actions { display: flex; gap: 8px; }
+.boot-actions .btn { min-height: 40px; padding: 8px 16px; border: 1px solid #ccc; background: #f1f1f1; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.boot-actions .btn.primary { background: #007bff; border-color: #007bff; color: #fff; }
+.boot-offline { background: #f8d7da; color: #842029; border: 1px solid #f5c2c7; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
 </style>
