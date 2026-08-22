@@ -7,6 +7,7 @@
 //! (bu crate o durumda çağrılmaz).
 
 pub mod native_input;
+pub mod net;
 pub mod sdl2_shell;
 pub mod theme;
 
@@ -28,8 +29,17 @@ pub fn load_theme() -> Theme {
 }
 
 /// `RGSX_TVUI=1` iken manager-bin tarafından çağrılır: SDL2 native shell'i açar
-/// (bloklayıcı — ayrı thread'de çalışır). `port` ileride SSE bağlantısı için saklanır.
+/// (bloklayıcı — ayrı thread'de çalışır). `port` manager-http portudur; SSE
+/// `catalog_update` akışı bu porttan dinlenir (loading bar kaynağı).
 pub fn launch(_port: u16) -> Result<(), String> {
     let theme = load_theme();
-    sdl2_shell::run_native_shell(&theme)
+    let state = crate::net::TvuiState::default();
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(state));
+    let watcher = shared.clone();
+    let port = _port;
+    // Arka plan SSE izleyici: katalog indirme ilerlemesini `shared`'a yazar.
+    std::thread::spawn(move || {
+        crate::net::start_catalog_watcher(port, watcher);
+    });
+    sdl2_shell::run_native_shell(&theme, &shared)
 }

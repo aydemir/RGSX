@@ -12,6 +12,7 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
+use crate::net::SharedTvuiState;
 use crate::theme::Theme;
 
 fn to_color((r, g, b, a): (u8, u8, u8, u8)) -> Color {
@@ -23,7 +24,7 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 }
 
 /// Seçili arka plan preset'ini dikey gradyan olarak çizer (top → bottom).
-fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) {
+fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) -> (u32, u32) {
     let (top, bottom) = theme.background(preset);
     let (w, h) = match canvas.output_size() {
         Ok((w, h)) if w > 0 && h > 0 => (w, h),
@@ -43,11 +44,40 @@ fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) {
     if fw > 0 && fh > 0 {
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(20, 20, fw, fh));
     }
+    (w, h)
+}
+
+/// Açılış loading bar'ı: SSE `catalog_update` ilerlemesini `state`'ten okur.
+/// `ready` oluncaya kadar (ya da hata varsa) ekranın ortasında çubuk çizer.
+fn draw_loading(canvas: &mut Canvas<Window>, theme: &Theme, state: &SharedTvuiState, (w, h): (u32, u32)) {
+    let (pct, error) = {
+        let s = state.lock().unwrap();
+        (s.pct.clamp(0, 100) as f32 / 100.0, s.error.clone())
+    };
+    let bar_w = ((w as i32) * 60 / 100).max(40) as u32;
+    let bar_h: u32 = 24;
+    let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
+    let y = (h as i32 / 2).max(0) as i32;
+    // Çerçeve (button_idle rengi).
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+    // Dolum (neon rengi).
+    let fill_w = (bar_w as f32 * pct) as i32;
+    if fill_w > 0 {
+        canvas.set_draw_color(to_color(theme.color("neon")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w as u32, bar_h));
+    }
+    if error.is_some() {
+        // Hata: bar altına kırmızı çerçeve (metin yok — font yükleme henüz yok).
+        canvas.set_draw_color(to_color(theme.color("error_text")));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 4));
+    }
 }
 
 /// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere
 /// kapatma ile çıkılır. Bloklayıcıdır; manager-bin ayrı thread'de çağırır.
-pub fn run_native_shell(theme: &Theme) -> Result<(), String> {
+/// `state`: SSE `catalog_update` ilerlemesini çizen loading bar'ının kaynağı.
+pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), String> {
     let sdl = sdl2::init().map_err(|e| format!("SDL2 init: {e}"))?;
     let video = sdl.video().map_err(|e| format!("SDL2 video: {e}"))?;
     let window = video
@@ -76,7 +106,8 @@ pub fn run_native_shell(theme: &Theme) -> Result<(), String> {
                 _ => {}
             }
         }
-        draw_background(&mut canvas, theme, &preset);
+        let dims = draw_background(&mut canvas, theme, &preset);
+        draw_loading(&mut canvas, theme, state, dims);
         canvas.present();
         std::thread::sleep(Duration::from_millis(16));
     }

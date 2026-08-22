@@ -16,6 +16,8 @@ tokio = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 sdl2 = { version = "0.37", default-features = false, features = ["bundled"] }
+# Faz 2c: TVUI SSE istemcisi (senkron, tokio'suz — SDL2 döngüsü bloklayıcı).
+ureq = "2"
 
 # TASK-005-B — native SDL2/gilrs gamepad girdi yolu (yalnız `native-input` feature
 # ile gelir; böylece libudev gerektiren gilrs varsayılan Linux sandbox build'ini
