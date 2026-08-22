@@ -17,6 +17,16 @@ pub struct TvuiState {
     pub stage: String,
     pub ready: bool,
     pub error: Option<String>,
+    /// `ready` olunca `/api/platforms`'tan çekilen platformlar (grid kaynağı).
+    pub platforms: Vec<PlatformTile>,
+}
+
+/// Tek bir platform kutusu (grid tile'ı). `name` görünen etiket, `folder` disk
+/// eşleşmesi (sonraki faz: game_list).
+#[derive(Debug, Clone, Default)]
+pub struct PlatformTile {
+    pub name: String,
+    pub folder: String,
 }
 
 pub type SharedTvuiState = Arc<Mutex<TvuiState>>;
@@ -74,6 +84,45 @@ fn apply_snapshot(state: &SharedTvuiState, data: &serde_json::Value) {
     }
 }
 
+/// `/api/platforms` yanıtını (`{platforms:[{platform_name,folder,...}]}`) tile listesine çözer.
+pub fn parse_platforms(v: &serde_json::Value) -> Vec<PlatformTile> {
+    v.get("platforms")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|p| PlatformTile {
+                    name: p
+                        .get("platform_name")
+                        .or_else(|| p.get("name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    folder: p
+                        .get("folder")
+                        .or_else(|| p.get("dossier"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `ready` olunca bir kez `/api/platforms`'ı çeker (grid kaynağı). Hata/boş → boş liste.
+fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
+    let url = format!("http://127.0.0.1:{port}/api/platforms");
+    match ureq::get(&url).call() {
+        Ok(r) => r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .map(|v| parse_platforms(&v))
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// `port` izerindeki manager-http'e SSE baglanir, `catalog_update` olaylarini `state`'e yazar.
 /// Baglanti kurulamazsa `state.error` set edip doner (UI yine render eder, bar 0'da kalir).
 pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
@@ -102,6 +151,15 @@ pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
                     // hazır olduğunu görür ve loading bar'ını kapatır (catalog_update kaçırılsa da).
                     apply_snapshot(&state, &data);
                 }
+            }
+            // Faz 2e: ready olunca bir kez platformları çek (grid kaynağı).
+            let (ready, empty) = {
+                let s = state.lock().unwrap();
+                (s.ready, s.platforms.is_empty())
+            };
+            if ready && empty {
+                let mut s = state.lock().unwrap();
+                s.platforms = fetch_platforms(port);
             }
             acc.clear();
         } else {
@@ -162,5 +220,29 @@ mod tests {
         assert!(s.ready);
         assert!(!s.loading);
         assert_eq!(s.pct, 100);
+    }
+
+    #[test]
+    fn parse_platforms_reads_name_and_folder() {
+        let v = serde_json::json!({
+            "count": 2,
+            "platforms": [
+                {"platform_name": "NES", "folder": "nes", "games_count": 10},
+                {"platform_name": "Game Boy", "dossier": "gb"}
+            ]
+        });
+        let tiles = parse_platforms(&v);
+        assert_eq!(tiles.len(), 2);
+        assert_eq!(tiles[0].name, "NES");
+        assert_eq!(tiles[0].folder, "nes");
+        // `dossier` → `folder` fallback.
+        assert_eq!(tiles[1].name, "Game Boy");
+        assert_eq!(tiles[1].folder, "gb");
+    }
+
+    #[test]
+    fn parse_platforms_empty_when_no_array() {
+        assert!(parse_platforms(&serde_json::json!({"count": 0})).is_empty());
+        assert!(parse_platforms(&serde_json::json!(null)).is_empty());
     }
 }

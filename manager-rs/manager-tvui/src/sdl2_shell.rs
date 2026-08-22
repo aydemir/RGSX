@@ -74,6 +74,48 @@ fn draw_loading(canvas: &mut Canvas<Window>, theme: &Theme, state: &SharedTvuiSt
     }
 }
 
+/// `ready` sonrası platform grid'i: `/api/platforms`'tan gelen `state.platforms`
+/// listesini tile olarak dizer (navigasyon/selection → sonraki faz). Metin etiketi
+/// SDL2_ttf link ortamı hazır olunca eklenecek; şimdilik tile'lar veri güdümlü.
+fn draw_grid(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    state: &SharedTvuiState,
+    (w, _h): (u32, u32),
+) {
+    let platforms = state.lock().unwrap().platforms.clone();
+    if platforms.is_empty() {
+        return;
+    }
+    let cols: u32 = 6;
+    let gap: u32 = 16;
+    let margin: u32 = 40;
+    let avail_w = w.saturating_sub(margin * 2);
+    let tile_w = (avail_w.saturating_sub(gap * (cols - 1))) / cols;
+    let tile_h = tile_w * 3 / 4;
+    for (i, _p) in platforms.iter().enumerate() {
+        let col = (i as u32) % cols;
+        let row = (i as u32) / cols;
+        let x = margin + col * (tile_w + gap);
+        let y = margin + row * (tile_h + gap);
+        // Dolgu + neon çerçeve (her tile = bir gerçek platform).
+        canvas.set_draw_color(to_color(theme.color("button_idle")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(
+            x as i32,
+            y as i32,
+            tile_w,
+            tile_h,
+        ));
+        canvas.set_draw_color(to_color(theme.color("neon")));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(
+            x as i32,
+            y as i32,
+            tile_w,
+            tile_h,
+        ));
+    }
+}
+
 /// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere
 /// kapatma ile çıkılır. Bloklayıcıdır; manager-bin ayrı thread'de çağırır.
 /// `state`: SSE `catalog_update` ilerlemesini çizen loading bar'ının kaynağı.
@@ -107,7 +149,13 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
             }
         }
         let dims = draw_background(&mut canvas, theme, &preset);
-        draw_loading(&mut canvas, theme, state, dims);
+        // Loading → ready → platform_grid geçişi (012h omurgası).
+        let ready = state.lock().unwrap().ready;
+        if ready {
+            draw_grid(&mut canvas, theme, state, dims);
+        } else {
+            draw_loading(&mut canvas, theme, state, dims);
+        }
         canvas.present();
         std::thread::sleep(Duration::from_millis(16));
     }
