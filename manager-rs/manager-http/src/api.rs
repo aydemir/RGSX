@@ -1979,7 +1979,7 @@ async fn decide_retry(
             };
         }
         let streak = {
-            let mut data = state.write();
+            let data = state.write();
             data.network_error_streak.fetch_add(1, Ordering::SeqCst) + 1
         };
         if streak >= NETWORK_DOWN_THRESHOLD {
@@ -2032,7 +2032,7 @@ async fn decide_retry(
         }
     } else {
         // Ağ-dışı hata → streak'i sıfırla (flapping'i önler).
-        let mut data = state.write();
+        let data = state.write();
         data.network_error_streak.store(0, Ordering::SeqCst);
     }
     let mut data = state.write();

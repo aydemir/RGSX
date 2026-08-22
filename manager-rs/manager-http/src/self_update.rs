@@ -6,7 +6,17 @@
 //! (kullanıcı onaylayınca) indir + SHA256 doğrula (üzerine YAZMA).
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+
+/// Paralel indirmeler ayni global temp dosyasina çakismasin diye benzersiz
+/// partial adi üretir (testler eszamanli çalisabilir).
+static PARTIAL_SEQ: AtomicU64 = AtomicU64::new(0);
+fn unique_partial_name() -> PathBuf {
+    let seq = PARTIAL_SEQ.fetch_add(1, Ordering::SeqCst);
+    std::env::temp_dir()
+        .join(format!("rgsx-manager-update-{}-{}.partial", std::process::id(), seq))
+}
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::Sender;
@@ -220,7 +230,7 @@ async fn run_update_download(
     let total = resp.content_length().unwrap_or(0);
     let mut stream = resp.bytes_stream();
 
-    let tmp = std::env::temp_dir().join("rgsx-manager-update.partial");
+    let tmp = unique_partial_name();
     let _ = std::fs::remove_file(&tmp);
     let mut file = std::fs::File::create(&tmp).map_err(|e| format!("temp oluşturma: {e}"))?;
     let mut hasher = Sha256::new();
@@ -263,6 +273,9 @@ async fn run_update_download(
             return Err("sha256 uyuşmazlığı".into());
         }
     }
+    // Whandle'i kapatmadan yeniden adlandırma Windows'ta os error 2 veriyor.
+    file.flush().map_err(|e| format!("flush: {e}"))?;
+    drop(file);
     // Geçici dosyayı SHA'lı son ada sabitle (üzerine yazma yapılmaz; apply fazında).
     let final_path = std::env::temp_dir().join(format!("rgsx-manager-update-{actual}.bin"));
     let _ = std::fs::remove_file(&final_path);
