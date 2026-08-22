@@ -1908,7 +1908,7 @@ dependencies = [
 
 [[package]]
 name = "manager-bin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "manager-bridge",
@@ -1926,7 +1926,7 @@ dependencies = [
 
 [[package]]
 name = "manager-bridge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "manager-core",
@@ -1937,7 +1937,7 @@ dependencies = [
 
 [[package]]
 name = "manager-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "regex",
  "serde",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "manager-download"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "manager-http"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1999,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "manager-scan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "quick-xml 0.31.0",
  "serde",
@@ -2028,7 +2028,7 @@ dependencies = [
 
 [[package]]
 name = "manager-tvui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gilrs",
  "manager-core",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "manager-windows"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "manager-core",
  "tray-icon",

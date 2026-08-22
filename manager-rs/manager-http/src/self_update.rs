@@ -364,13 +364,40 @@ pub async fn apply_update(state: AppState, events: Sender<String>) -> Result<(),
 /// ve Faz 5 testleri tarafından kullanılır. `target_override` verilirse (test) o
 /// yolu, aksi halde `current_exe`'yi kullanır.
 pub fn recover_update(target_override: Option<PathBuf>) -> Result<(), String> {
-    let current = match target_override {
-        Some(t) => t,
+    let current = match &target_override {
+        Some(t) => t.clone(),
         None => std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?,
     };
     let old = current.with_extension("old");
     if !old.exists() {
         return Err("rollback yedeği (.old) bulunamadı".into());
+    }
+    // Windows'ta çalışan exe kilitlidir → doğrudan yazılamaz (os error 32).
+    // Bu nedenle .old'u temp'e kopyayıp DETACHED bir cmd ile (process exit
+    // sonrası) taşıyoruz; aynı desen apply relaunch ile. Testler izole kopya
+    // (target_override) üzerinde çalıştığından doğrudan kopya yapar.
+    #[cfg(windows)]
+    {
+        if target_override.is_none() {
+            use std::os::windows::process::CommandExt;
+            let tmp = std::env::temp_dir().join("rgsx-recover.bin");
+            std::fs::copy(&old, &tmp).map_err(|e| format!(".old kopya: {e}"))?;
+            let dst = current.display().to_string();
+            let bat = std::env::temp_dir().join("rgsx-recover.bat");
+            let script = format!(
+                "@echo off\r\nping -n 2 127.0.0.1 >nul 2>&1\r\nmove /y \"{src}\" \"{dst}\"\r\n",
+                src = tmp.display().to_string(),
+                dst = dst
+            );
+            std::fs::write(&bat, script).map_err(|e| format!("bat: {e}"))?;
+            std::process::Command::new("cmd")
+                .arg("/c")
+                .arg(&bat)
+                .creation_flags(0x00000200 | 0x00000008) // NEW_PROCESS_GROUP | DETACHED
+                .spawn()
+                .map_err(|e| format!("recover süreci: {e}"))?;
+            std::process::exit(0);
+        }
     }
     std::fs::copy(&old, &current).map_err(|e| format!(".old geri yükleme: {e}"))?;
     Ok(())
@@ -378,14 +405,23 @@ pub fn recover_update(target_override: Option<PathBuf>) -> Result<(), String> {
 
 #[cfg(windows)]
 fn replace_and_relaunch(src: &str, dst: &std::path::Path) -> Result<(), String> {
-    // Çalışan exe kilitli → ayrı updater süreci: 1s bekle, move, start.
-    let cmd = format!(
-        "timeout /t 1 /nobreak >nul & move /y \"{src}\" \"{dst}\" & start \"\" \"{dst}\"",
+    use std::os::windows::process::CommandExt;
+    // Çalışan exe kilitli → ayrı updater süreci (ebeveyn konsolundan bağımsız).
+    // `timeout` stdin redirect'te patlar; gecikme için `ping` kullanıyoruz. Komutu
+    // .bat'e yazıp DETACHED başlatıyoruz ki ebeveyn `process::exit` sonrası ölmesin
+    // (konsol kapanınca çalışan cmd de ölüyordu → move hiç çalışmıyordu).
+    let dst_s = dst.display().to_string();
+    let bat = std::env::temp_dir().join("rgsx-update.bat");
+    let script = format!(
+        "@echo off\r\nping -n 2 127.0.0.1 >nul 2>&1\r\nmove /y \"{src}\" \"{dst}\"\r\nif errorlevel 1 exit /b\r\nstart \"\" \"{dst}\"\r\n",
         src = src,
-        dst = dst.display()
+        dst = dst_s
     );
+    std::fs::write(&bat, script).map_err(|e| format!("bat yazma: {e}"))?;
     std::process::Command::new("cmd")
-        .args(["/c", &cmd])
+        .arg("/c")
+        .arg(&bat)
+        .creation_flags(0x00000200 | 0x00000008) // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
         .spawn()
         .map_err(|e| format!("updater süreci: {e}"))?;
     std::process::exit(0);
