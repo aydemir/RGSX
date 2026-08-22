@@ -5,11 +5,35 @@
 //! Senkron olmasi bilincli: SDL2 event loop tek thread, async/tokio agirligi gereksiz.
 
 use std::io::BufRead;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 /// Self-update indirmesinin kuyruk görevi kimliği (manager-http ile aynı sabit).
 pub const MANAGER_UPDATE_TASK_ID: &str = "manager-update";
+
+/// SSE okuma watchdog'u: sunucu 30 sn'de bir keep-alive snapshot yayınlar
+/// (`manager-http/src/sse.rs` broadcast_loop); 90 sn sessizlik ≥2 kaçırılmış
+/// keep-alive demektir → bağlantı ölü sayılır, reconnect döngüsü devreye girer.
+const SSE_READ_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Yeniden bağlanma gecikmesi (Python parity: tvui.py `_manager_sse_worker` 3 sn).
+const SSE_RECONNECT_DELAY: Duration = Duration::from_secs(3);
+
+/// Poison-safe kilit: bir thread lock tutarken paniklese bile diğer thread
+/// domino gibi düşmesin (Python'daki her şeyi-saran try/except'in karşılığı).
+pub(crate) fn tvui_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Kullanıcı tetiklemeli API çağrıları için ortak agent: connect 3s + toplam 5s.
+/// SDL event loop'undan çağrıldıkları için donma üst sınırı zorunludur
+/// (TASK-012-gap-01 bulgu 3).
+fn api_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .build()
+}
 
 /// TVUI acilis durumu (loading bar kaynagi). SDL2 dongusu ile SSE thread'i
 /// arasinda `Arc<Mutex<>>` ile paylasilir.
@@ -68,7 +92,7 @@ pub fn parse_sse_frame(buf: &str) -> Option<(String, serde_json::Value)> {
 }
 
 fn apply_catalog_update(state: &SharedTvuiState, data: &serde_json::Value) {
-    let mut s = state.lock().unwrap();
+    let mut s = tvui_lock(state);
     s.loading = true;
     if let Some(stage) = data.get("stage").and_then(|v| v.as_str()) {
         s.stage = stage.to_string();
@@ -100,12 +124,16 @@ fn apply_catalog_update(state: &SharedTvuiState, data: &serde_json::Value) {
 
 /// Başlangıç `snapshot` olayını işler (race düzeltmesi): `catalog_ready` true ise
 /// TVUI loading bar'ını kapatır — `catalog_update` kaçırılsa bile geç abone kurtulur.
+/// Katalog hazirse eski hata/çevrimdışı bayrakları bayatmıştır: temizlenir
+/// (TASK-012-gap-01 Faz A; SSE kopma-kopma geri gelme sonrası eski hata asılı kalmaz).
 fn apply_snapshot(state: &SharedTvuiState, data: &serde_json::Value) {
     if let Some(true) = data.get("catalog_ready").and_then(|v| v.as_bool()) {
-        let mut s = state.lock().unwrap();
+        let mut s = tvui_lock(state);
         s.ready = true;
         s.loading = false;
         s.pct = 100;
+        s.error = None;
+        s.offline = false;
     }
 }
 
@@ -137,7 +165,7 @@ pub fn parse_platforms(v: &serde_json::Value) -> Vec<PlatformTile> {
 /// `ready` olunca bir kez `/api/platforms`'ı çeker (grid kaynağı). Hata/boş → boş liste.
 fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
     let url = format!("http://127.0.0.1:{port}/api/platforms");
-    match ureq::get(&url).call() {
+    match api_agent().get(&url).call() {
         Ok(r) => r
             .into_string()
             .ok()
@@ -163,11 +191,11 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
     };
     if obj.get("available").and_then(|v| v.as_bool()).unwrap_or(false) {
         if let Some(v) = obj.get("version").and_then(|x| x.as_str()) {
-            state.lock().unwrap().update_available = Some(v.to_string());
+            tvui_lock(state).update_available = Some(v.to_string());
         }
     }
     if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
-        let mut s = state.lock().unwrap();
+        let mut s = tvui_lock(state);
         s.update_stage = Some(stage.to_string());
         if stage == "downloading" {
             s.update_pct = obj
@@ -182,7 +210,7 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
 /// Non-blocking: hemen `{ok, queued}` döner; ilerleme SSE ile gelir.
 pub fn trigger_update_download(port: u16) -> String {
     let url = format!("http://127.0.0.1:{port}/api/manager-update/download");
-    match ureq::post(&url).call() {
+    match api_agent().post(&url).call() {
         Ok(r) => match r
             .into_string()
             .ok()
@@ -199,7 +227,7 @@ pub fn trigger_update_download(port: u16) -> String {
 /// GERİ ALINAMAZ; sunucu yalnız `RGSX_SELF_APPLY=1` ile gerçekleştirir.
 pub fn trigger_update_apply(port: u16) -> String {
     let url = format!("http://127.0.0.1:{port}/api/manager-update/apply");
-    match ureq::post(&url).call() {
+    match api_agent().post(&url).call() {
         Ok(r) => match r
             .into_string()
             .ok()
@@ -217,7 +245,8 @@ pub fn trigger_update_apply(port: u16) -> String {
 pub fn trigger_update_cancel(port: u16) -> String {
     let url = format!("http://127.0.0.1:{port}/api/queue/remove");
     let body = serde_json::json!({ "task_id": MANAGER_UPDATE_TASK_ID });
-    match ureq::post(&url)
+    match api_agent()
+        .post(&url)
         .set("Content-Type", "application/json")
         .send_string(&body.to_string())
     {
@@ -253,7 +282,7 @@ fn parse_apply_response(v: &serde_json::Value) -> String {
 /// çalıştırır; ilerleme SSE `catalog_update` ile gelir. Sonuç mesajı döner.
 pub fn trigger_catalog_retry(port: u16) -> String {
     let url = format!("http://127.0.0.1:{port}/api/catalog/retry");
-    match ureq::post(&url).call() {
+    match api_agent().post(&url).call() {
         Ok(r) => match r
             .into_string()
             .ok()
@@ -275,53 +304,86 @@ fn parse_retry_response(v: &serde_json::Value) -> String {
     }
 }
 
-/// `port` izerindeki manager-http'e SSE baglanir, `catalog_update` olaylarini `state`'e yazar.
-/// Baglanti kurulamazsa `state.error` set edip doner (UI yine render eder, bar 0'da kalir).
+/// `port` üzerindeki manager-http'e SSE bağlanır; `catalog_update`, `snapshot` ve
+/// `manager_update` olaylarını `state`'e yazar.
+///
+/// Dayanıklılık (TASK-012-gap-01 Faz A): bağlantı kurulamazsa YA DA akış koparsa
+/// (EOF / okuma stall'ı > SSE_READ_TIMEOUT) `SSE_RECONNECT_DELAY` bekleyip sonsuza dek
+/// yeniden dener (Python parity: tvui.py `_manager_sse_worker`). Yalnızca İLK bağlantı
+/// hatası `state.error`'a yazılır; sonraki kopmalar mevcut UI durumunu bozmaz —
+/// self-update apply gibi manager restart'larında TVUI kendini toparlar.
 pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
-    state.lock().unwrap().port = port;
+    tvui_lock(&state).port = port;
     let url = format!("http://127.0.0.1:{port}/api/events");
-    // Yalnizca connect timeout; SSE akisi uzun omurlu oldugu icin read timeout YOK.
+    // Connect'e kısa timeout; akış uzun ömürlü olduğu için toplam timeout YOK,
+    // yalnızca read watchdog'u var (stall'da read Err döner → reconnect).
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
+        .timeout_read(SSE_READ_TIMEOUT)
         .build();
-    let resp = match agent.get(&url).call() {
-        Ok(r) => r,
-        Err(e) => {
-            let mut s = state.lock().unwrap();
-            s.error = Some(format!("SSE baglanti hatasi: {e}"));
-            return;
+    let mut ever_connected = false;
+    loop {
+        match agent.get(&url).call() {
+            Ok(resp) => {
+                eprintln!("TVUI SSE bağlı: {url}");
+                ever_connected = true;
+                consume_sse_stream(resp, port, &state);
+                eprintln!(
+                    "TVUI SSE akışı kapandı, {SSE_RECONNECT_DELAY:?} sonra yeniden bağlanıyor"
+                );
+            }
+            Err(e) => {
+                if !ever_connected {
+                    tvui_lock(&state).error = Some(format!("SSE baglanti hatasi: {e}"));
+                }
+                eprintln!("TVUI SSE baglanti hatasi ({e}), yeniden denenecek");
+            }
         }
-    };
+        std::thread::sleep(SSE_RECONNECT_DELAY);
+    }
+}
+
+/// Açık SSE yanıtını satır satır tüketir; tamamlanan frame'leri `state`'e uygular.
+/// Bağlantı EOF/hata/stall ile biter (fonksiyon geri döner) — reconnect döngüsü üstlenir.
+fn consume_sse_stream(resp: ureq::Response, port: u16, state: &SharedTvuiState) {
     let reader = std::io::BufReader::new(resp.into_reader());
     let mut acc = String::new();
-    for line in reader.lines().map(|l| l.unwrap_or_default()) {
+    for line in reader.lines() {
+        let Ok(line) = line else {
+            break; // io hatası / read-timeout stall'ı → reconnect
+        };
         if line.is_empty() {
-            if let Some((ev, data)) = parse_sse_frame(&acc) {
-                if ev == "catalog_update" {
-                    apply_catalog_update(&state, &data);
-                } else if ev == "snapshot" {
-                    // Race düzeltmesi: geç bağlanan TVUI, başlangıç snapshot'ından katalogun
-                    // hazır olduğunu görür ve loading bar'ını kapatır (catalog_update kaçırılsa da).
-                    apply_snapshot(&state, &data);
-                    apply_manager_update(&state, &data);
-                } else if ev == "manager_update" {
-                    apply_manager_update(&state, &data);
-                }
-            }
-            // Faz 2e: ready olunca bir kez platformları çek (grid kaynağı).
-            let (ready, empty) = {
-                let s = state.lock().unwrap();
-                (s.ready, s.platforms.is_empty())
-            };
-            if ready && empty {
-                let mut s = state.lock().unwrap();
-                s.platforms = fetch_platforms(port);
-            }
+            handle_sse_frame(&acc, port, state);
             acc.clear();
         } else {
             acc.push_str(&line);
             acc.push('\n');
         }
+    }
+}
+
+/// Tek tamamlanmış SSE frame'ini olay türüne göre uygular; `ready` olup platformlar
+/// hâlâ boşsa `/api/platforms`'ı çeker (grid kaynağı).
+fn handle_sse_frame(acc: &str, port: u16, state: &SharedTvuiState) {
+    if let Some((ev, data)) = parse_sse_frame(acc) {
+        match ev.as_str() {
+            "catalog_update" => apply_catalog_update(state, &data),
+            "snapshot" => {
+                // Race düzeltmesi: geç bağlanan TVUI, başlangıç snapshot'ından katalogun
+                // hazır olduğunu görür ve loading bar'ını kapatır (catalog_update kaçırılsa da).
+                apply_snapshot(state, &data);
+                apply_manager_update(state, &data);
+            }
+            "manager_update" => apply_manager_update(state, &data),
+            _ => {}
+        }
+    }
+    let (ready, empty) = {
+        let s = tvui_lock(state);
+        (s.ready, s.platforms.is_empty())
+    };
+    if ready && empty {
+        tvui_lock(state).platforms = fetch_platforms(port);
     }
 }
 
@@ -387,10 +449,16 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_catalog_ready_marks_ready() {
+    fn snapshot_catalog_ready_marks_ready_and_clears_stale_error_offline() {
         // Race düzeltmesi: geç SSE abonesi, başlangıç snapshot'ından katalogun hazır
         // olduğunu görüp loading bar'ını kapatmalı (catalog_update kaçırılsa bile).
+        // Faz A: hazır katalogda eski hata/çevrimdışı bayrakları bayatmıştır → temizlenir.
         let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        {
+            let mut s = state.lock().unwrap();
+            s.error = Some("katalog hazirlanamadi: no_source".to_string());
+            s.offline = true;
+        }
         apply_snapshot(
             &state,
             &serde_json::json!({"catalog_ready": true, "network_down": false}),
@@ -399,6 +467,35 @@ mod tests {
         assert!(s.ready);
         assert!(!s.loading);
         assert_eq!(s.pct, 100);
+        assert!(s.error.is_none(), "bayat hata temizlenmeli");
+        assert!(!s.offline);
+    }
+
+    #[test]
+    fn watcher_retries_after_failed_connect_instead_of_returning() {
+        // TASK-012-gap-01 Faz A: ESKİ davranış ilk connect hatasında fonksiyondan
+        // dönüyordu (thread ölür → loading bar sonsuza dek donar). YENİ davranış:
+        // ilk hatayı error'a yazıp retry döngüsünde YAŞAMAYA devam eder.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener); // Portu serbest bırak → bağlantı hızlıca REDDEDİLİR.
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        let handle = {
+            let st = state.clone();
+            std::thread::spawn(move || start_catalog_watcher(port, st))
+        };
+        std::thread::sleep(Duration::from_millis(500));
+        let err = state.lock().unwrap().error.clone();
+        assert!(
+            err.as_deref().unwrap_or_default().starts_with("SSE"),
+            "ilk bağlantı hatası error'a yazılmalı, geldi: {err:?}"
+        );
+        assert!(
+            !handle.is_finished(),
+            "watcher ilk hatada ÖLMEMELİ — reconnect döngüsünde olmalı"
+        );
+        // Watcher'ı bilinçli olarak leak ediyoruz: sonsuz retry döngüsüdür; test
+        // process'i çıkınca sonlanır (Rust'ta main exit tüm thread'leri keser).
     }
 
     #[test]

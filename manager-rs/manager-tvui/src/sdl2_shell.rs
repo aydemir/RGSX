@@ -12,6 +12,7 @@ use sdl2::pixels::Color;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
+use crate::net::tvui_lock;
 use crate::net::trigger_catalog_retry;
 use crate::net::trigger_update_apply;
 use crate::net::trigger_update_cancel;
@@ -56,7 +57,7 @@ fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) -> 
 /// Hata varsa belirgin kırmızı çerçeve çizer (metin yok — TTF erte).
 fn draw_loading(canvas: &mut Canvas<Window>, theme: &Theme, state: &SharedTvuiState, (w, h): (u32, u32)) {
     let (pct, error) = {
-        let s = state.lock().unwrap();
+        let s = tvui_lock(state);
         (s.pct.clamp(0, 100) as f32 / 100.0, s.error.clone())
     };
     let bar_w = ((w as i32) * 60 / 100).max(40) as u32;
@@ -92,7 +93,7 @@ fn draw_grid(
     (w, _h): (u32, u32),
 ) {
     let (platforms, offline) = {
-        let s = state.lock().unwrap();
+        let s = tvui_lock(state);
         (s.platforms.clone(), s.offline)
     };
     // Çevrimdışı mod: üstte kırmızı şerit (metin yok — TTF erte).
@@ -142,7 +143,7 @@ fn draw_update_banner(
     (w, _h): (u32, u32),
 ) {
     let (avail, stage, pct) = {
-        let s = state.lock().unwrap();
+        let s = tvui_lock(state);
         (s.update_available.clone(), s.update_stage.clone(), s.update_pct)
     };
     let Some(ver) = avail else {
@@ -232,12 +233,12 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     ..
                 } => {
                     let (err, port) = {
-                        let s = state.lock().unwrap();
+                        let s = tvui_lock(state);
                         (s.error.clone(), s.port)
                     };
                     if err.is_some() {
                         {
-                            let mut s = state.lock().unwrap();
+                            let mut s = tvui_lock(state);
                             s.loading = true;
                             s.ready = false;
                             s.error = None;
@@ -254,7 +255,7 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     ..
                 } => {
                     let (avail, stage, restarting, err, offline, port) = {
-                        let s = state.lock().unwrap();
+                        let s = tvui_lock(state);
                         (
                             s.update_available.clone(),
                             s.update_stage.clone(),
@@ -267,12 +268,12 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     if restarting {
                         // Zaten yeniden başlatılıyor; ikinci Enter yok sayılır.
                     } else if err.is_some() && !offline {
-                        state.lock().unwrap().offline = true;
+                        tvui_lock(state).offline = true;
                     } else if avail.is_some() {
                         let stage = stage.unwrap_or_else(|| "available".to_string());
                         if stage == "ready" {
                             let st = trigger_update_apply(port);
-                            let mut s = state.lock().unwrap();
+                            let mut s = tvui_lock(state);
                             if st.contains("yeniden başlat") {
                                 s.update_restarting = true;
                             } else {
@@ -280,7 +281,7 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                             }
                         } else {
                             let st = trigger_update_download(port);
-                            let mut s = state.lock().unwrap();
+                            let mut s = tvui_lock(state);
                             s.update_stage = Some("downloading".to_string());
                             let _ = st;
                         }
@@ -292,7 +293,7 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     ..
                 } => {
                     let (stage, port) = {
-                        let s = state.lock().unwrap();
+                        let s = tvui_lock(state);
                         (s.update_stage.clone(), s.port)
                     };
                     if stage.unwrap_or_default() == "downloading" {
@@ -305,13 +306,13 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
         let dims = draw_background(&mut canvas, theme, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
         // Yeniden başlatma ekranı (apply sonrası) — grid/loading yerine tam ekran.
-        let restarting = state.lock().unwrap().update_restarting;
+        let restarting = tvui_lock(state).update_restarting;
         if restarting {
             draw_restart_screen(&mut canvas, theme, dims);
         } else {
             // Loading → ready/offline → platform_grid geçişi (012h omurgası).
             let show_grid = {
-                let s = state.lock().unwrap();
+                let s = tvui_lock(state);
                 s.ready || s.offline
             };
             if show_grid {
