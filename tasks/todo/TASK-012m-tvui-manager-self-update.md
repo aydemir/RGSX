@@ -2,60 +2,123 @@
 
 - **id:** TASK-012m
 - **title:** Manager binary self-update (version check + download + SHA256 verify + platform-safe apply + restart)
-- **status:** todo
+- **status:** in-progress
 - **priority:** P1
 - **created:** 2026-08-22
+- **updated:** 2026-08-22
 - **environment:** both
 - **tags:** tvui, update, self-update, native, faz12b, parity
-- **source:** ports/RGSX/tvui.py (`network.check_for_updates`, `apply_pending_update`); TASK-012h karar notu (kullanıcı: "manager-rs ye gelen güncellemeler nasıl olmalı")
+- **source:** `ports/RGSX/tvui.py` (`network.check_for_updates`, `apply_pending_update`); TASK-012h karar notu.
 - **depends_on:** TASK-012h
 - **supersedes:** none
 
 ## Kaynak
 
 - `ports/RGSX/tvui.py:36` — `from network import ... check_for_updates, apply_pending_update ...`
-- `config.pending_update_version`, `config.update_checked`, `config.gamelist_update_prompted`,
-  `config.startup_update_confirmed` — Python'da güncelleme onay akışı flag'leri.
-- TASK-012h SSE altyapısı (`catalog_update` eşleniği) — aynı desen `manager_update` SSE'iyle tekrar kullanılır.
+- Python'da iki ayrı OTA: uygulama/manager binary (`pending_update_version`,
+  `startup_update_confirmed`, `update_checked`) ve gamelist verisi (`gamelist_update_prompted`).
+  Bu görev **manager binary** tarafı.
+- TASK-012h SSE altyapısı (`catalog_update` eşleniği) → `manager_update` SSE'iyle tekrar kullanılır.
+- `manager-http/src/self_update.rs` (Faz 1-4 implemente edildi), `manager-http/src/api.rs`,
+  `manager-tvui/src/net.rs`, `manager-tvui/src/sdl2_shell.rs`, `webui/src/App.vue`.
 
 ## Açıklama
 
-Python'daki manager self-update Rust'e portlanır; TVUI/WebUI'de **onay + progress bar** ile
-görünür (Python parity). İki bağımsız akış vardı; katalog OTA TASK-012h'ye katıldı, bu görev
-**manager binary'sinin kendini güncellemesi**.
+Manager binary'si kendini günceller; TVUI'de **onay + progress** ile görünür. Python parity
+hedefi, ama son kullanıcı senaryosu (TVUI öncelikli, WebUI zorunlu değil, indirme arka planda)
+doğrultusunda bilinçli sapmalar var.
 
-**Akış:**
-1. **Versiyon kaynağı:** JSON (`RGSX_UPDATE_URL` veya GitHub release latest) →
-   `{version, url_windows, url_linux, sha256}`. Mevcut versiyon `manager-bin` build metadata'ından.
-2. **Kontrol:** başlangıçta (arka plan) + periyodik → SSE `manager_update`
-   `{available, version, current}`.
-3. **Uygulama (TVUI onayı):** binary indir + SHA256 doğrula + **platform-safe** değiştirme:
-   - Linux: çalışan binary'yi değiştir → restart.
-   - Windows: çalışan `.exe` overwrite edilemez → küçük updater/relaunch deseni (yeni exe'yi
-     temp'e al, kapatınca swap + restart). `manager-windows` (NSIS) bağlamıyla uyumlu.
-4. **TVUI:** `update_prompt` state → "Güncelleme mevcut vX.Y" → bas → `manager_update` SSE barı
-   (`{stage:"download", received,total}`) → "Yeniden başlatılıyor".
+### Faz 1-4 (TAMAM — commit ff4c45b, 2a2e411)
+- Manifest kaynağı: yalnızca env `RGSX_UPDATE_MANIFEST_URL` (hardcoded yok). Boşsa no-op.
+- `check_update` → `CARGO_PKG_VERSION` ile karşılaştır → yeniyse SSE `manager_update`
+  `{available,version,url,sha256}` + `StateData.manager_update`.
+- `download_and_verify` → temp dosyaya indir + SHA256 doğrula, **üzerine yazma YOK**.
+- TVUI: banner + `Enter` → `POST /api/manager-update/download` → "indirildi: <path>".
+- Canlı duman testi (entegrasyon): `manager-http/tests/self_update_smoke.rs` yeşil.
 
-**Behavior contract (parity):**
-- Güncelleme mevcutsa TVUI'de bir kez sorulur (Python `gamelist_update_prompted` flag parity).
-- İndirme sırasında progress bar akar (SSE, 250ms throttled değil — tek akış yeterli).
-- Doğrulama başarısızsa eski binary korunur (rollback yok, ama zarar görmez).
+### Faz 5 (TASARIM — bu görev)
+Geri alınamaz adım: indirilen temp binary'yi **çalışan exe'nin yerine koy + relaunch**.
+İki ayrı karar noktası çözüldü:
 
-## Kapsam / Dosyalar
+| # | Karar | Sonuç |
+|---|-------|-------|
+| 1 | İki adımlı UI onayı (download → apply) | **Hayır, ayrı "emin misin?" dialog'u yok.** Tek tık = eylem. `Enter` indirmeyi başlatır (arka plan); hazır olunca `Enter` = apply (doğrudan, geri alınamaz). Tıklama yetkidir. |
+| 2 | Servis senaryosu | Normal process varsayılır. **Serviste (systemd/Windows Service) `apply` reddedilir + log.** |
+| 3 | Rollback | **`.old` yedek + `manager-bin --recover`** (`.old`'u geri koyar). Watchdog YOK. |
+| 4 | WebUI self-update banner | **Bloker DEĞİL.** TVUI öncelikli; WebUI banner isteğe bağlı, Faz 5'i engellemez. |
 
-- `manager-update` yeni crate (veya `manager-bin` içinde mod): version check, download, verify, apply.
-- `manager-http/src` güncelleme endpoint'i (`/api/check-update`, `/api/apply-update`) + SSE `manager_update`.
-- `manager-tvui/src/` `update_prompt` state + bar render.
-- `manager-windows` Windows relaunch/updater yardımcısı.
+**Kullanıcı ek refineler:**
+- **Kuyruk + iptal:** Self-update indirmesi ayrı özel akış değil, **indirme kuyruğu öğesi**
+  olmalı (WebUI/Python TVUI parity). `Enter` → binary indirme **kuyruğa girer** (progress SSE
+  ile görünür), yanlış tık → **kuyruktan iptal** (`cancel`/`queue-remove`).
+- **Tek-tık modeli:** misclick → kuyruktan iptal ederim (oyun indirmesi gibi). Apply tek tık =
+  geri alınamaz replace; kullanıcı tercihi olarak kabul edildi.
+
+### TVUI-prioritli akış (final)
+```
+[Boot/arka plan] check_update() → SSE manager_update {available,version,current}
+
+[TVUI] Banner: "Güncelleme vX.Y mevcut"
+  ├─ Enter (1) → POST /api/manager-update/download
+  │              → KUYRUĞA girer (HTTP, cancellable, progress SSE)
+  │              → kullanıcı grid'e döner, oyuna devam eder
+  └─ İndirme bitince banner: "vX.Y hazır — uygula"
+        └─ Enter (2) → POST /api/manager-update/apply
+                        → replace + relaunch (geri alınamaz)
+                        → kısa "Yeniden başlatılıyor…" → yeni process
+```
+State machine (TVUI): `idle → available → downloading(in queue) → ready → (Enter) applying → (yeni process) idle`.
+Escape/yok say → banner kalır, apply olmaz (indirme devam eder/iptal edilir).
+
+### Python parity notu
+Python tek onayla indir+uygula+restart yapar; native bilinçli olarak **indirmeyi arka plana**
+alıp apply'ı ayrı tık yaptık (indirme uzun→arka plan, apply geri alınamaz→bilinçli tık). Kullanıcı
+"ayrı emin misin dialog'u istemiyorum" dedi → o dialog kaldırıldı; tıklama yetki sayılır.
+
+## API sözleşmesi (Faz 5)
+- `POST /api/manager-update/download` → indirmeyi **kuyruk görevi** olarak başlatır
+  (`task_type: "manager_update"`, HTTP). Mevcut dönen `{success,path}` korunur; ayrıca
+  `progress`/`queue` SSE ile ilerleme gelir, `cancel`/`queue-remove` ile iptal edilebilir.
+- `POST /api/manager-update/apply` → `{success}`; replace + relaunch. Serviste reddedilir.
+- SSE `manager_update`:
+  - `{available, version, current}`
+  - `{stage:"download", received, total}` (kuyruk progress)
+  - `{stage:"ready"}` (apply bekliyor)
+  - `{stage:"applying"}`
+
+## Kapsam / Dosyalar (implementasyon planı)
+
+**Güvenli parçalar (geri alınamaz değil — önce bunlar):**
+1. Self-update indirmesi = **kuyruk görevi** (HTTP, `task_type:"manager_update"`),
+   cancellable; mevcut `progress`/`queue` SSE + `cancel`/`queue-remove` ile çalışır.
+   (`manager-http/src` queue worker + `self_update.rs`)
+2. İndirilen temp yolu `StateData.manager_update["path"]` içinde saklansın (apply için).
+3. `POST /api/manager-update/apply` handler → `self_update::apply_update(path)`;
+   servis tespitinde reddet + log.
+4. TVUI state machine + tek-`Enter` apply, "Yeniden başlatılıyor…" ekranı
+   (`manager-tvui/src/net.rs`, `sdl2_shell.rs`).
+5. SHA + versiyon kapıları (zaten mevcut, apply'da da zorunlu).
+
+**Geri alınamaz parça (yalnız açık "evet" ile):**
+6. `self_update::apply_update` (Win/Linux):
+   - *Windows:* yeni exe temp'e → ayrı updater süreci (`cmd /c`: 1s bekle → temp→hedef `move`
+     → hedefi `start`) → mevcut process çıkar (kilit çıkışta serbest).
+   - *Linux:* `rename(temp, current)` (inode güvenli) → `execve` self-replace (aynı PID).
+   - `.old` yedek; `manager-bin --recover` CLI flag'ı (`.old`'u geri koyar).
 
 ## Doğrulama
 
-- Versiyon JSON parse + SHA256 doğrulama birim testi.
-- Linux: sahte yeni binary ile swap + restart simülasyonu.
-- Windows: exe overwrite engeli relaunch deseni ile aşılır (integration).
+- Birim: versiyon parse/SHA (var), kuyruk görevi cancel, apply_update yol mantığı.
+- Duman (Faz 1-4): mock manifest + headless manager-bin → SSE/endpoint.
+- Duman (Faz 5): "replace sonrası yeni versiyon serviste mi?" + bozuk binary → `--recover`.
+- WebUI update banner: bloker değil; sonra eklenebilir.
 
 ---
 
 ## İlerleme
 
-- 2026-08-22 — TASK-012h kararı sonucu açıldı (kullanıcı onayı: "doğru anlamışsın önerini kabul ediyorum").
+- 2026-08-22 — TASK-012h kararı sonucu açıldı.
+- 2026-08-22 — Faz 1-4 tamam (ff4c45b, 2a2e411): manifest/env, check_update, download+SHA,
+  TVUI banner+download, canlı duman entegrasyon testi.
+- 2026-08-22 — Faz 5 tasarımı netleşti (5 kullanıcı kararı: tek-tık uygula, serviste reddet,
+  .old+--recover, WebUI bloker değil, kuyruk+iptal parity). Plan `tasks/` altına yazıldı.
