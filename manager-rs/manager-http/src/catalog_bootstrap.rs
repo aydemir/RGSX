@@ -11,8 +11,10 @@
 //! - custom değilse `RGSX_SOURCES_ZIP_URL` veya varsayılan OTA URL'i.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use tokio::sync::broadcast::Sender;
 use tracing::{info, warn};
 
 /// Varsayılan OTA kaynak ZIP'i (`config.OTA_data_ZIP` eşleniği).
@@ -77,9 +79,19 @@ fn resolve_zip_source() -> Option<String> {
 /// `RGSX_NATIVE_CATALOG=1` çağrılır. Katalog zaten mevcutsa no-op; değilse OTA'dan çeker.
 /// Başarı/başarısızlık `bool` ile döner (başarısızsa native catalog yine de boş kalır,
 /// eski davranış korunur).
-pub async fn ensure_catalog_ready() -> bool {
+///
+/// `events` verilirse indirme ilerlemesi SSE `catalog_update` olayı olarak yayınlanır
+/// (TVUI/WebUI açılış loading bar'ı — Python parity). `None` → sessiz (mevcut davranış).
+pub async fn ensure_catalog_ready(events: Option<&Sender<String>>) -> bool {
     let data_dir = default_data_dir();
     if catalog_present(&data_dir) {
+        if let Some(e) = events {
+            crate::sse::publish(
+                e,
+                "catalog_update",
+                &serde_json::json!({ "stage": "ready", "success": true, "skipped": true }),
+            );
+        }
         return true;
     }
 
@@ -92,6 +104,13 @@ pub async fn ensure_catalog_ready() -> bool {
         Some(s) => s,
         None => {
             warn!("custom mod: kaynak ZIP bulunamadı (RGSX_SOURCES_ZIP_URL geçersiz/eksik)");
+            if let Some(e) = events {
+                crate::sse::publish(
+                    e,
+                    "catalog_update",
+                    &serde_json::json!({ "stage": "ready", "success": false, "reason": "no_source" }),
+                );
+            }
             return false;
         }
     };
@@ -99,7 +118,14 @@ pub async fn ensure_catalog_ready() -> bool {
     let is_http = source.starts_with("http://") || source.starts_with("https://");
     let zip_path = if is_http {
         let p = data_dir.join("data_download.zip");
-        if !download(&source, &p).await {
+        if !download(&source, &p, events).await {
+            if let Some(e) = events {
+                crate::sse::publish(
+                    e,
+                    "catalog_update",
+                    &serde_json::json!({ "stage": "ready", "success": false, "reason": "download_failed" }),
+                );
+            }
             return false;
         }
         p
@@ -107,11 +133,23 @@ pub async fn ensure_catalog_ready() -> bool {
         PathBuf::from(&source)
     };
 
+    if let Some(e) = events {
+        crate::sse::publish(e, "catalog_update", &serde_json::json!({ "stage": "extract" }));
+    }
+
     let ok = extract_zip(&zip_path, &data_dir);
 
     // Yalnızca bizim indirdiğimiz geçici dosyayı temizle (yerel custom zip'e dokunma).
     if is_http {
         let _ = std::fs::remove_file(&zip_path);
+    }
+
+    if let Some(e) = events {
+        crate::sse::publish(
+            e,
+            "catalog_update",
+            &serde_json::json!({ "stage": "ready", "success": ok }),
+        );
     }
 
     if ok {
@@ -123,7 +161,9 @@ pub async fn ensure_catalog_ready() -> bool {
 }
 
 /// `reqwest` ile streaming indirme (Python `requests.get(stream=True)` eşleniği).
-async fn download(url: &str, dest: &Path) -> bool {
+/// `events` verilirse her chunk sonrası SSE `catalog_update` ({stage:"download",
+/// received,total}) yayınlanır.
+async fn download(url: &str, dest: &Path, events: Option<&Sender<String>>) -> bool {
     if let Some(parent) = dest.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -159,13 +199,43 @@ async fn download(url: &str, dest: &Path) -> bool {
         }
     };
 
+    let total = resp.content_length().unwrap_or(0);
+    let mut received: u64 = 0;
+    let mut last_pct: i64 = -1;
+    let mut last_send = Instant::now();
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         match chunk {
             Ok(bytes) => {
+                received += bytes.len() as u64;
                 if let Err(e) = std::io::Write::write_all(&mut file, &bytes) {
                     warn!("indirme yazma hatası: {e}");
                     return false;
+                }
+                // Throttle: yalnızca %1 değişimde VEYA >=200ms geçtiyse yayın. Büyük ZIP'te
+                // chunk başına yüzlerce SSE mesajı UI event-loop'unu yormasın (Lagged'e düşmese de).
+                let pct = if total > 0 {
+                    (received * 100 / total) as i64
+                } else {
+                    -1
+                };
+                let now = Instant::now();
+                if let Some(e) = events {
+                    if pct != last_pct || now.duration_since(last_send) >= Duration::from_millis(200) {
+                        crate::sse::publish(
+                            e,
+                            "catalog_update",
+                            &serde_json::json!({
+                                "stage": "download",
+                                "received": received,
+                                "total": total,
+                                "pct": pct,
+                                "source": url,
+                            }),
+                        );
+                        last_pct = pct;
+                        last_send = now;
+                    }
                 }
             }
             Err(e) => {
@@ -226,4 +296,35 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, content: &str) {
+        if let Some(p) = path.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let _ = std::fs::write(path, content);
+    }
+
+    #[test]
+    fn catalog_present_true_when_systems_list_and_games_exist() {
+        let tmp = std::env::temp_dir().join(format!("rgsx_cat_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write(&tmp.join("systems_list.json"), "{}");
+        write(&tmp.join("games").join("snes.json"), "{}");
+        assert!(catalog_present(&tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn catalog_present_false_without_games_dir() {
+        let tmp = std::env::temp_dir().join(format!("rgsx_cat_test2_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write(&tmp.join("systems_list.json"), "{}");
+        assert!(!catalog_present(&tmp));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

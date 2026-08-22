@@ -25,7 +25,10 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 /// Seçili arka plan preset'ini dikey gradyan olarak çizer (top → bottom).
 fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) {
     let (top, bottom) = theme.background(preset);
-    let (w, h) = canvas.output_size().unwrap_or((1280, 720));
+    let (w, h) = match canvas.output_size() {
+        Ok((w, h)) if w > 0 && h > 0 => (w, h),
+        _ => (1280, 720),
+    };
     for y in 0..h {
         let t = if h <= 1 { 0.0 } else { y as f32 / (h - 1) as f32 };
         let r = lerp(top.0, bottom.0, t);
@@ -36,7 +39,10 @@ fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) {
     }
     // Tema paleti yüklendi kanıtı: `fond_lignes` rengiyle ince çerçeve.
     canvas.set_draw_color(to_color(theme.color("fond_lignes")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(20, 20, w - 40, h - 40));
+    let (fw, fh) = (w.saturating_sub(40), h.saturating_sub(40));
+    if fw > 0 && fh > 0 {
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(20, 20, fw, fh));
+    }
 }
 
 /// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere

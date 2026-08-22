@@ -2,7 +2,7 @@
 
 - **id:** TASK-012h
 - **title:** SDL2 render core + `menu_state` state machine (loading/platform_grid/game_list/progress)
-- **status:** todo
+- **status:** in-progress
 - **priority:** P0
 - **created:** 2026-08-21
 - **environment:** both
@@ -46,3 +46,8 @@ transition. Canlı SSE ilerleme yeniden kullanılır.
 ## İlerleme
 
 - 2026-08-21 — yön (B) kararıyla çıkarıldı (SPA TASK-012b superseded).
+- 2026-08-22 — **Faz A (katalog OTA görünürlüğü) bu göreve katıldı** (kullanıcı onayı). Python
+  parity: tvui.py `config.loading_progress` + `network.check_for_updates` → Rust'te SSE
+  `catalog_update` (indirme ilerlemesi + `ready`) ile TVUI `loading` bar'ı. Backend plumbing
+  `catalog_bootstrap.rs` içine eklendi (SSE publish + byte sayacı); `ensure_catalog_ready(None)`
+  ile startup davranışı değişmedi. Self-update ayrı görev: TASK-012m.

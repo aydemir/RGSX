@@ -251,12 +251,21 @@ async fn run(paths: paths::RgsxPaths) {
     // POST'ları için yine de Python'a proxy edebilir (`RGSX_PYTHON_MANAGER_URL`).
     // Aksi halde `RGSX_PYTHON_MANAGER_URL` set ise Python proxy (Faz 10c/3/2).
     // gap-27: saf-Rust varsayılan = true (native catalog). Flag yine env ile override edilebilir.
+    // SSE kanalı erken kurulur ki katalog bootstrap'i (arka plan) ilerlemeyi yayabilsin.
+    let events = manager_http::sse::channel();
     let native_catalog = std::env::var("RGSX_NATIVE_CATALOG")
         .map(|v| v == "1")
         .unwrap_or(true);
     let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> = if native_catalog {
         // Faz 12f: native katalog verisi (systems_list.json + games/) eksikse OTA'dan çek.
-        manager_http::catalog_bootstrap::ensure_catalog_ready().await;
+        // Faz 2b: bloke etmek yerine arka plana alındı — sunucu anında başlar, TVUI/WebUI
+        // `catalog_update` SSE'iyle loading bar'ını doldurur; katalog hazır olunca UI yeniden çeker.
+        // İlk çalıştırmada dosyalar henüz inmediğinden NativeCatalog boş açılır (`from_env` yalnız
+        // yolu saklar, paniklemez); `load_sources()` her çağrıda diskten okuduğundan ready sonrası dolulur.
+        let ev = events.clone();
+        tokio::spawn(async move {
+            manager_http::catalog_bootstrap::ensure_catalog_ready(Some(&ev)).await;
+        });
         Some(Arc::new(manager_http::catalog::NativeCatalog::from_env()))
     } else {
         std::env::var("RGSX_PYTHON_MANAGER_URL")
@@ -288,7 +297,6 @@ async fn run(paths: paths::RgsxPaths) {
     data.download_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_dl));
     data.max_simultaneous_downloads = max_dl;
 
-    let events = manager_http::sse::channel();
     // TASK-002-gap-1 (BELİRSİZ-2): global shutdown sinyali — retry döngülerinin
     // `tokio::select!` ile dinlediği `AppState.shutdown` Notify'ı. Aynı Arc hem
     // `AppState`'e hem tray Quit handler'ına geçer (iki ayrı instance OLMAZ).
