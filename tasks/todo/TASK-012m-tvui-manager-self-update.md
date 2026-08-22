@@ -122,3 +122,9 @@ alıp apply'ı ayrı tık yaptık (indirme uzun→arka plan, apply geri alınama
   TVUI banner+download, canlı duman entegrasyon testi.
 - 2026-08-22 — Faz 5 tasarımı netleşti (5 kullanıcı kararı: tek-tık uygula, serviste reddet,
   .old+--recover, WebUI bloker değil, kuyruk+iptal parity). Plan `tasks/` altına yazıldı.
+- 2026-08-22 — Faz 5 implementasyon (güvenli parçalar 1-5 + apply kapısı): `self_update.rs`'te
+  streaming/iptal edilebilir kuyruk indirmesi (`queue`+`progress` SSE, `/api/queue/remove` ile
+  iptal) + `manager_update_apply` handler (servis reddi + `RGSX_SELF_APPLY=1` gate ile Win/Linux
+  replace+relaunch + `.old` yedeği). TVUI: stage makinesi, Enter=indir/uygula, C=iptal,
+  "Yeniden başlatılıyor…" ekranı. manager-http/tvui/bin derlendi; testler yeşil (28 lib + 19 tvui
+  + smoke). **Commit edilmedi** (kullanıcı açık onayı bekleniyor; apply kapısı default kapalı).

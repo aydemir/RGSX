@@ -426,13 +426,21 @@ pub async fn manager_update_status(State(state): State<AppState>) -> Response {
     ok(contract::ok(json!({ "update": info })))
 }
 
-/// POST `/api/manager-update/download` — Faz 4: indir + SHA256 doğrula
-/// (üzerine YAZMA yapılmaz). Bekleyen güncelleme `StateData`'dan alınır.
+/// POST `/api/manager-update/download` — Faz 5: self-update binary'sini arka plan
+/// görevi olarak indirir (kuyruk + iptal edilebilir, SHA256 doğrulamalı). Non-blocking:
+/// hemen `{ok:true, queued:true}` döner; ilerleme SSE `manager_update`/`progress` ile gelir.
 pub async fn manager_update_download(State(state): State<AppState>) -> Response {
     let pending = state.data.read().unwrap().manager_update.clone();
     let Some(info) = pending else {
         return ok(contract::ok(json!({ "ok": false, "error": "bekleyen güncelleme yok" })));
     };
+    let stage = info
+        .get("stage")
+        .and_then(|v| v.as_str())
+        .unwrap_or("available");
+    if stage != "available" {
+        return ok(contract::ok(json!({ "ok": false, "error": format!("zaten {stage} aşamasında") })));
+    }
     let url = match info.get("url").and_then(|v| v.as_str()) {
         Some(u) if !u.is_empty() => u.to_string(),
         _ => return ok(contract::ok(json!({ "ok": false, "error": "url yok" }))),
@@ -441,11 +449,18 @@ pub async fn manager_update_download(State(state): State<AppState>) -> Response 
         .get("sha256")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    match crate::self_update::download_and_verify(&url, sha.as_deref()).await {
-        Ok(path) => ok(contract::ok(json!({
-            "ok": true,
-            "path": path.display().to_string(),
-        }))),
+    let events = state.events.clone();
+    crate::self_update::start_update_download(state.clone(), events, url, sha);
+    ok(contract::ok(json!({ "ok": true, "queued": true })))
+}
+
+/// POST `/api/manager-update/apply` — Faz 5: indirilen binary'yi uygula (replace +
+/// relaunch). Serviste reddedilir; gerçek replace yalnız `RGSX_SELF_APPLY=1` ile
+/// (kullanıcının açık "evet"i). GERİ ALINAMAZ adım.
+pub async fn manager_update_apply(State(state): State<AppState>) -> Response {
+    let events = state.events.clone();
+    match crate::self_update::apply_update(state.clone(), events).await {
+        Ok(()) => ok(contract::ok(json!({ "ok": true }))),
         Err(e) => ok(contract::ok(json!({ "ok": false, "error": e }))),
     }
 }
@@ -1123,6 +1138,10 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
         return json_err("Paramètre manquant: task_id requis", StatusCode::BAD_REQUEST);
     };
     let task_id = task_id.to_string();
+    // TASK-012m Faz 5: self-update indirmesi iptali (WebUI/Python TVUI parity).
+    if task_id == crate::self_update::MANAGER_UPDATE_TASK_ID {
+        crate::self_update::cancel_update_download(&state);
+    }
     let mut data = state.write();
     if let Some(pos) = data
         .queue
@@ -1130,6 +1149,11 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
         .position(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id.as_str()))
     {
         data.queue.remove(pos);
+        if let Some(obj) = data.progress.as_object_mut() {
+            obj.remove(task_id.as_str());
+        }
+        data.active = !data.queue.is_empty();
+        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
         // F6: queue SSE'i `broadcast_loop` (250ms) yayınlar.
         return ok(contract::ok(json!({ "task_id": task_id })));
     }

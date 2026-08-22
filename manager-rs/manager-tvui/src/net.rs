@@ -8,6 +8,9 @@ use std::io::BufRead;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Self-update indirmesinin kuyruk görevi kimliği (manager-http ile aynı sabit).
+pub const MANAGER_UPDATE_TASK_ID: &str = "manager-update";
+
 /// TVUI acilis durumu (loading bar kaynagi). SDL2 dongusu ile SSE thread'i
 /// arasinda `Arc<Mutex<>>` ile paylasilir.
 #[derive(Debug, Clone, Default)]
@@ -21,8 +24,14 @@ pub struct TvuiState {
     pub platforms: Vec<PlatformTile>,
     /// TASK-012m — manager self-update mevcutsa versiyon (placeholder prompt için).
     pub update_available: Option<String>,
-    /// İndirme denemesinin sonucu (placeholder banner renk/state için).
-    pub update_status: Option<String>,
+    /// TASK-012m Faz 5 — self-update akış aşaması:
+    /// `available` → `downloading` → `ready` → `applying` → (`yeniden başlatma`).
+    /// Hata/iptalde `failed` / `available`'a döner.
+    pub update_stage: Option<String>,
+    /// İndirme yüzdesi (0-100), `downloading` aşamasında banner'da gösterilir.
+    pub update_pct: u32,
+    /// Apply sonrası "Yeniden başlatılıyor…" ekranı için bayrak.
+    pub update_restarting: bool,
     /// SSE/HTTP bağlantı portu (Enter→download tetiklemede kullanılır).
     pub port: u16,
     /// TASK: bootstrap fail sonrası kullanıcı "çevrimdışı devam" seçtiyse true
@@ -140,12 +149,12 @@ fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
 }
 
 /// TASK-012m — `manager_update` olayını (ya da snapshot'taki `manager_update`'i) işler:
-/// güncelleme mevcutsa `update_available`'a versiyonu yazar (placeholder prompt).
-/// Hem stream event'i (`available` kökte) hem snapshot (`data["manager_update"]`
-/// içinde nested) şeklini çözer — aksi halde snapshot yolu sessiz kalır.
+/// güncelleme mevcutsa `update_available`'a versiyonu yazar, akış aşamasını
+/// `update_stage`'e yazar (TVUI prompt + bar). Hem stream event'i (`available`/`stage`
+/// kökte) hem snapshot (`data["manager_update"]` nested) şeklini çözer.
 fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
-    // Stream event: available kökte. Snapshot: data["manager_update"] nested.
-    let obj = if data.get("available").is_some() {
+    // Stream event: available/stage kökte. Snapshot: data["manager_update"] nested.
+    let obj = if data.get("available").is_some() || data.get("stage").is_some() {
         data
     } else if let Some(m) = data.get("manager_update") {
         m
@@ -157,10 +166,20 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
             state.lock().unwrap().update_available = Some(v.to_string());
         }
     }
+    if let Some(stage) = obj.get("stage").and_then(|v| v.as_str()) {
+        let mut s = state.lock().unwrap();
+        s.update_stage = Some(stage.to_string());
+        if stage == "downloading" {
+            s.update_pct = obj
+                .get("percent")
+                .and_then(|p| p.as_u64())
+                .unwrap_or(0) as u32;
+        }
+    }
 }
 
-/// TASK-012m (Faz 4) — kullanıcı onaylayınca (`Enter`) manager-http'e indirme isteği
-/// gönderir; sunucu indirir + SHA256 doğrular (üzerine yazmaz). Sonuç mesajı döner.
+/// TASK-012m Faz 5 — kullanıcı `Enter` ile indirmeyi arka plana (kuyruğa) yollar.
+/// Non-blocking: hemen `{ok, queued}` döner; ilerleme SSE ile gelir.
 pub fn trigger_update_download(port: u16) -> String {
     let url = format!("http://127.0.0.1:{port}/api/manager-update/download");
     match ureq::post(&url).call() {
@@ -176,11 +195,54 @@ pub fn trigger_update_download(port: u16) -> String {
     }
 }
 
-/// `manager-update/download` yanıtını (contract zarfı: `{"success":true,"ok":..,"path"|"error":..}`)
-/// placeholder mesaja çözer. Saf fonksiyon → birim testle kilitlenir (en kırılgan nokta).
+/// TASK-012m Faz 5 — `Enter` ile indirilmiş güncellemeyi uygular (replace + relaunch).
+/// GERİ ALINAMAZ; sunucu yalnız `RGSX_SELF_APPLY=1` ile gerçekleştirir.
+pub fn trigger_update_apply(port: u16) -> String {
+    let url = format!("http://127.0.0.1:{port}/api/manager-update/apply");
+    match ureq::post(&url).call() {
+        Ok(r) => match r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(v) => parse_apply_response(&v),
+            None => "yanıt çözülemedi".to_string(),
+        },
+        Err(e) => format!("istek hatası: {e}"),
+    }
+}
+
+/// TASK-012m Faz 5 — yanlış tık: self-update indirmesini kuyruktan iptal eder
+/// (WebUI/Python TVUI parity). `task_id = "manager-update"`.
+pub fn trigger_update_cancel(port: u16) -> String {
+    let url = format!("http://127.0.0.1:{port}/api/queue/remove");
+    let body = serde_json::json!({ "task_id": MANAGER_UPDATE_TASK_ID });
+    match ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_string(&body.to_string())
+    {
+        Ok(_) => "indirme iptal edildi".to_string(),
+        Err(e) => format!("iptal hatası: {e}"),
+    }
+}
+
+/// `manager-update/download` yanıtını placeholder mesaja çözer.
 fn parse_download_response(v: &serde_json::Value) -> String {
     if v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false) {
-        format!("indirildi: {}", v.get("path").and_then(|x| x.as_str()).unwrap_or(""))
+        if v.get("queued").and_then(|x| x.as_bool()).unwrap_or(false) {
+            "indirme kuyruğa alındı".to_string()
+        } else {
+            format!("indirildi: {}", v.get("path").and_then(|x| x.as_str()).unwrap_or(""))
+        }
+    } else {
+        format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
+    }
+}
+
+/// `manager-update/apply` yanıtını placeholder mesaja çözer.
+fn parse_apply_response(v: &serde_json::Value) -> String {
+    if v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false) {
+        "yeniden başlatılıyor".to_string()
     } else {
         format!("hata: {}", v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor"))
     }
@@ -395,11 +457,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_download_response_reads_ok_and_path() {
-        // contract zarfı: success + ok/path aynı seviyede.
-        let ok_v = serde_json::json!({"success": true, "ok": true, "path": "/tmp/x.bin"});
-        assert!(parse_download_response(&ok_v).contains("indirildi"));
+    fn parse_download_response_reads_ok_and_queued() {
+        // Faz 5: download non-blocking → {ok:true, queued:true}.
+        let ok_v = serde_json::json!({"success": true, "ok": true, "queued": true});
+        assert!(parse_download_response(&ok_v).contains("kuyruğa"));
         let err_v = serde_json::json!({"success": true, "ok": false, "error": "SHA256 uyumsuz"});
         assert!(parse_download_response(&err_v).contains("SHA256 uyumsuz"));
+    }
+
+    #[test]
+    fn apply_manager_update_parses_stage() {
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        apply_manager_update(
+            &state,
+            &serde_json::json!({"available": true, "version": "5.0.0", "stage": "ready"}),
+        );
+        let s = state.lock().unwrap();
+        assert_eq!(s.update_available.as_deref(), Some("5.0.0"));
+        assert_eq!(s.update_stage.as_deref(), Some("ready"));
+        assert!(!s.update_restarting);
     }
 }

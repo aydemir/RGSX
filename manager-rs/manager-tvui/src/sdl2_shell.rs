@@ -13,6 +13,8 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 
 use crate::net::trigger_catalog_retry;
+use crate::net::trigger_update_apply;
+use crate::net::trigger_update_cancel;
 use crate::net::trigger_update_download;
 use crate::net::SharedTvuiState;
 use crate::theme::Theme;
@@ -130,32 +132,68 @@ fn draw_grid(
     }
 }
 
-/// TASK-012m — güncelleme mevcutsa üstte placeholder banner (metin yok; ttf erte).
-/// `update_status` varsa renk değişir (indirme sonucu görünür).
+/// TASK-012m Faz 5 — self-update banner (metin yok; ttf erte). Aşamaya göre renk:
+/// `available`=error_text (turuncu), `downloading`=neon (mavi, iç dolgu=percent),
+/// `ready`=success (yeşil), `failed`=error_text (kırmızı).
 fn draw_update_banner(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
     state: &SharedTvuiState,
     (w, _h): (u32, u32),
 ) {
-    let (avail, status) = {
+    let (avail, stage, pct) = {
         let s = state.lock().unwrap();
-        (s.update_available.clone(), s.update_status.clone())
+        (s.update_available.clone(), s.update_stage.clone(), s.update_pct)
     };
-    if avail.is_none() {
+    let Some(ver) = avail else {
         return;
-    }
+    };
+    let stage = stage.unwrap_or_else(|| "available".to_string());
+    let color_key = match stage.as_str() {
+        "ready" => "success",
+        "downloading" => "neon",
+        "failed" => "error_text",
+        _ => "error_text",
+    };
     let bw = ((w as i32) * 60 / 100).max(40) as u32;
     let bx = ((w as i32 - bw as i32) / 2).max(0) as i32;
     let by = 8i32;
     let bh: u32 = 28;
-    let color = if status.is_some() {
-        theme.color("neon")
-    } else {
-        theme.color("error_text")
-    };
-    canvas.set_draw_color(to_color(color));
+    let color = to_color(theme.color(color_key));
+    // Çerçeve.
+    canvas.set_draw_color(color);
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx, by, bw, bh));
+    // `downloading` aşamasında iç dolgu = ilerleme yüzdesi.
+    if stage == "downloading" {
+        let fill_w = ((bw as u64 * pct as u64 / 100) as u32).max(1).min(bw);
+        canvas.set_draw_color(color);
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, fill_w, bh));
+    }
+    // `ready` aşamasında yanıp sönen iç dolgu (uygula hazır).
+    if stage == "ready" {
+        canvas.set_draw_color(color);
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, bw, bh));
+    }
+    let _ = ver;
+}
+
+/// TASK-012m Faz 5 — apply sonrası "Yeniden başlatılıyor…" tam ekran overlay'i
+/// (metin yok; ttf erte — yalnız ayrı bir renk katmanı).
+fn draw_restart_screen(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    (w, h): (u32, u32),
+) {
+    let c = to_color(theme.color("neon"));
+    canvas.set_draw_color(c);
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
+    // İçeride koyu bir dikdörtgen (karartma) — görsel vurgu.
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(
+        (w as i32 / 4).max(0),
+        (h as i32 / 4).max(0),
+        (w / 2).max(1),
+        (h / 2).max(1),
+    ));
 }
 
 /// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere
@@ -210,26 +248,55 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
                     }
                 }
                 // Enter: hata ekranında → çevrimdışı devam (grid'e geç);
-                // hazır/grid iken → manager güncelleme indir.
+                // güncelleme mevcutsa → önce indir (available), hazır olunca uygula (ready).
                 Event::KeyDown {
                     keycode: Some(Keycode::Return),
                     ..
                 } => {
-                    let (avail, ready, err, offline, port) = {
+                    let (avail, stage, restarting, err, offline, port) = {
                         let s = state.lock().unwrap();
                         (
                             s.update_available.clone(),
-                            s.ready,
+                            s.update_stage.clone(),
+                            s.update_restarting,
                             s.error.clone(),
                             s.offline,
                             s.port,
                         )
                     };
-                    if err.is_some() && !offline {
+                    if restarting {
+                        // Zaten yeniden başlatılıyor; ikinci Enter yok sayılır.
+                    } else if err.is_some() && !offline {
                         state.lock().unwrap().offline = true;
-                    } else if avail.is_some() && ready {
-                        let st = trigger_update_download(port);
-                        state.lock().unwrap().update_status = Some(st);
+                    } else if avail.is_some() {
+                        let stage = stage.unwrap_or_else(|| "available".to_string());
+                        if stage == "ready" {
+                            let st = trigger_update_apply(port);
+                            let mut s = state.lock().unwrap();
+                            if st.contains("yeniden başlat") {
+                                s.update_restarting = true;
+                            } else {
+                                s.update_stage = Some("failed".to_string());
+                            }
+                        } else {
+                            let st = trigger_update_download(port);
+                            let mut s = state.lock().unwrap();
+                            s.update_stage = Some("downloading".to_string());
+                            let _ = st;
+                        }
+                    }
+                }
+                // C: self-update indirmesi devam ediyorsa iptal et (kuyruktan iptal parity).
+                Event::KeyDown {
+                    keycode: Some(Keycode::C),
+                    ..
+                } => {
+                    let (stage, port) = {
+                        let s = state.lock().unwrap();
+                        (s.update_stage.clone(), s.port)
+                    };
+                    if stage.unwrap_or_default() == "downloading" {
+                        let _ = trigger_update_cancel(port);
                     }
                 }
                 _ => {}
@@ -237,15 +304,21 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
         }
         let dims = draw_background(&mut canvas, theme, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
-        // Loading → ready/offline → platform_grid geçişi (012h omurgası).
-        let show_grid = {
-            let s = state.lock().unwrap();
-            s.ready || s.offline
-        };
-        if show_grid {
-            draw_grid(&mut canvas, theme, state, dims);
+        // Yeniden başlatma ekranı (apply sonrası) — grid/loading yerine tam ekran.
+        let restarting = state.lock().unwrap().update_restarting;
+        if restarting {
+            draw_restart_screen(&mut canvas, theme, dims);
         } else {
-            draw_loading(&mut canvas, theme, state, dims);
+            // Loading → ready/offline → platform_grid geçişi (012h omurgası).
+            let show_grid = {
+                let s = state.lock().unwrap();
+                s.ready || s.offline
+            };
+            if show_grid {
+                draw_grid(&mut canvas, theme, state, dims);
+            } else {
+                draw_loading(&mut canvas, theme, state, dims);
+            }
         }
         canvas.present();
         std::thread::sleep(Duration::from_millis(16));
