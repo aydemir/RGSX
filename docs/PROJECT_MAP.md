@@ -1,10 +1,23 @@
 # RGSX Proje Haritası (Statik)
 
 > Hızlı navigasyon için ilk bakılacak yer. Gerçek kaynak **codegraph**'tir; buradaki
-> her "İlişkili/Bağımlı" sütunu codegraph_explore ile doğrulanmiştir. Harita ile
+> her "İlişkili/Bağımlı" sütunu codegraph_explore ile doğrulanmıştır. Harita ile
 > codegraph çelişirse **HER ZAMAN codegraph'e güven** (harita yalnızca özet).
 >
 > Güncelleme kuralları: bkz. `AGENTS.md` → "Proje Haritası".
+
+---
+
+## 0. Dal stratejisi (2026-08-22 kararı)
+
+- **`main` = donuk Python iskelet referansı** (`ffcfcd4`, Python dönemi; manager-rs/webui yok).
+  Geliştirme YOK — yalnız portlama speği olarak okunur.
+- **`custom` = tek geliştirme hattı** (native Rust + ortak docs/tests/webui/tasks).
+  Yeni uzun ömürlü branch AÇILMAZ; kısa ömürlü `fix/*` serbest.
+- **Cutover tamamlanınca (TASK-012f/l):** `custom` → `main` geçilir, eski Python noktasına
+  `python-skeleton` tag'i konur; Rust resmen mainline olur.
+- Python'a acil fallback fix gerekirse: `main`'den kısa süreli fix branch'i → `main`'e merge;
+  `custom`'a akmaz (`ports/RGSX` custom'da FROZEN referans olarak durur).
 
 ---
 
