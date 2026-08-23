@@ -85,8 +85,21 @@
 - [x] HTTP çağrıları event-loop thread'inden arka plana taşındı (bulgu 3'ün kalan yarısı).
 
 ### Faz C — parite
-- [ ] Gamepad köprüsü + key-repeat (9), render texture cache + vsync (12), windowed mod (13),
-      multi-line data (14), i18n katmanı (11), Windows cross-check + macOS notu (16).
+- [x] Gamepad köprüsü (9): SSE `gamepad` olayı shell'e bağlandı — `gamepad_event_to_key`:
+      confirm → Enter eşdeğeri, back → çıkış (shutdown bayrağı, watcher temiz biter);
+      nav/page tuşları TASK-012h'taki grid navigasyonuna kadar bilinçli None
+      (tüketici olmadan bağlanmaz). Key-repeat de nav tüketicisiyle 012h'ta.
+- [x] Render perf (12): arka plan gradyanı texture cache (`bg_cache`, boyut değişince
+      yenilenir, fallback scanline); `present_vsync` + renderer info'dan gerçek vsync
+      tespiti — vsync varken 16 ms sleep atılır (30 fps'e düşme hatası önlendi).
+- [x] Windowed mod (13): `RGSX_TVUI_WINDOWED=1` → resizable pencere (masaüstü test/debug).
+- [x] Multi-line SSE data (14): `data:` satırları `\n` ile birleşir (spec + Python parity).
+- [ ] i18n katmanı (11) → **TASK-012h'a devredildi**: TTF metin render'ı gelmeden i18n'in
+      UI'da tüketicisi yok; tüketici olmadan modül bağlamak "yarım iş" kuralına aykırı.
+      String'ler `TriggerResult.message`'larda merkezîleşti, çıkarma maliyeti düştü.
+- [x] Cross-platform notu (16): lib.rs'e macOS main-thread uyarısı eklendi (hedef
+      Linux/Batocera + Windows). Gerçek `cargo check --target x86_64-pc-windows-gnu`
+      koşusu ağır makinede (ARM proot SDL2 bundled cross derlemesi kaldırmıyor).
 
 ## Doğrulama
 
@@ -125,3 +138,16 @@
     `available_false_keeps_inflight_update_flow`; `available:false` bekleyişi bulgu 8 kararıyla
     değişti (idle'da temizler). Repo-içi full test ağır makineye bırakıldı (SDL2 bundled, bkz. üstte).
 - 2026-08-22 — **Faz B commit+push.**
+- 2026-08-22 — **Faz C uygulandı** (net.rs + sdl2_shell.rs + lib.rs):
+  - Bulgu 14: `parse_sse_frame` çok satırlı `data:` birleştirir (testli).
+  - Bulgu 9: `gamepad_event_to_key` + watcher `gamepad` kolu + `shutdown` bayrağı
+    (`Arc<AtomicBool>`, lib.rs launch'ta üretilip watcher↔shell paylaşılır; gamepad back
+    → SDL döngüsü çıkar, watcher sızmadan biter). Nav tuşları bilinçli olarak bağlanmadı.
+  - Bulgu 12: bg gradient texture cache + `present_vsync` + koşullu sleep.
+  - Bulgu 13: `RGSX_TVUI_WINDOWED=1` resizable pencere.
+  - Bulgu 16: macOS main-thread notu lib.rs'te; gerçek Windows cross-check ağır makineye.
+  - Bulgu 11: i18n bilinçli erteleme → TASK-012h (TTF metin render'ı tüketici olacak).
+  - **Doğrulama:** izole crate **20/20 yeşil**; yeni: `parse_sse_frame_joins_multiline_data`,
+    `gamepad_events_map_to_intents`, `gamepad_confirm_frame_drives_ui_and_back_exits`.
+- 2026-08-22 — **Faz C commit+push.** Görevin sandbox-dışı kalan tek kalemi: ağır makinede
+  `cargo test -p manager-tvui` + Windows cross-check.

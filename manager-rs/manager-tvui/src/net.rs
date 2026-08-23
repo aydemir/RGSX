@@ -5,6 +5,7 @@
 //! Senkron olmasi bilincli: SDL2 event loop tek thread, async/tokio agirligi gereksiz.
 
 use std::io::BufRead;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -82,6 +83,8 @@ pub type SharedTvuiState = Arc<Mutex<TvuiState>>;
 
 /// Tek bir SSE cercevesini ayristirir: `event: <type>\ndata: <json>\n\n` bloklarindan
 /// `(event_type, json)` dondurur. `event:`/`data:` satirlari olmadan `None`.
+/// Çok satırlı `data:` satırları `\n` ile birleştirilir (SSE spec + Python parity,
+/// tvui.py `_stream_sse`) — bulgu 14.
 pub fn parse_sse_frame(buf: &str) -> Option<(String, serde_json::Value)> {
     let mut event = String::new();
     let mut data = String::new();
@@ -89,7 +92,10 @@ pub fn parse_sse_frame(buf: &str) -> Option<(String, serde_json::Value)> {
         if let Some(rest) = line.strip_prefix("event:") {
             event = rest.trim().to_string();
         } else if let Some(rest) = line.strip_prefix("data:") {
-            data = rest.trim().to_string();
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(rest.trim());
         }
     }
     if event.is_empty() || data.is_empty() {
@@ -319,6 +325,28 @@ pub fn expire_stale_restart_at(s: &mut TvuiState, now: Instant) -> bool {
     expired
 }
 
+// ===== Faz C (bulgu 9) — SSE `gamepad` → SDL shell köprüsü =====
+
+/// Gamepad olayının shell'e ilettiği niyet: semantik tuş ya da shell'den çıkış.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GamepadIntent {
+    Key(UiKey),
+    Exit,
+}
+
+/// SSE `gamepad` olayının `action` alanını niyete çevirir (sözleşme:
+/// `native_input::RgsxAction` → SSE stringleri, App.vue `applyAction` ile aynı).
+/// Yalnızca bugün tüketicisi olan aksiyonlar eşlenir: confirm → Enter,
+/// back → çıkış (shell kök ekrandır; ES'te kökte B = çıkış). Nav/page tuşları
+/// TASK-012h'taki grid navigasyonu gelene kadar None — tüketici olmadan bağlanmaz.
+pub fn gamepad_event_to_key(data: &serde_json::Value) -> Option<GamepadIntent> {
+    match data.get("action").and_then(|v| v.as_str()) {
+        Some("confirm") => Some(GamepadIntent::Key(UiKey::Confirm)),
+        Some("back") => Some(GamepadIntent::Exit),
+        _ => None,
+    }
+}
+
 /// TASK-012m — `manager_update` olayını (ya da snapshot'taki `manager_update`'i) işler:
 /// güncelleme mevcutsa `update_available`'a versiyonu yazar, akış aşamasını
 /// `update_stage`'e yazar (TVUI prompt + bar). Hem stream event'i (`available`/`stage`
@@ -500,15 +528,18 @@ fn parse_retry_response(v: &serde_json::Value) -> TriggerResult {
     }
 }
 
-/// `port` üzerindeki manager-http'e SSE bağlanır; `catalog_update`, `snapshot` ve
-/// `manager_update` olaylarını `state`'e yazar.
+/// `port` üzerindeki manager-http'e SSE bağlanır; `catalog_update`, `snapshot`,
+/// `manager_update` ve `gamepad` olaylarını işler.
 ///
 /// Dayanıklılık (TASK-012-gap-01 Faz A): bağlantı kurulamazsa YA DA akış koparsa
 /// (EOF / okuma stall'ı > SSE_READ_TIMEOUT) `SSE_RECONNECT_DELAY` bekleyip sonsuza dek
 /// yeniden dener (Python parity: tvui.py `_manager_sse_worker`). Yalnızca İLK bağlantı
 /// hatası `state.error`'a yazılır; sonraki kopmalar mevcut UI durumunu bozmaz —
 /// self-update apply gibi manager restart'larında TVUI kendini toparlar.
-pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
+///
+/// Faz C (bulgu 9): `shutdown` set edilince (gamepad back / shell çıkışı)
+/// reconnect döngüsü temizce biter — sızan thread kalmaz.
+pub fn start_catalog_watcher(port: u16, state: SharedTvuiState, shutdown: &AtomicBool) {
     tvui_lock(&state).port = port;
     let url = format!("http://127.0.0.1:{port}/api/events");
     // Connect'e kısa timeout; akış uzun ömürlü olduğu için toplam timeout YOK,
@@ -519,11 +550,15 @@ pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
         .build();
     let mut ever_connected = false;
     loop {
+        // Faz C: shell kapattıysa (gamepad back) watcher da sönmez, temiz biter.
+        if shutdown.load(Ordering::Relaxed) {
+            return;
+        }
         match agent.get(&url).call() {
             Ok(resp) => {
                 eprintln!("TVUI SSE bağlı: {url}");
                 ever_connected = true;
-                consume_sse_stream(resp, port, &state);
+                consume_sse_stream(resp, port, &state, shutdown);
                 eprintln!(
                     "TVUI SSE akışı kapandı, {SSE_RECONNECT_DELAY:?} sonra yeniden bağlanıyor"
                 );
@@ -541,7 +576,12 @@ pub fn start_catalog_watcher(port: u16, state: SharedTvuiState) {
 
 /// Açık SSE yanıtını satır satır tüketir; tamamlanan frame'leri `state`'e uygular.
 /// Bağlantı EOF/hata/stall ile biter (fonksiyon geri döner) — reconnect döngüsü üstlenir.
-fn consume_sse_stream(resp: ureq::Response, port: u16, state: &SharedTvuiState) {
+fn consume_sse_stream(
+    resp: ureq::Response,
+    port: u16,
+    state: &SharedTvuiState,
+    shutdown: &AtomicBool,
+) {
     let reader = std::io::BufReader::new(resp.into_reader());
     let mut acc = String::new();
     for line in reader.lines() {
@@ -549,7 +589,7 @@ fn consume_sse_stream(resp: ureq::Response, port: u16, state: &SharedTvuiState) 
             break; // io hatası / read-timeout stall'ı → reconnect
         };
         if line.is_empty() {
-            handle_sse_frame(&acc, port, state);
+            handle_sse_frame(&acc, port, state, shutdown);
             acc.clear();
         } else {
             acc.push_str(&line);
@@ -560,7 +600,7 @@ fn consume_sse_stream(resp: ureq::Response, port: u16, state: &SharedTvuiState) 
 
 /// Tek tamamlanmış SSE frame'ini olay türüne göre uygular; `ready` olup platformlar
 /// hâlâ boşsa `/api/platforms`'ı çeker (grid kaynağı).
-fn handle_sse_frame(acc: &str, port: u16, state: &SharedTvuiState) {
+fn handle_sse_frame(acc: &str, port: u16, state: &SharedTvuiState, shutdown: &AtomicBool) {
     if let Some((ev, data)) = parse_sse_frame(acc) {
         match ev.as_str() {
             "catalog_update" => apply_catalog_update(state, &data),
@@ -571,6 +611,20 @@ fn handle_sse_frame(acc: &str, port: u16, state: &SharedTvuiState) {
                 apply_manager_update(state, &data);
             }
             "manager_update" => apply_manager_update(state, &data),
+            // Faz C (bulgu 9): gilrs tabanlı native gamepad SSE üzerinden shell'e gelir.
+            "gamepad" => match gamepad_event_to_key(&data) {
+                Some(GamepadIntent::Exit) => shutdown.store(true, Ordering::Relaxed),
+                Some(GamepadIntent::Key(key)) => {
+                    let action = {
+                        let s = tvui_lock(state);
+                        ui_decision(&s, key)
+                    };
+                    if let Some(action) = action {
+                        apply_ui_action(state, action);
+                    }
+                }
+                None => {}
+            },
             _ => {}
         }
     }
@@ -672,6 +726,58 @@ mod tests {
     }
 
     #[test]
+    fn parse_sse_frame_joins_multiline_data() {
+        // Bulgu 14: çok satırlı data \n ile birleşir (SSE spec + Python parity).
+        let frame = "event: snapshot\ndata: {\"a\":\ndata: 1}\n\n";
+        let (ev, data) = parse_sse_frame(frame).expect("çok satırlı frame çözülmeli");
+        assert_eq!(ev, "snapshot");
+        assert_eq!(data["a"], 1);
+    }
+
+    #[test]
+    fn gamepad_events_map_to_intents() {
+        // Bulgu 9: confirm → Enter eşdeğeri, back → çıkış; nav/bilinmeyen → None
+        // (tüketici olmadan bağlanmaz — TASK-012h'ta genişler).
+        assert_eq!(
+            gamepad_event_to_key(&serde_json::json!({"action": "confirm"})),
+            Some(GamepadIntent::Key(UiKey::Confirm))
+        );
+        assert_eq!(
+            gamepad_event_to_key(&serde_json::json!({"action": "back"})),
+            Some(GamepadIntent::Exit)
+        );
+        assert_eq!(
+            gamepad_event_to_key(&serde_json::json!({"action": "navup"})),
+            None
+        );
+        assert_eq!(gamepad_event_to_key(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn gamepad_confirm_frame_drives_ui_and_back_exits() {
+        // Uçtan uca (ağsız): SSE `gamepad` frame'i hata ekranında offline-devam
+        // uygular; `back` shutdown bayrağını çeker.
+        let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
+        state.lock().unwrap().error = Some("katalog hazirlanamadi".to_string());
+        let shutdown = AtomicBool::new(false);
+        handle_sse_frame(
+            "event: gamepad\ndata: {\"action\":\"confirm\"}\n\n",
+            59999,
+            &state,
+            &shutdown,
+        );
+        assert!(state.lock().unwrap().offline);
+        assert!(!shutdown.load(Ordering::Relaxed));
+        handle_sse_frame(
+            "event: gamepad\ndata: {\"action\":\"back\"}\n\n",
+            59999,
+            &state,
+            &shutdown,
+        );
+        assert!(shutdown.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn watcher_retries_after_failed_connect_instead_of_returning() {
         // TASK-012-gap-01 Faz A: ESKİ davranış ilk connect hatasında fonksiyondan
         // dönüyordu (thread ölür → loading bar sonsuza dek donar). YENİ davranış:
@@ -682,7 +788,8 @@ mod tests {
         let state: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
         let handle = {
             let st = state.clone();
-            std::thread::spawn(move || start_catalog_watcher(port, st))
+            let flag = Arc::new(AtomicBool::new(false));
+            std::thread::spawn(move || start_catalog_watcher(port, st, &flag))
         };
         std::thread::sleep(Duration::from_millis(500));
         let err = state.lock().unwrap().error.clone();

@@ -4,13 +4,14 @@
 //! primitives'e portlanır. Bu modül yalnızca shell'i kurar ve `theme.json`
 //! paletiyle arka plan gradyanını çizer (tema yüklendi kanıtı: `fond_lignes` çerçeve).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
+use sdl2::pixels::{Color, PixelFormatEnum};
+use sdl2::render::{Canvas, Texture, TextureCreator};
+use sdl2::video::{Window, WindowContext};
 
 use crate::net::{
     apply_ui_action, expire_stale_restart_at, tvui_lock, ui_decision, SharedTvuiState, UiKey,
@@ -26,19 +27,58 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 }
 
 /// Seçili arka plan preset'ini dikey gradyan olarak çizer (top → bottom).
-fn draw_background(canvas: &mut Canvas<Window>, theme: &Theme, preset: &str) -> (u32, u32) {
-    let (top, bottom) = theme.background(preset);
+/// Faz C (bulgu 12): gradyan her frame'de h adet `draw_line` yerine BİR KEZ
+/// texture'a üretilir ve blit edilir; pencere boyutu değişirse yenilenir.
+/// Texture üretilemezse eski scanline yoluna düşer (doğruluk > zarafet).
+fn draw_background(
+    canvas: &mut Canvas<Window>,
+    tc: &TextureCreator<WindowContext>,
+    cache: &mut Option<(u32, u32, Texture)>,
+    theme: &Theme,
+    preset: &str,
+) -> (u32, u32) {
     let (w, h) = match canvas.output_size() {
         Ok((w, h)) if w > 0 && h > 0 => (w, h),
         _ => (1280, 720),
     };
-    for y in 0..h {
-        let t = if h <= 1 { 0.0 } else { y as f32 / (h - 1) as f32 };
-        let r = lerp(top.0, bottom.0, t);
-        let g = lerp(top.1, bottom.1, t);
-        let b = lerp(top.2, bottom.2, t);
-        canvas.set_draw_color(Color::RGB(r, g, b));
-        let _ = canvas.draw_line((0, y as i32), (w as i32, y as i32));
+    let (top, bottom) = theme.background(preset);
+    let stale = !matches!(cache, Some((cw, ch, _)) if *cw == w && *ch == h);
+    if stale {
+        let mut pixels: Vec<u8> = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let t = if h <= 1 { 0.0 } else { y as f32 / (h - 1) as f32 };
+            pixels.push(lerp(top.0, bottom.0, t));
+            pixels.push(lerp(top.1, bottom.1, t));
+            pixels.push(lerp(top.2, bottom.2, t));
+            pixels.push(255);
+        }
+        match tc.create_texture_static(PixelFormatEnum::RGBA32, w, h) {
+            Ok(mut tex) => {
+                if tex.update(None, &pixels, (w * 4) as usize).is_ok() {
+                    *cache = Some((w, h, tex));
+                } else {
+                    eprintln!("TVUI arka plan texture güncellenemedi");
+                }
+            }
+            Err(e) => eprintln!("TVUI arka plan texture üretilemedi: {e}"),
+        }
+    }
+    match cache {
+        Some((_, _, tex)) => {
+            let _ = canvas.copy(tex, None, None);
+        }
+        None => {
+            // Fallback: satır satır gradyan (eski davranış).
+            for y in 0..h {
+                let t = if h <= 1 { 0.0 } else { y as f32 / (h - 1) as f32 };
+                canvas.set_draw_color(Color::RGB(
+                    lerp(top.0, bottom.0, t),
+                    lerp(top.1, bottom.1, t),
+                    lerp(top.2, bottom.2, t),
+                ));
+                let _ = canvas.draw_line((0, y as i32), (w as i32, y as i32));
+            }
+        }
     }
     // Tema paleti yüklendi kanıtı: `fond_lignes` rengiyle ince çerçeve.
     canvas.set_draw_color(to_color(theme.color("fond_lignes")));
@@ -196,27 +236,51 @@ fn draw_restart_screen(
 }
 
 /// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere
-/// kapatma ile çıkılır. Bloklayıcıdır; manager-bin ayrı thread'de çağırır.
-/// `state`: SSE `catalog_update` ilerlemesini çizen loading bar'ının kaynağı.
-pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), String> {
+/// kapatma / gamepad `back` ile çıkılır. Bloklayıcıdır; manager-bin ayrı
+/// thread'de çağırır. `state`: SSE `catalog_update` ilerlemesini çizen loading
+/// bar'ının kaynağı. `shutdown`: gamepad `back` (SSE) buraya yazılır.
+pub fn run_native_shell(
+    theme: &Theme,
+    state: &SharedTvuiState,
+    shutdown: &AtomicBool,
+) -> Result<(), String> {
     let sdl = sdl2::init().map_err(|e| format!("SDL2 init: {e}"))?;
     let video = sdl.video().map_err(|e| format!("SDL2 video: {e}"))?;
-    let window = video
-        .window("RGSX", 1280, 720)
-        .position_centered()
-        .fullscreen()
-        .build()
-        .map_err(|e| format!("SDL2 pencere: {e}"))?;
+    // Bulgu 13: `RGSX_TVUI_WINDOWED=1` → resizable pencere (masaüstü test/debug);
+    // varsayılan 10-foot fullscreen kalır (Python `get_display_fullscreen()` parity'si
+    // tam ayar menüsüyle TASK-012e/k'ta).
+    let windowed = std::env::var("RGSX_TVUI_WINDOWED")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let mut wb = video.window("RGSX", 1280, 720).position_centered();
+    if windowed {
+        wb.resizable();
+    } else {
+        wb.fullscreen();
+    }
+    let window = wb.build().map_err(|e| format!("SDL2 pencere: {e}"))?;
+    // Bulgu 12: vsync tercih edilir; gerçek durum renderer info'sundan okunur —
+    // vsync yoksa eski 16 ms sleep devrede kalır.
     let mut canvas = window
         .into_canvas()
         .accelerated()
+        .present_vsync()
         .build()
         .map_err(|e| format!("SDL2 canvas: {e}"))?;
+    let vsync = canvas
+        .info()
+        .map(|i| i.flags.contains(sdl2::render::RendererFlags::PRESENTVSYNC))
+        .unwrap_or(false);
+    let texture_creator = canvas.texture_creator();
+    let mut bg_cache: Option<(u32, u32, Texture)> = None;
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
 
     let preset = std::env::var("RGSX_TVUI_BG").unwrap_or_else(|_| "default".into());
 
     'running: loop {
+        if shutdown.load(Ordering::Relaxed) {
+            break 'running; // Faz C bulgu 9: gamepad back.
+        }
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -251,7 +315,13 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
             let mut s = tvui_lock(state);
             expire_stale_restart_at(&mut s, std::time::Instant::now());
         }
-        let dims = draw_background(&mut canvas, theme, &preset);
+        let dims = draw_background(
+            &mut canvas,
+            &texture_creator,
+            &mut bg_cache,
+            theme,
+            &preset,
+        );
         draw_update_banner(&mut canvas, theme, state, dims);
         // Yeniden başlatma ekranı (apply sonrası) — grid/loading yerine tam ekran.
         let restarting = tvui_lock(state).update_restarting;
@@ -270,7 +340,11 @@ pub fn run_native_shell(theme: &Theme, state: &SharedTvuiState) -> Result<(), St
             }
         }
         canvas.present();
-        std::thread::sleep(Duration::from_millis(16));
+        // Bulgu 12: vsync aktifse present zaten yenileme hızını kısıtlar;
+        // sleep'i yalnız vsync'siz durumda tut (30 fps'e düşme hatası olmasın).
+        if !vsync {
+            std::thread::sleep(Duration::from_millis(16));
+        }
     }
     Ok(())
 }
