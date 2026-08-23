@@ -18,12 +18,15 @@
 ## Bulgular
 
 ### Kritik
-1. **TV modu + gamepad navigasyonu KAYBOLMUŞ (regresyon)** — ilk App.vue commit'i `b5827d2`'de
-   `getGamepads`/`?mode=tv` kodu mevcut (git show: 2 isabet); bugünkü dosyada SIFIR.
-   `/api/es-input` ucu (`lib.rs:54`) tam bunun için yazılmıştı (TASK-005-B notu: "webui TV modu
-   tüketir") ve artık TÜKETİCİSİZ. `manager-tvui` wry'siz kurulumda harici tarayıcıyı `?mode=tv`
-   ile açar → TV kullanıcısı desktop layout + gamepadsiz kalır. Skill dokümanı
-   (rgsx-webui-spa) da gerçeği yansıtmıyor → güncellenmeli.
+1. **TV modu + gamepad: native karar sonrası resmen emekli edilmemiş miras** — SPA `?mode=tv`
+   gamepad kodu Faz 12/13 döneminde eklendi (`b5827d2`, 2026-08-13, "WebUI+TVUI tek SPA"
+   stratejisi); `cd6a22d` (2026-08-15, "tab'lı UI") refactor'unda commit mesajında hiç anılmadan
+   çıktı; ardından native SDL2 TVUI kilitlendi (yön B, TASK-012g). Kod bugün App.vue'da YOK;
+   ama yön-B aksiyonu eksik kaldı: `rgsx-webui-spa` skill'i hâlâ `?mode=tv`/gamepad anlatıyor,
+   `/api/es-input` HTTP ucu (`lib.rs:54`) TÜKETİCİSİZ duruyor ve contract testine sabitlenmiş
+   (`contract.rs:210 test_es_input_shape`), `manager-bin/src/main.rs:362` kiosk yorumları bayat.
+   **KARAR (kullanıcı onaylı, Seçenek A): `?mode=tv` resmen emekliye ayrılır** — tek TVUI =
+   native SDL2. (Yön B seçildiği anda bu aksiyonun plana alınması gerekirdi.)
 2. **🔄 (katalog yenile) butonu kukla — çift hata** — SPA `POST /api/update-cache` çağırır
    (App.vue:225), route `get()` kayıtlı (`lib.rs:56`) → her tıkta 405, sessizce yutulur; ardından
    KOŞULSUZ "katalog yenilendi" başarı toast'u (App.vue:230). Üstüne endpoint zaten placeholder
@@ -84,9 +87,17 @@
       karar bu görevde netleşecek (bulgu 4).
 - [ ] `seenHistory` üst sınırı + tekrar-toast politikası (bulgu 8).
 
-### Faz B — TV modu kurtarma
-- [ ] `?mode=tv` + gamepad navigasyonunu `b5827d2` sürümünden kurtar, `/api/es-input` ile ES-map
-      senkronu bağla (bulgu 1); rgsx-webui-spa skill'ini güncelle.
+### Faz B — TV modunu resmen emekliye ayır (SEÇENEK A, kullanıcı onaylı)
+- [ ] `rgsx-webui-spa` SKILL.md: `?mode=tv`/gamepad bölümleri kaldırılır; SPA = desktop WebUI,
+      TVUI = native SDL2 (`manager-tvui`) olarak netleştirilir.
+- [ ] `/api/es-input` HTTP ucu sökülür: `lib.rs:54` route + `api::es_input` handler;
+      `contract.rs:210 test_es_input_shape` buna göre güncellenir (102 baseline sayısı değişir →
+      commit notuna yazılır). Sunucu içi `manager_http::es_input::load_best()` (native_input
+      gamepad yolu) ETKİLENMEZ — o HTTP'den geçmez.
+- [ ] `rgsx-faz12-migration` SKILL.md strateji satırı düzeltilir: "tek Vue 3 SPA'da birleşir"
+      ifadesi yön-B superseded notu alır.
+- [ ] `manager-bin/src/main.rs:362` civarındaki bayat "SPA kiosk/webview" yorumları
+      SDL2-shell gerçekine göre düzeltilir.
 
 ### Faz C — parite tamamlama
 - [ ] Self-update WebUI banner'ı (TVUI parity; bulgu 3).
@@ -110,3 +121,7 @@
 
 - 2026-08-22 — İnceleme tamamlandı; bulgular 1-10 + faz planı bu dosyaya yazıldı. Uygulama
   kullanıcı onayıyla Faz A'dan başlayacak.
+- 2026-08-22 — Bulgu 1 düzeltildi: "kaybolan regresyon" değil, native TVUI (yön B) kararından
+  önceki dönemin emekliliği planlanmamış mirası. Kullanıcı onayıyla **Seçenek A** kilitlendi:
+  `?mode=tv` resmen retire; Faz B buna göre yeniden yazıldı. (Ders: yön değişikliği kararı
+  alındığı anda eski yönün aksiyonları da plana girilmeli.)
