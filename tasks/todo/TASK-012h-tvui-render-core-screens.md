@@ -41,6 +41,53 @@ transition. Canlı SSE ilerleme yeniden kullanılır.
 - Gamepad ile platform → game → download akışı canlı; SSE ilerleme akar.
 - 102 contract (loading/platform_grid/game_list/progress) yeşil.
 
+## Mimari taslak (TASK-012-gap-01 inceleme dersleriyle, 2026-08-22)
+
+İlke: **SDL'siz çekirdek + ince SDL kabuğu** — `ui_decision` deseninin devamı.
+Karar/test edilebilir her şey saf modülde; SDL yalnız piksel işi yapar.
+
+### Katmanlar
+
+1. **`state.rs` (SDL'siz, test çekirdeği)**
+   - `MenuState` enum: `Loading / PlatformGrid / GameList / Progress / Error / ConfirmExit…`
+     (tvui.py `config.menu_state` değerlerinin tip-güvenli karşılığı).
+   - `TvuiState` genişletme: mevcut alanlar + `selected_platform`, `games: Vec<GameRow>`,
+     `selected_game`, `progress: HashMap<String, ProgressInfo>` (SSE history/progress kaynaklı).
+   - SAF input reducer: `fn reduce(s: &mut TvuiScreen, key: UiKey)` — grid/game-list navigasyonu,
+     sayfalama, confirm/back geçişleri. Bulgu 9'dan kalan nav/page tuşları burada tüketici bulur;
+     **key-repeat** (Python `process_key_repeats`) reducer içinde timestamp ile.
+   - Unit testler SDL'siz (scratch crate yöntemi, gap-01'de kanıtlandı).
+
+2. **`render.rs`** — SDL2 çizim primitive'leri: rect, text (`sdl2-ttf`), texture cache
+   (gap-01 Faz C bg-cache deseni genelleştirilir), image/box-art loader. Karar içermez.
+
+3. **`screens.rs`** — saf state → çizim: loading bar (mevcut), platform_grid (mevcut draw_grid'in
+   state-bağlı hali), game_list (durum sütunu parity), progress. Draw fonksiyonları yalnız state okur.
+
+4. **i18n (gap-01 bulgu 11'in tüketici noktası)** — `t(key)` katmanı ilk metin çizimiyle birlikte:
+   `languages/<lang>.json` okuyucu (`RGSX_TVUI_LANG` / rgsx_settings dili). String'ler artık
+   `TriggerResult.message`'larda merkezî; UI string'leri buradan akar.
+
+5. **Gamepad**: `gamepad_event_to_key` genişletilir (navup/down/left/right, pageup/down → reducer);
+   SSE köprüsü ve shutdown bayrağı gap-01'de hazır.
+
+6. **SSE**: watcher `handle_sse_frame`'e `progress`/`history` olayları eklenir → download_progress
+   canlı akışı (Faz 11 contract yeniden kullanılır).
+
+### Fazlar
+
+- **Faz 1:** `state.rs` MenuState + reducer + TvuiState genişletme + SDL'siz unit testler.
+- **Faz 2:** sdl2-ttf font yükleme (theme.json fonts alanı) + `t()` i18n okuyucu.
+- **Faz 3:** loading + platform_grid ekranları, gamepad nav + key-repeat.
+- **Faz 4:** game_list + progress ekranları, SSE progress/history olayları.
+- **Faz 5:** transition efekti (`draw_validation_transition` parity) + box-art cache.
+
+### Doğrulama stratejisi (bu sandbox gerçeği)
+
+- Faz 1 (+ reducer/i18n/SSE-parse mantığı): izole scratch crate'te yeşil — SDL'siz.
+- Faz 2-5 render dosyaları: ağır makine checklist'i (TASK-012-gap-01 dosyasındaki liste)
+  tek geçişte; canlı gamepad→grid→game→download akışı Windows'ta doğrulanır.
+
 ---
 
 ## İlerleme

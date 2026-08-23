@@ -107,6 +107,27 @@
 - Canlı: `RGSX_TVUI=1 manager-bin` → SSE bağlantısını kapat (manager restart) → TVUI'nin ≤3 sn'de
   yeniden bağlandığı, loading barın donmadığı gözlemlenir.
 
+## Ağır makine doğrulama listesi (Windows ajan — Faz A+B+C tek geçiş)
+
+Sandbox (ARM proot) SDL2 bundled derleyemediği için aşağıdakiler Windows/heavy makinede koşulmalı
+(sandbox'ta net.rs mantığı izole crate ile doğrulandı: Faz A 13/13, Faz B 17/17, Faz C 20/20):
+
+```bash
+cd <repo>/manager-rs
+# 1. Tam crate testleri (SDL2 bundled C derlemesini ilk kez içerir):
+cargo test -p manager-tvui                 # beklenen: 20/20 yeşil
+# 2. Windows cross-check (AGENTS.md kural 5; sdl2 bundled → CMake+nasm gerekir):
+cargo check --target x86_64-pc-windows-gnu -p manager-bin
+# 3. Canlı smoke — reconnect (Faz A): TVUI açıkken manager'ı restart et;
+#    beklenen: loading bar DONMAZ, ≤3 sn'de "TVUI SSE bağlı" logu geri gelir.
+set RGSX_TVUI=1 && manager-bin.exe
+# 4. Canlı smoke — windowed + gamepad (Faz B/C):
+set RGSX_TVUI_WINDOWED=1&& set RGSX_NATIVE_INPUT=1&& manager-bin.exe
+#    beklenen: resizable pencere; gamepad confirm = Enter davranışı, back = çıkış.
+```
+
+Bulgular bu dosyanın İlerleme bölümüne not edilmeli; hata varsa ilgili fazın başlığına dönülür.
+
 ## İlerleme
 
 - 2026-08-22 — İnceleme tamamlandı, bulgular + faz planı bu dosyaya yazıldı. Faz A implementasyona alındı.
