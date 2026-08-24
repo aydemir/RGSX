@@ -2,7 +2,7 @@
 
 - **id:** TASK-012-gap-01
 - **title:** Native TVUI shell'inin Python tvui.py'ye karşı kör nokta analizi ve dayanıklılık düzeltmeleri
-- **status:** in-progress
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-22
 - **environment:** both
