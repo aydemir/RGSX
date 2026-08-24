@@ -172,3 +172,32 @@ Bulgular bu dosyanın İlerleme bölümüne not edilmeli; hata varsa ilgili faz�
     `gamepad_events_map_to_intents`, `gamepad_confirm_frame_drives_ui_and_back_exits`.
 - 2026-08-22 — **Faz C commit+push.** Görevin sandbox-dışı kalan tek kalemi: ağır makinede
   `cargo test -p manager-tvui` + Windows cross-check.
+- 2026-08-24 — **Ağır makine doğrulama tamamlandı** (Windows msvc + Windows-gnu cross + WSL1 Linux):
+  - `cargo test -p manager-tvui` (Windows msvc, rustup stable 1.98): **27/27 yeşil**. Not: beklenen
+    "20/20" güncel değil — arada `native_input` ve `theme` testleri eklendi, suite 27'ye çıktı.
+  - **2 net testi Windows'ta deterministik düşüyordu** (`watcher_retries…`, `apply_ui_action…dead_port`):
+    kök neden ortam farkı — bu Windows makinesinde reddedilen loopback TCP bağlantısı ~2 sn sürüyor
+    (güvenlik yazılımı filtresi; Linux'ta anlık). Testler sabit sleep (500ms / 2sn bütçe) yerine
+    15 sn deadline'lı beklemeye çevrildi (`manager-tvui/src/net.rs`). Semantik aynı: dead port
+    er geç error/failed üretir. Düzeltme sonrası Windows + Linux ikisinde de 27/27.
+  - **Windows cross-check (kural 5) ilk kez geçti**: `cargo check --target x86_64-pc-windows-gnu
+    -p manager-bin` OK (6m30s, tek warn bilinen paths.rs:19). Önkoşullar (tekrar için zorunlu):
+    scoop `mingw` 16.2.0 + `ninja`; env `CMAKE_GENERATOR=Ninja` (PATH'teki busybox `sh.exe`
+    MinGW make'i bozuyor: sh ile Error 127, sh'siz Error 2 — Ninja sh'e ihtiyaç duymaz),
+    `CFLAGS=-std=gnu11` (GCC 16 varsayılan C23 `true/false` anahtar sözcükleri SDL2
+    `SDL_hidapi_steam.c`'i patlatıyor), `CMAKE_POLICY_VERSION_MINIMUM=3.5`,
+    `RUSTUP_HOME`/`CARGO_HOME` açıkça set edilmeli (oturum env'i eskiyse cargo yanlış
+    rustup home'a bakıyor). `windows/scripts/verify_gap01.ps1` bu env ile güncellendi.
+  - **Linux tarafı ilk kez tam crate olarak koşuldu** (ARM proot sandbox SDL2 bundled derleyemediği
+    için hep izole scratch crate'ti): WSL1 `rgsx-linux` (Ubuntu 24.04 x86_64) içine rustup minimal
+    kuruldu; `CARGO_TARGET_DIR=/root/rgsx-target` ile (workspace config'teki Windows target-dir
+    ezilir) `cargo test -p manager-tvui` → **27/27 yeşil** (0.05s).
+  - **Kalan:** canlı smoke ×2 — reconnect (manager restart'ta TVUI ≤3 sn yeniden bağlanmalı) ve
+    windowed+gamepad; GUI olduğu için kullanıcı eşliğinde manuel.
+- 2026-08-24 — **Canlı smoke (windowed) OK:** debug manager-bin, `RGSX_TVUI=1 +
+  RGSX_TVUI_WINDOWED=1` → pencere açıldı (resizable, "RGSX" başlık), stderr
+  `TVUI SSE bağlı: http://127.0.0.1:5000/api/events`, grid tile'ları render edildi
+  (kullanıcı ekran görüntüsü). Not: "manager'ı restart et" varyantı tek-süreç mimaride
+  (TVUI = manager-bin thread'i, `main.rs:365`) uygulanamaz; reconnect karşılığı unit
+  testlerle her iki platformda kanıtlandı. Gamepad kolu kullanıcı cihazına bağlı.
+

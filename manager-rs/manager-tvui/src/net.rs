@@ -791,8 +791,18 @@ mod tests {
             let flag = Arc::new(AtomicBool::new(false));
             std::thread::spawn(move || start_catalog_watcher(port, st, &flag))
         };
-        std::thread::sleep(Duration::from_millis(500));
-        let err = state.lock().unwrap().error.clone();
+        // Windows'ta reddedilen loopback bağlantısı bile ~2 sn sürebilir (güvenlik
+        // yazılımı filtre sürücüleri); sabit sleep yerine deadline'lı bekle.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let err = loop {
+            if let Some(e) = state.lock().unwrap().error.clone() {
+                break Some(e);
+            }
+            if handle.is_finished() || Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
         assert!(
             err.as_deref().unwrap_or_default().starts_with("SSE"),
             "ilk bağlantı hatası error'a yazılmalı, geldi: {err:?}"
@@ -972,12 +982,13 @@ mod tests {
         }));
         state.lock().unwrap().port = port;
         apply_ui_action(&state, UiAction::UpdateDownload);
-        for _ in 0..100 {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
             if state.lock().unwrap().update_stage.as_deref() == Some("failed") {
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        panic!("arka plan isteği 2 sn içinde 'failed' yazmalı");
+        panic!("arka plan isteği 15 sn içinde 'failed' yazmalı");
     }
 }
