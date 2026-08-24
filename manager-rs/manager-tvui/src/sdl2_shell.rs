@@ -30,10 +30,10 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 /// Faz C (bulgu 12): gradyan her frame'de h adet `draw_line` yerine BİR KEZ
 /// texture'a üretilir ve blit edilir; pencere boyutu değişirse yenilenir.
 /// Texture üretilemezse eski scanline yoluna düşer (doğruluk > zarafet).
-fn draw_background(
+fn draw_background<'a>(
     canvas: &mut Canvas<Window>,
-    tc: &TextureCreator<WindowContext>,
-    cache: &mut Option<(u32, u32, Texture)>,
+    tc: &'a TextureCreator<WindowContext>,
+    cache: &mut Option<(u32, u32, Texture<'a>)>,
     theme: &Theme,
     preset: &str,
 ) -> (u32, u32) {
@@ -252,7 +252,8 @@ pub fn run_native_shell(
     let windowed = std::env::var("RGSX_TVUI_WINDOWED")
         .map(|v| v == "1")
         .unwrap_or(false);
-    let mut wb = video.window("RGSX", 1280, 720).position_centered();
+    let mut wb = video.window("RGSX", 1280, 720);
+    wb.position_centered();
     if windowed {
         wb.resizable();
     } else {
@@ -267,10 +268,9 @@ pub fn run_native_shell(
         .present_vsync()
         .build()
         .map_err(|e| format!("SDL2 canvas: {e}"))?;
-    let vsync = canvas
-        .info()
-        .map(|i| i.flags.contains(sdl2::render::RendererFlags::PRESENTVSYNC))
-        .unwrap_or(false);
+    let vsync = canvas.info().flags
+        & sdl2::sys::SDL_RendererFlags::SDL_RENDERER_PRESENTVSYNC as u32
+        != 0;
     let texture_creator = canvas.texture_creator();
     let mut bg_cache: Option<(u32, u32, Texture)> = None;
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
