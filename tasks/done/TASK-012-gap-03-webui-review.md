@@ -2,7 +2,7 @@
 
 - **id:** TASK-012-gap-03
 - **title:** WebUI parite taraması — kaybolan TV modu, kukla update-cache, ayarlar sekmesi sapması ve davranış hataları
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-22
 - **environment:** both
@@ -171,3 +171,15 @@
   (+ action_failed c495461 eksiği telafi). **Bonus:** contract ENV_LOCK (settings
   roundtrip flake kökten kapatıldı). **Doğrulama:** manager-core 75/75, manager-http
   yeşil (28 lib + 114 contract + smoke'lar), `npm run build` sıfır hata, dist commit'li.
+- 2026-08-25 — **Canlı smoke OK** (manager-bin debug + RGSX_RUST_WEBUI): health/SPA index
+  200; status_code canlı akış — `Queued→QUEUED`, `Téléchargement→DOWNLOADING`, `Erreur→FAILED`
+  (iptal akışı dahil). Kullanıcı tarayıcı + telefon doğrulaması: masaüstü 4 kolon /
+  telefon 2 kolon.
+  **Bulgudan çıkan ek iş — status_code tablosu genişletildi:** canlı smoke'ta Rust
+  üretimi "Téléchargement" (state.rs `legacy_history_status`) haritada yoktu;
+  `contract::status_code` artık `state::legacy_status_to_state()` kanonik tablosuna
+  delege (tek doğruluk kaynağı) + Try-prefix/Ağ bekleniyor/already_present özel durumları.
+  **Grid ayarı SPA'da gerçekleştirildi (kullanıcı kararı — Python'da yoktu):** cols
+  platform döşemesini belirler; `--grid-cols` CSS değişkeni + `@media (min-width:901px)`
+  ile yalnız masaüstünde uygulanır, telefon responsive auto-fill korur (commit `00eb604`;
+  doğrulama: 1000px→4 kolon, 500px→2 kolon). Rows SPA'da anlamsız (TVUI 012h tüketici).
