@@ -59,7 +59,10 @@
       `{(3,3),(3,4),(4,3),(4,4)}` (rgsx_settings.py:445) → geçersiz değer yazılabiliyor; Rust
       `Settings::validate`'te allowed-set görünmüyor (settings.rs:151 yalnız default).
     - **qBittorrent WebUI bölümü YOK** (şifre yönetimi+durum): app.js:2359-2380 vs Rust uçları
-      boşa düşmüş (lib.rs:74-77).
+      boşa düşmüş (lib.rs:74-77). **GÜNCELLEME (2026-08-24, kullanıcı kararı): bölüm
+      EKLENMEYECEK** — torrent engine default'u librqbit (main.rs:47-50); `/api/qbittorrent/*`
+      uçları yalnız legacy `RGSX_TORRENT_ENGINE=python` bridge modunda anlamlı, WebUI'ya ölü
+      özellik paneli eklenmez. Uçların kendisinin emekliliği → TASK-012-gap-02 kapsamı.
     - **API key girişleri açık metin**: `type=text` (App.vue:1015-1020) vs Python maskeli
       `type=password` (app.js:2331+).
     - **Sistem bilgisi zayıf + yanlış kaynak**: Python ayrı `/api/system_info`'dan collapsible
@@ -106,14 +109,27 @@
       gerçekine göre düzeltildi.
 
 ### Faz C — parite tamamlama
-- [ ] Self-update WebUI banner'ı (TVUI parity; bulgu 3).
-- [ ] Ayarlar sekmesi paritesi: qBittorrent bölümü, password maskeleme, collapsible system-info
-      (/api/system_info), Save-buton modeli kararı, ROMS ipucu, fazlalık alanlarının kaderi
-      (bulgu 10).
-- [ ] i18n temizliği (tt() dışındaki tüm literal'lar) + status sözleşmesini kod-bazına alma kararı
-      (bulgular 5, 6).
-- [ ] Pause/resume bayatlık penceresi: `queue` olayına status ekle ya da optimistik set'i kaldır
-      (bulgu 9).
+- [x] Self-update WebUI banner'ı (TVUI parity; bulgu 3) — snapshot `manager_update` nested +
+      `manager_update` SSE olayı; available→İndir / downloading→%+İptal / ready→Yükle
+      (tek tık, TVUI parity ikinci onay yok).
+- [x] Ayarlar sekmesi: Save-buton modeli (kullanıcı kararı: Python parity; `@change`
+      otomatik kayıt + onApiKey tuş-başı POST kaldırıldı), password maskeleme (api_keys
+      type=password), collapsible system-info (`<details>`, /api/system_info), ROMS ipucu
+      ("Mevcut: X (özel/varsayılan)"), fazlalık alanları TUTULUR (kullanıcı kararı;
+      max_downloads backend'de işlevsel) (bulgu 10).
+      qBittorrent bölümü EKLENMEZ (kullanıcı kararı — librqbit default, ölü özellik).
+- [x] i18n temizliği: boot ekranı + Region-priority modalı literal'ları tt()'ye alındı;
+      27 yeni anahtar × 7 dil. Status sözleşmesi: `manager-core::contract`'e
+      `status_code`/`with_status_code`/`inject_status_codes(_into)` — snapshot, `queue`
+      delta olayı, `/api/history`, `/api/queue` enjeksiyonlu; UI `itemStatus()` ile önce
+      koda bakar, metin-map fallback kalır (bulgular 5, 6).
+      **Bonus:** c495461'de action_failed anahtarları commit'e girmemişti (shipped bug:
+      toast'lar ham "action_failed" basardı) — 7 dilde yeniden eklendi.
+- [x] Pause/resume bayatlık penceresi: SSE `queue` olayı global `status` taşıyor VE
+      status değişimi tek başına olay tetikliyor (`last_status` takibi); optimistik set
+      kalır (kullanıcı kararı) (bulgu 9).
+      **Bonus:** `test_settings_native_roundtrip` paralel flake'i kökünden kapatıldı —
+      contract testlerine ENV_LOCK (settings/scan env yarışı; manager-core deseni).
 
 ## Doğrulama
 
@@ -146,3 +162,12 @@
   iptal edildi — uç + `test_es_input_shape` yerinde (bkz. Faz B madde 2). Docs:
   PROJECT_MAP contract sayıları 114'e, FAZ12_PARITY_STRATEGY baseline + uç-kararı notu.
   **Doğrulama:** `cargo test -p manager-http` yeşil (114 contract dahil).
+- 2026-08-24 — **Faz C uygulandı** (4 kullanıcı kararı: Save butonu / fazlalık tut /
+  backend status_code / queue status; qBittorrent bölümü kullanıcı kararıyla düşürüldü —
+  librqbit default). Rust: manager-core contract status_code yardımcıları + sse.rs
+  snapshot/queue-olay enjeksiyonu + global status + api.rs history/queue. WebUI: upd
+  banner + manager_update handler, itemStatus() kod-öncelik, settings Save-butonu,
+  maskeli api_keys, roms ipucu, sysinfo `<details>`, boot/region i18n, 27 anahtar × 7 dil
+  (+ action_failed c495461 eksiği telafi). **Bonus:** contract ENV_LOCK (settings
+  roundtrip flake kökten kapatıldı). **Doğrulama:** manager-core 75/75, manager-http
+  yeşil (28 lib + 114 contract + smoke'lar), `npm run build` sıfır hata, dist commit'li.

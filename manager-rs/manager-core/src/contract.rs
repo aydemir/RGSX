@@ -111,6 +111,57 @@ pub fn strip_history_error_noise(text: &str) -> String {
     out.trim().to_string()
 }
 
+/// TASK-012-gap-03 (bulgu 6): metin-status'u makine-okunur koda çevirir.
+///
+/// Backend (Rust + Python-era history.json) metin status üretir; UI'ların
+/// "Erreur"/"Ağ bekleniyor" gibi çok-dilli metinleri elle eşlemesi kırılgandı.
+/// UI artık önce `status_code`'a bakar; bilinmeyen metinlerde `None` döner ve
+/// alan YAZILMAZ (UI eski metin-map fallback'ini kullanır).
+pub fn status_code(status_text: &str) -> Option<&'static str> {
+    let norm = |s: &str| s.trim().to_ascii_lowercase();
+    match norm(status_text).as_str() {
+        "download_ok" | "completed" => Some("COMPLETED"),
+        "erreur" | "error" | "failed" | "failed_permanent" => Some("FAILED"),
+        "canceled" => Some("CANCELED"),
+        "queued" => Some("QUEUED"),
+        "downloading" | "connecting" | "verifying" => Some("DOWNLOADING"),
+        "extracting" => Some("EXTRACTING"),
+        "seeding" => Some("SEEDING"),
+        "already_present" => Some("ALREADY_PRESENT"),
+        "ağ bekleniyor" => Some("NETWORK_WAIT"),
+        _ if norm(status_text).starts_with("try") => Some("DOWNLOADING"),
+        _ => None,
+    }
+}
+
+/// Bir history/queue öğesine `status_code` enjekte eder (metin status biliniyorsa).
+pub fn with_status_code(mut item: Value) -> Value {
+    if let Some(code) = item
+        .get("status")
+        .and_then(|s| s.as_str())
+        .and_then(status_code)
+    {
+        if let Some(obj) = item.as_object_mut() {
+            obj.insert("status_code".into(), json!(code));
+        }
+    }
+    item
+}
+
+/// Bir öğe dizisinin tamamına `status_code` enjekte eder (snapshot/REST/SSE yolları).
+pub fn inject_status_codes(items: &[Value]) -> Vec<Value> {
+    items.iter().map(|i| with_status_code(i.clone())).collect()
+}
+
+/// Dizi-taşıyan bir JSON değerinin (ör. serileştirilmiş queue) öğelerine `status_code`
+/// enjekte eder; dizi olmayan değer olduğu gibi döner.
+pub fn inject_status_codes_into(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.into_iter().map(with_status_code).collect()),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +194,31 @@ mod tests {
             json!({"active": false})
         );
         assert!(event.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn status_code_maps_known_texts() {
+        // TASK-012-gap-03 (bulgu 6): çok-dilli metin status → makine kodu.
+        assert_eq!(status_code("Download_OK"), Some("COMPLETED"));
+        assert_eq!(status_code("Erreur"), Some("FAILED"));
+        assert_eq!(status_code("Ağ bekleniyor"), Some("NETWORK_WAIT"));
+        assert_eq!(status_code("Try 3/5"), Some("DOWNLOADING"));
+        assert_eq!(status_code("Already_Present"), Some("ALREADY_PRESENT"));
+        assert_eq!(status_code("bilmemne"), None);
+    }
+
+    #[test]
+    fn inject_status_codes_adds_field_only_when_known() {
+        let items = vec![
+            json!({ "game_name": "a", "status": "Queued" }),
+            json!({ "game_name": "b", "status": "Özel Durum" }),
+        ];
+        let out = inject_status_codes(&items);
+        assert_eq!(out[0]["status_code"], json!("QUEUED"));
+        assert!(
+            out[1].get("status_code").is_none(),
+            "bilinmeyen metinde alan yazılmaz"
+        );
     }
 
     #[test]

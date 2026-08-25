@@ -287,7 +287,8 @@ pub async fn history(State(state): State<AppState>) -> Response {
             if let Some(Value::String(msg)) = entry.get_mut("message") {
                 *msg = contract::strip_history_error_noise(msg);
             }
-            entry
+            // TASK-012-gap-03 (bulgu 6): makine-okunur status_code enjeksiyonu.
+            contract::with_status_code(entry)
         })
         .collect();
     ok(contract::ok(
@@ -307,9 +308,11 @@ pub async fn queue(State(state): State<AppState>) -> Response {
     // F3-F4: UI'ye O(1) "queued?" üyelik snapshot'ı ver (kilit mikrosaniyede bırakılır;
     // WebUI `Vec` taraması yapmaz, bu set ile doğrudan bakar).
     let queued_ids: Vec<String> = data.queued_ids.iter().cloned().collect();
+    // TASK-012-gap-03 (bulgu 6): queue öğelerine makine-okunur status_code enjeksiyonu.
+    let queue = contract::inject_status_codes(&data.queue);
     ok(contract::ok(json!({
         "active": data.active,
-        "queue": data.queue,
+        "queue": queue,
         "queue_size": data.queue_size(),
         "queued_ids": queued_ids,
     })))

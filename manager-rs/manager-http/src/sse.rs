@@ -42,22 +42,31 @@ pub fn publish(sender: &Sender<String>, event_type: &str, data: &serde_json::Val
     let _ = sender.send(raw);
 }
 
+/// Global kuyruk durumunun telaffuzu (snapshot + `queue` delta olayı ortak kullanır).
+fn queue_status_str(data: &StateData) -> &'static str {
+    match data.status {
+        QueueStatus::Running => "Running",
+        QueueStatus::Paused => "Paused",
+        QueueStatus::Stopped => "Stopped",
+    }
+}
+
 /// `_build_snapshot()` (rgsx_manager.py:86-109) ile birebir snapshot yükü.
 pub fn snapshot_json(data: &StateData) -> serde_json::Value {
+    // TASK-012-gap-03 (bulgu 6): history/queue öğelerine makine-okunur `status_code`
+    // enjekte edilir; UI metin-eşleme yerine koda bakar (bilinmeyen metinde alan yok).
+    let history = contract::inject_status_codes(&data.history);
+    let queue = contract::inject_status_codes(&data.queue);
     let mut snap = contract::snapshot(
-        &serde_json::json!(data.history),
-        &serde_json::json!(data.queue),
+        &serde_json::json!(history),
+        &serde_json::json!(queue),
         data.active,
         &data.progress,
         &data.downloaded,
     );
     // F2/gap-30: webui'nin duraklatma durumunu görmesi için `status`'u snapshot'a ekle.
     // QueueStatus Serialize derive'ı yok → açık string'e çevir.
-    let s = match data.status {
-        QueueStatus::Running => "Running",
-        QueueStatus::Paused => "Paused",
-        QueueStatus::Stopped => "Stopped",
-    };
+    let s = queue_status_str(data);
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("status".into(), serde_json::json!(s));
         // TASK-002-gap-32: UI'nin ağ-koptu durumunu görmesi (banner + "Ağ bekleniyor").
@@ -143,6 +152,7 @@ pub async fn broadcast_loop(state: AppState) {
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_history: Option<String> = None;
     let mut last_queue: Option<String> = None;
+    let mut last_status: Option<String> = None;
     let mut last_progress: Option<String> = None;
     let mut last_downloaded: Option<String> = None;
     let mut last_snapshot = Instant::now();
@@ -167,7 +177,7 @@ pub async fn broadcast_loop(state: AppState) {
             continue;
         }
         // Okuma kilidi yalnızca serileştirme kadar tutulur (F3-F4 lock granularity).
-        let (history, queue, active, progress, downloaded) = {
+        let (history, queue, active, progress, downloaded, status) = {
             let d = state.read();
             (
                 serde_json::to_string(&d.history).unwrap_or_default(),
@@ -175,6 +185,7 @@ pub async fn broadcast_loop(state: AppState) {
                 d.active,
                 serde_json::to_string(&d.progress).unwrap_or_default(),
                 serde_json::to_string(&d.downloaded).unwrap_or_default(),
+                queue_status_str(&d),
             )
         };
         if last_history.as_deref() != Some(history.as_str()) {
@@ -185,12 +196,21 @@ pub async fn broadcast_loop(state: AppState) {
                 &json!({ "history": parse_value(&history) }),
             );
         }
-        if last_queue.as_deref() != Some(queue.as_str()) {
+        if last_queue.as_deref() != Some(queue.as_str()) || last_status.as_deref() != Some(status) {
             last_queue = Some(queue.clone());
+            last_status = Some(status.to_string());
+            // TASK-012-gap-03 (bulgu 9): olay global `status` taşır ve status DEĞİŞİMİ
+            // tek başına da olay tetikler — diğer istemcinin pause/resume'u optimistik
+            // set'i 30 sn bayatlamadan düzeltilir. Öğeler `status_code` enjeksiyonundan
+            // geçer (bulgu 6).
             publish(
                 &state.events,
                 "queue",
-                &json!({ "queue": parse_value(&queue), "active": active }),
+                &json!({
+                    "queue": contract::inject_status_codes_into(parse_value(&queue)),
+                    "active": active,
+                    "status": status,
+                }),
             );
         }
         if last_progress.as_deref() != Some(progress.as_str()) {

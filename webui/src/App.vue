@@ -136,12 +136,50 @@ function applySnapshot(data) {
   if (data.downloaded) snapshot.downloaded = data.downloaded
   if (data.status) snapshot.status = data.status
   if (typeof data.network_down === 'boolean') snapshot.network_down = data.network_down
+  // TASK-012-gap-03 Faz C (bulgu 3): self-update durumu TVUI parity banner.
+  if (data.manager_update) applyManagerUpdate(data.manager_update)
   // 012h: snapshot'tan katalog durumunu yakala (geç bağlanan istemci race'i).
   if (typeof data.catalog_ready === 'boolean') {
     if (data.catalog_ready) { boot.ready = true; boot.error = ''; boot.offline = false }
     else if (data.catalog_error) { boot.ready = false; boot.error = String(data.catalog_error) }
   }
   lastEvent.value = 'snapshot'
+}
+
+// TASK-012-gap-03 Faz C (bulgu 3): manager self-update banner durumu.
+// Sözleşme TVUI net.rs apply_manager_update ile aynı: stream event'i kökte
+// (available/stage), snapshot'ta data["manager_update"] nested.
+const upd = reactive({ available: null, version: '', stage: '', pct: 0 })
+function applyManagerUpdate(m) {
+  if (!m) return
+  if (m.available === true) {
+    if (m.version) upd.version = String(m.version)
+    upd.available = true
+  } else if (m.available === false) {
+    // Bulgu 8 parity: geri çekilirse banner temizlenir; in-flight aşamada dokunulmaz.
+    if (!['downloading', 'ready', 'applying'].includes(upd.stage)) upd.available = false
+  }
+  if (m.stage) {
+    upd.stage = String(m.stage)
+    if (upd.stage === 'downloading') upd.pct = typeof m.percent === 'number' ? m.percent : 0
+  }
+}
+async function updDownload() {
+  try {
+    const r = await apiPost('/api/manager-update/download', {})
+    pushToast(r && r.ok ? tt('upd_queued') : ((r && r.error) || tt('action_failed')), r && r.ok ? 'info' : 'error')
+  } catch (e) { pushToast(tt('action_failed'), 'error') }
+}
+async function updCancel() {
+  try { await apiPost('/api/queue/remove', { task_id: 'manager-update' }); pushToast(tt('upd_cancel_ok'), 'info') }
+  catch (e) { pushToast(tt('action_failed'), 'error') }
+}
+async function updApply() {
+  try {
+    const r = await apiPost('/api/manager-update/apply', {})
+    if (r && r.ok) pushToast(tt('upd_applying'), 'info')
+    else pushToast((r && r.error) || tt('action_failed'), 'error')
+  } catch (e) { pushToast(tt('action_failed'), 'error') }
 }
 onMounted(async () => {
   es = connectSSE({
@@ -156,6 +194,9 @@ onMounted(async () => {
       else if (data && data.queue) {
         snapshot.queue = data.queue
         if (typeof data.active === 'boolean') snapshot.active = data.active
+        // TASK-012-gap-03 Faz C (bulgu 9): olay artık global status taşır —
+        // diğer istemcinin pause/resume'u optimistik set'i anında düzeltir.
+        if (typeof data.status === 'string') snapshot.status = data.status
       }
     },
     history: (data) => {
@@ -169,10 +210,12 @@ onMounted(async () => {
         // TASK-012-gap-03 (bulgu 8): Set sınırsız büyümesin (uzun oturum belleği);
         // üst sınır aşılsa da toast tekrar-bastırma işlevi korunur.
         if (seenHistory.size > 500) seenHistory.delete(seenHistory.values().next().value)
-        const s = String(h.status || '').toUpperCase()
+        // TASK-012-gap-03 Faz C (bulgu 6): önce makine-okunur status_code,
+        // bilinmeyen kodda eski metin-eşleme fallback.
+        const code = h.status_code || String(h.status || '').toUpperCase()
         const nm = h.name || h.game_name || (h.url ? String(h.url).split('/').pop() : '')
-        if (s === 'COMPLETED' || s === 'DOWNLOAD_OK' || s === 'ALREADY_PRESENT') pushToast(tt('download_complete', { n: nm }), 'success')
-        else if (s === 'FAILED' || s === 'FAILED_PERMANENT') pushToast(tt('download_failed_item', { n: nm }), 'error')
+        if (code === 'COMPLETED' || code === 'ALREADY_PRESENT') pushToast(tt('download_complete', { n: nm }), 'success')
+        else if (code === 'FAILED') pushToast(tt('download_failed_item', { n: nm }), 'error')
       }
     },
     downloaded: (data) => {
@@ -184,6 +227,11 @@ onMounted(async () => {
     network_restored: () => {
       pushToast(tt('network_restored_toast'), 'success')
     },
+    // TASK-012-gap-03 Faz C (bulgu 3): self-update akış olayları.
+    manager_update: (data) => {
+      lastEvent.value = 'manager_update'
+      applyManagerUpdate(data)
+    },
     // 012h: katalog bootstrap ilerlemesi (download % / extract / ready).
     // TVUI net.rs apply_catalog_update ile aynı sözleşme.
     catalog_update: (data) => {
@@ -193,7 +241,7 @@ onMounted(async () => {
       if (data.stage === 'ready') {
         const ok = data.success === true
         if (ok) { boot.ready = true; boot.error = ''; boot.offline = false; boot.pct = 100 }
-        else { boot.ready = false; boot.error = 'Katalog hazırlanamadı: ' + (data.reason || 'bilinmiyor') }
+        else { boot.ready = false; boot.error = tt('boot_catalog_failed', { r: data.reason || 'bilinmiyor' }) }
       }
     },
   })
@@ -218,7 +266,7 @@ async function loadPlatforms() {
 async function bootRetry() {
   boot.pct = 0; boot.stage = 'retry'; boot.error = ''; boot.ready = false
   try { await apiPost('/api/catalog/retry', {}) }
-  catch (e) { boot.error = 'Retry isteği başarısız' }
+  catch (e) { boot.error = tt('boot_retry_failed') }
 }
 // Çevrimdışı devam: grid'e geç (boş kategori), kırmızı rozet gösterilir.
 function bootOffline() { boot.offline = true }
@@ -305,13 +353,15 @@ const failedNames = computed(() => {
   const set = new Set()
   const add = (n) => { if (!n) return; set.add(stem(n)); set.add(String(n).toLowerCase()) }
   for (const it of historyItems.value) {
-    const s = String(it.status || '').toUpperCase()
-    if (s === 'FAILED' || s === 'FAILED_PERMANENT' || s === 'ERROR' || s === 'ERREUR')
+    // TASK-012-gap-03 Faz C (bulgu 6): status_code varsa metin-eşleme atlanır —
+    // "Erreur" Fransızca metni artık ıska geçirilmez.
+    const code = it.status_code || String(it.status || '').toUpperCase()
+    if (code === 'FAILED' || code === 'FAILED_PERMANENT' || code === 'ERROR' || code === 'ERREUR')
       add(it.name || it.game_name)
   }
   for (const it of queueItems.value) {
-    const s = String(it.status || '').toUpperCase()
-    if (s === 'FAILED' || s === 'ERROR') add(it.game_name || it.name)
+    const code = it.status_code || String(it.status || '').toUpperCase()
+    if (code === 'FAILED' || code === 'ERROR') add(it.game_name || it.name)
   }
   return set
 })
@@ -581,9 +631,18 @@ onUnmounted(() => window.removeEventListener('resize', measureViewports))
 //   QUEUED                 -> #6c757d (gri)
 //   CANCELED               -> #ffc107 (turuncu)
 //   ALREADY_PRESENT/SEEDING-> #17a2b8 (camgöbeği)
+// TASK-012-gap-03 Faz C (bulgu 6): status_code backend'den geldiyse önce o kullanılır
+// (çok-dilli metin eşlemeye gerek yok); yoksa metin fallback.
+function itemStatus(item) {
+  return (item && item.status_code) || (item && item.status) || ''
+}
+
 function statusMeta(raw) {
   const s = String(raw || '')
   const up = s.toUpperCase()
+  // TASK-012-gap-03 Faz C (bulgu 6): backend artık makine-okunur status_code
+  // gönderiyor; kod varsa doğrudan o dal düşer, metin-eşleme yalnız eski
+  // kayıtlar/bilinmeyen metinler için fallback.
   if (up === 'COMPLETED' || up === 'DOWNLOAD_OK' || s === 'Completed' || s === 'Download_OK' || s === 'downloaded')
     return { label: 'COMPLETED', color: '#28a745', cls: 'st-ok' }
   if (up === 'FAILED' || up === 'FAILED_PERMANENT' || s === 'Erreur' || s === 'error' || s === 'failed')
@@ -710,7 +769,7 @@ function onApiKey(service, val) {
   if (!settings.value.api_keys) settings.value.api_keys = {}
   if (val) settings.value.api_keys[service] = val
   else delete settings.value.api_keys[service]
-  saveSettings()
+  // TASK-012-gap-03 Faz C: Save-buton modeli — tuş vuruşu başına POST yok.
 }
 
 // ===================== Tab switching =====================
@@ -737,22 +796,37 @@ async function switchTab(t) {
 
     <p v-if="snapshot.network_down" class="netdown-banner">⚠ {{ tt('network_down_banner') }}</p>
 
+    <!-- TASK-012-gap-03 Faz C (bulgu 3): self-update banner — TVUI parity tek-tık modeli.
+         available → İndir (kuyruk), downloading → % + İptal, ready → Yükle (geri alınamaz). -->
+    <div v-if="upd.available" class="upd-banner">
+      <span class="upd-txt">⬆ {{ tt('upd_available', { v: upd.version }) }}</span>
+      <span class="upd-actions">
+        <button v-if="!upd.stage || upd.stage === 'available'" class="btn sm primary" @click="updDownload">{{ tt('upd_download') }}</button>
+        <template v-else-if="upd.stage === 'downloading'">
+          <span class="upd-pct">{{ tt('upd_downloading') }} {{ upd.pct }}%</span>
+          <button class="btn sm" @click="updCancel">{{ tt('upd_cancel') }}</button>
+        </template>
+        <button v-else-if="upd.stage === 'ready'" class="btn sm primary" @click="updApply">{{ tt('upd_apply') }}</button>
+        <span v-else class="upd-pct">{{ upd.stage }}</span>
+      </span>
+    </div>
+
     <!-- Catalog bootstrap (012h) — mirrors TVUI: ready / offline / error -->
     <div v-if="!boot.ready && !boot.offline" class="boot">
       <template v-if="boot.error">
         <div class="boot-error">⚠ {{ boot.error }}</div>
         <div class="boot-actions">
-          <button class="btn primary" @click="bootRetry">Tekrar dene</button>
-          <button class="btn" @click="bootOffline">Çevrimdışı devam</button>
+          <button class="btn primary" @click="bootRetry">{{ tt('boot_retry') }}</button>
+          <button class="btn" @click="bootOffline">{{ tt('boot_offline_continue') }}</button>
         </div>
       </template>
       <template v-else>
-        <div class="boot-msg">Katalog hazırlanıyor… <span v-if="boot.stage">({{ boot.stage }})</span></div>
+        <div class="boot-msg">{{ tt('boot_preparing') }} <span v-if="boot.stage">({{ boot.stage }})</span></div>
         <div class="bar boot-bar"><div class="fill" :style="{ width: boot.pct + '%' }"></div></div>
         <div class="boot-pct">{{ boot.pct }}%</div>
       </template>
     </div>
-    <p v-if="boot.offline" class="boot-offline">⚠ Çevrimdışı mod — katalog verisi eksik</p>
+    <p v-if="boot.offline" class="boot-offline">⚠ {{ tt('boot_offline_mode') }}</p>
 
     <!-- Global search -->
     <div class="searchbar">
@@ -823,7 +897,7 @@ async function switchTab(t) {
             <button v-for="r in REGIONS" :key="r" class="rbtn" :class="regionFilters[r]"
                     @click="cycleRegion(r)">{{ r }}</button>
           </div>
-          <button class="btn sm" @click="openRegionPriority()">Region priority</button>
+          <button class="btn sm" @click="openRegionPriority()">{{ tt('region_title') }}</button>
           <label class="chk"><input type="checkbox" v-model="hideDownloaded" @change="saveFilters()" /> {{ tt('filter_hide_dl') }}</label>
           <label class="chk"><input type="checkbox" v-model="hideNonRelease" @change="saveFilters()" /> {{ tt('filter_hide_demo') }}</label>
           <label class="chk"><input type="checkbox" v-model="regexMode" @change="saveFilters()" /> {{ tt('filter_regex') }}</label>
@@ -907,10 +981,10 @@ async function switchTab(t) {
         <div :style="{ height: windowedHistory.totalH + 'px' }">
           <div :style="{ transform: 'translateY(' + (windowedHistory.start * HISTORY_ROW_H) + 'px)' }">
             <ul class="hist" style="margin:0">
-              <li v-for="(item, i) in windowedHistory.slice" :key="item.task_id || i" :class="statusMeta(item.status).cls">
+              <li v-for="(item, i) in windowedHistory.slice" :key="item.task_id || i" :class="statusMeta(itemStatus(item)).cls">
                 <div class="row">
                   <span class="name">{{ item.game_name || item.name }}</span>
-                  <span class="badge" :style="{ background: statusMeta(item.status).color }">{{ statusMeta(item.status).label }}</span>
+                  <span class="badge" :style="{ background: statusMeta(itemStatus(item)).color }">{{ statusMeta(itemStatus(item)).label }}</span>
                 </div>
                 <div class="qmeta">
                   <span class="muted">{{ item.platform }}</span>
@@ -943,11 +1017,11 @@ async function switchTab(t) {
       <template v-if="settings">
         <div class="field">
           <label>{{ tt('light_mode') }}</label>
-          <input type="checkbox" v-model="settings.display.light_mode" @change="saveSettings()" />
+          <input type="checkbox" v-model="settings.display.light_mode" />
         </div>
         <div class="field">
           <label>{{ tt('grid') }}</label>
-          <select v-model="settings.display.grid" @change="saveSettings()">
+          <select v-model="settings.display.grid">
             <!-- TASK-012-gap-03 (bulgu 10): Python izin kümesi {(3,3),(3,4),(4,3),(4,4)} parity;
                  2x4/5x3 geçersizdi ve Rust validate'e de takılmadan yazılabiliyordu. -->
             <option value="3x3">3x3</option><option value="3x4">3x4</option>
@@ -956,29 +1030,29 @@ async function switchTab(t) {
         </div>
         <div class="field">
           <label>{{ tt('font_family') }}</label>
-          <select v-model="settings.display.font_family" @change="saveSettings()">
+          <select v-model="settings.display.font_family">
             <option value="pixel">Pixel</option><option value="dejavu">DejaVu</option>
           </select>
         </div>
         <div class="field">
           <label>{{ tt('max_downloads') }}</label>
-          <input type="number" min="1" max="20" v-model.number="settings.max_simultaneous_downloads" @change="saveSettings()" />
+          <input type="number" min="1" max="20" v-model.number="settings.max_simultaneous_downloads" />
         </div>
         <div class="field">
           <label>{{ tt('music') }}</label>
-          <input type="checkbox" v-model="settings.music_enabled" @change="saveSettings()" />
+          <input type="checkbox" v-model="settings.music_enabled" />
         </div>
         <div class="field">
           <label>{{ tt('show_unsupported') }}</label>
-          <input type="checkbox" v-model="settings.show_unsupported_platforms" @change="saveSettings()" />
+          <input type="checkbox" v-model="settings.show_unsupported_platforms" />
         </div>
         <div class="field">
           <label>{{ tt('allow_unknown') }}</label>
-          <input type="checkbox" v-model="settings.allow_unknown_extensions" @change="saveSettings()" />
+          <input type="checkbox" v-model="settings.allow_unknown_extensions" />
         </div>
         <div class="field">
           <label>{{ tt('sort') }}</label>
-          <select v-model="settings.global_sort_option" @change="saveSettings()">
+          <select v-model="settings.global_sort_option">
             <option value="name_asc">{{ tt('sort_name_asc') }}</option>
             <option value="name_desc">{{ tt('sort_name_desc') }}</option>
             <option value="size_desc">{{ tt('sort_size_desc') }}</option>
@@ -987,66 +1061,76 @@ async function switchTab(t) {
         </div>
         <div class="field">
           <label>{{ tt('source_mode') }}</label>
-          <select v-model="settings.sources.mode" @change="saveSettings()">
+          <select v-model="settings.sources.mode">
             <option value="rgsx">rgsx</option><option value="custom">custom</option>
           </select>
         </div>
         <div class="field" v-if="settings.sources.mode === 'custom'">
           <label>{{ tt('custom_url') }}</label>
-          <input type="text" v-model="settings.sources.custom_url" @change="saveSettings()" />
+          <input type="text" v-model="settings.sources.custom_url" />
         </div>
         <div class="field">
           <label>{{ tt('symlink_label') }}</label>
-          <input type="checkbox" v-model="settings.symlink.enabled" @change="saveSettings()" />
+          <input type="checkbox" v-model="settings.symlink.enabled" />
         </div>
         <div class="field" v-if="settings.symlink.enabled">
           <label>🔗 {{ tt('symlink_target') }}</label>
-          <input type="text" v-model="settings.symlink.target_directory" @change="saveSettings()" placeholder="/mnt/roms" />
+          <input type="text" v-model="settings.symlink.target_directory" placeholder="/mnt/roms" />
         </div>
         <div class="field">
           <label>{{ tt('auto_extract') }}</label>
-          <input type="checkbox" v-model="settings.auto_extract" @change="saveSettings()" />
+          <input type="checkbox" v-model="settings.auto_extract" />
         </div>
         <template v-if="systemInfo && (systemInfo.system || '').toLowerCase() === 'linux'">
           <h3>{{ tt('linux_section') }}</h3>
           <div class="field">
             <label>{{ tt('web_service_label') }}</label>
-            <input type="checkbox" v-model="settings.web_service_at_boot" @change="saveSettings()" />
+            <input type="checkbox" v-model="settings.web_service_at_boot" />
           </div>
           <div class="field">
             <label>{{ tt('custom_dns_label') }}</label>
-            <input type="checkbox" v-model="settings.custom_dns_at_boot" @change="saveSettings()" />
+            <input type="checkbox" v-model="settings.custom_dns_at_boot" />
           </div>
         </template>
         <div class="field">
           <label>🔑 {{ tt('api_keys') }}</label>
+          <!-- TASK-012-gap-03 Faz C (bulgu 10): anahtarlar maskeli (Python parity type=password). -->
           <div class="keyrows">
-            <input type="text" :value="settings.api_keys['archive.org'] || ''" @input="onApiKey('archive.org', $event.target.value)" placeholder="archive.org" />
-            <input type="text" :value="settings.api_keys['realdebrid'] || ''" @input="onApiKey('realdebrid', $event.target.value)" placeholder="RealDebrid" />
-            <input type="text" :value="settings.api_keys['1fichier'] || ''" @input="onApiKey('1fichier', $event.target.value)" placeholder="1fichier" />
-            <input type="text" :value="settings.api_keys['alldebrid'] || ''" @input="onApiKey('alldebrid', $event.target.value)" placeholder="AllDebrid" />
-            <input type="text" :value="settings.api_keys['debridlink'] || ''" @input="onApiKey('debridlink', $event.target.value)" placeholder="Debrid-Link" />
-            <input type="text" :value="settings.api_keys['torbox'] || ''" @input="onApiKey('torbox', $event.target.value)" placeholder="TorBox" />
+            <input type="password" autocomplete="off" :value="settings.api_keys['archive.org'] || ''" @input="onApiKey('archive.org', $event.target.value)" placeholder="archive.org" />
+            <input type="password" autocomplete="off" :value="settings.api_keys['realdebrid'] || ''" @input="onApiKey('realdebrid', $event.target.value)" placeholder="RealDebrid" />
+            <input type="password" autocomplete="off" :value="settings.api_keys['1fichier'] || ''" @input="onApiKey('1fichier', $event.target.value)" placeholder="1fichier" />
+            <input type="password" autocomplete="off" :value="settings.api_keys['alldebrid'] || ''" @input="onApiKey('alldebrid', $event.target.value)" placeholder="AllDebrid" />
+            <input type="password" autocomplete="off" :value="settings.api_keys['debridlink'] || ''" @input="onApiKey('debridlink', $event.target.value)" placeholder="Debrid-Link" />
+            <input type="password" autocomplete="off" :value="settings.api_keys['torbox'] || ''" @input="onApiKey('torbox', $event.target.value)" placeholder="TorBox" />
           </div>
         </div>
-        <div class="field" v-if="systemInfo">
-          <label>🖥️ {{ tt('system_info') }}</label>
+        <!-- TASK-012-gap-03 Faz C (bulgu 10): Python parity collapsible system-info paneli
+             (/api/system_info; SPA eskiden settings GET'inin düz satırlarını basıyordu). -->
+        <details v-if="systemInfo" class="sysinfo-details">
+          <summary>🖥️ {{ tt('system_info') }}</summary>
           <div class="sysinfo">
             <div v-for="(v, k) in systemInfo" :key="k" class="sysrow"><span>{{ k }}</span><span>{{ v }}</span></div>
           </div>
-        </div>
+        </details>
         <div class="field">
           <label>🔤 {{ tt('font_scale') }} ({{ settings.accessibility.font_scale }})</label>
-          <input type="range" min="0.5" max="2.0" step="0.1" v-model.number="settings.accessibility.font_scale" @change="saveSettings()" />
+          <input type="range" min="0.5" max="2.0" step="0.1" v-model.number="settings.accessibility.font_scale" />
         </div>
         <div class="field">
           <label>{{ tt('roms_folder') }}</label>
           <div class="browse-row">
-            <input type="text" v-model="settings.roms_folder" @change="saveSettings()" :placeholder="tt('default_placeholder')" />
+            <input type="text" v-model="settings.roms_folder" :placeholder="tt('default_placeholder')" />
             <button class="browse-btn" @click="openBrowse = true">📂 {{ tt('browse') }}</button>
           </div>
+          <!-- TASK-012-gap-03 Faz C (bulgu 10): Python parity ipucu — "Current: X (custom/default)". -->
+          <p class="muted roms-hint">{{ tt('roms_current', { p: settings.roms_folder || tt('default_placeholder'), m: settings.roms_folder ? tt('roms_custom') : tt('roms_default') }) }}</p>
         </div>
         <BrowseDirectories v-if="openBrowse" :current-path="settings.roms_folder" @select="onBrowseSelect" @close="openBrowse = false" />
+        <!-- TASK-012-gap-03 Faz C (bulgu 10): Python parity tek 💾 Save butonu —
+             tüm alan değişiklikleri ancak bununla kalıcılaşır. -->
+        <div class="settings-save">
+          <button class="btn primary" @click="saveSettings">💾 {{ tt('save_settings') }}</button>
+        </div>
       </template>
       <p v-else class="muted">{{ tt('no_settings') }}</p>
     </section>
@@ -1071,24 +1155,24 @@ async function switchTab(t) {
       </div>
     </div>
 
-    <!-- Region priority reorder modal (gap-24) -->
+    <!-- Region priority reorder modal (gap-24) — TASK-012-gap-03 Faz C (bulgu 5): i18n -->
     <div v-if="regionPriorityModal.open" class="modal-overlay" @click.self="closeRegionPriority" @keydown.esc="closeRegionPriority">
-      <div class="modal" role="dialog" aria-modal="true" aria-label="Region priority">
-        <h3 class="modal-title">Region priority (One ROM Per Game)</h3>
-        <p class="modal-msg">Highest to lowest — top wins when One ROM Per Game is on.</p>
+      <div class="modal" role="dialog" aria-modal="true" :aria-label="tt('region_title')">
+        <h3 class="modal-title">{{ tt('region_title') }}</h3>
+        <p class="modal-msg">{{ tt('region_desc') }}</p>
         <ul class="rp-list">
           <li v-for="(r, i) in regionPriorityOrder" :key="r" class="rp-item">
             <span class="rp-name">{{ r }}</span>
             <span class="rp-ctrl">
-              <button class="btn sm" :disabled="i === 0" @click="moveRegion(i, -1)" aria-label="Move up">&#9650;</button>
-              <button class="btn sm" :disabled="i === regionPriorityOrder.length - 1" @click="moveRegion(i, 1)" aria-label="Move down">&#9660;</button>
+              <button class="btn sm" :disabled="i === 0" @click="moveRegion(i, -1)" :aria-label="tt('region_move_up')">&#9650;</button>
+              <button class="btn sm" :disabled="i === regionPriorityOrder.length - 1" @click="moveRegion(i, 1)" :aria-label="tt('region_move_down')">&#9660;</button>
             </span>
           </li>
         </ul>
         <div class="modal-actions">
-          <button class="btn" @click="resetRegionPriority()">Reset</button>
-          <button class="btn primary" @click="saveRegionPriority()">Save</button>
-          <button class="btn" @click="closeRegionPriority()">Cancel</button>
+          <button class="btn" @click="resetRegionPriority()">{{ tt('region_reset') }}</button>
+          <button class="btn primary" @click="saveRegionPriority()">{{ tt('confirm_ok') }}</button>
+          <button class="btn" @click="closeRegionPriority()">{{ tt('confirm_cancel') }}</button>
         </div>
       </div>
     </div>
@@ -1320,4 +1404,12 @@ h3 { font-size: calc(13px * var(--font-scale, 1)); }
 .boot-actions .btn { min-height: 40px; padding: 8px 16px; border: 1px solid #ccc; background: #f1f1f1; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .boot-actions .btn.primary { background: #007bff; border-color: #007bff; color: #fff; }
 .boot-offline { background: #f8d7da; color: #842029; border: 1px solid #f5c2c7; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
+/* TASK-012-gap-03 Faz C: self-update banner (TVUI parity) + settings parite ekleri. */
+.upd-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fff3cd; color: #664d03; border: 1px solid #ffe69c; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; font-weight: 600; }
+.upd-actions { display: flex; align-items: center; gap: 8px; }
+.upd-pct { font-variant-numeric: tabular-nums; }
+.sysinfo-details { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+.sysinfo-details summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.roms-hint { font-size: 12px; margin: 4px 0 0; }
+.settings-save { margin-top: 16px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
 </style>

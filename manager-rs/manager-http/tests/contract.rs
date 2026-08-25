@@ -130,6 +130,12 @@ fn disable_native_download() {
     std::env::set_var("RGSX_NATIVE_DOWNLOAD", "0");
 }
 
+/// TASK-012-gap-03: RGSX_SETTINGS_PATH / RGSX_NATIVE_SETTINGS / RGSX_ROMS_FOLDER
+/// process-genel env'dir; env'e dokunan testler bu kilitle serileştirir
+/// (manager-core settings ENV_LOCK deseni). Aksi halde `test_settings_native_roundtrip`
+/// paralel koşumda düzenli flake (set_var → load arası başka test yolu okur).
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // ---------------------------------------------------------------------------
 // GET / — page d'accueil
 // ---------------------------------------------------------------------------
@@ -215,6 +221,7 @@ async fn test_languages_shape() {
 
 #[tokio::test]
 async fn test_scan_shape() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Hızlı + deterministik kalmak için küçük boş bir kök dizin kullan.
     let tmp = std::env::temp_dir().join("rgsx_contract_scan_root");
     let _ = std::fs::create_dir_all(&tmp);
@@ -618,6 +625,7 @@ async fn test_settings_post() {
 /// Faz 12f — `RGSX_NATIVE_SETTINGS=1` ile native ayar round-trip'i.
 #[tokio::test]
 async fn test_settings_native_roundtrip() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Sahte (izole) ayar dosyası — diske bağımlı kalıcı yol yerine TempDir kullanılır.
     // Paralel testlerle çakışmaması ve artık dosya bırakmaması için.
     let tmp = tempfile::tempdir().unwrap();
