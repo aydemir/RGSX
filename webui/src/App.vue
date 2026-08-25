@@ -525,6 +525,14 @@ async function downloadAll() {
 // ===================== Queue / Progress =====================
 const queueItems = computed(() => snapshot.queue || [])
 
+// TASK-012-gap-03 Faz C (kullanıcı kararı): display.grid "colsxrows" → platform
+// döşemesinin kolon sayısı. Rows kaydırmalı SPA listesinde anlamsız (TVUI 012h
+// sayfa düzeni tüketici). Geçersiz/eksik değer → 3 (varsayılan 3x4'un cols'u).
+const gridCols = computed(() => {
+  const m = /^(\d+)x\d+$/.exec(String((settings.value && settings.value.display && settings.value.display.grid) || '3x4'))
+  return m ? Math.max(1, parseInt(m[1], 10)) : 3
+})
+
 // --- Queue virtualization (P0): bağımlılıksız windowing ---
 // Backend O(1)/buffer modelini taşıdı; DOM hâlâ N satır çiziyordu. Queue sekmesi
 // yüzlerce–binlerce öğe alabildiğinden (Download All) düz `v-for` kasılma yaratır.
@@ -850,7 +858,7 @@ async function switchTab(t) {
     <section v-if="searchResults" class="panel">
       <h2>{{ tt('search_results') }} <a class="back" @click="clearSearch">{{ tt('clear') }}</a></h2>
        <h3 v-if="searchResults.platforms.length">{{ tt('tab_platforms') }}</h3>
-      <div class="grid">
+      <div class="grid" :style="{ '--grid-cols': gridCols }">
         <button v-for="p in searchResults.platforms" :key="p.platform_name" class="card"
                 @click="clearSearch(); selectPlatform(p.platform_name)">
           <span class="pname">{{ p.platform_name }}</span>
@@ -872,7 +880,11 @@ async function switchTab(t) {
       <!-- Platform grid -->
       <div v-if="!selectedPlatform">
         <h2>{{ tt('platforms') }} <small>({{ platforms.length }})</small></h2>
-        <div class="grid">
+        <!-- TASK-012-gap-03 Faz C (kullanıcı kararı): grid ayarı SPA'da da gerçek —
+             cols platform döşemesini belirler. --grid-cols yalnız >900px'te etkin
+             (aşağıda); telefonlar responsive auto-fill düzenini korur. Rows
+             kaydırmalı listede anlamsız (TVUI 012h sayfa düzeni için). -->
+        <div class="grid" :style="{ '--grid-cols': gridCols }">
           <button v-for="(p, i) in platforms" :key="p.platform_name || p.name" class="card"
                   @click="selectPlatform(p.platform_name || p.name)">
             <img v-if="p.platform_image" :src="'/api/image/' + encodeURIComponent(p.platform_name || p.name)" class="box" alt="" />
@@ -1233,6 +1245,12 @@ small { color: #666; font-weight: normal; }
 .err { color: #dc3545; background: #f8d7da; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+/* TASK-012-gap-03 Faz C: izgara ayarı cols'u — yalnız geniş ekran (>900px).
+   Telefon media query'leri (aşağıda ≤900/≤480) kendi auto-fill responsive
+   düzenini korur; ayar telefon görünümünü bozmaz. */
+@media (min-width: 901px) {
+  .grid { grid-template-columns: repeat(var(--grid-cols, 3), minmax(0, 1fr)); }
+}
 .card { display: flex; flex-direction: column; align-items: center; gap: 10px; background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); padding: 20px; border: none; border-radius: 12px; cursor: pointer; color: #fff; transition: transform 0.3s, box-shadow 0.3s; text-align: center; }
 .card:hover { transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
 .card .box { width: 200px; height: 200px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,0.05); filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3)); }
