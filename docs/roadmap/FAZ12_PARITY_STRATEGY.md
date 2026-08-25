@@ -106,8 +106,10 @@ Mevcut flag'ler (`rgsx-faz12-migration` skill): `RGSX_NATIVE_CATALOG`,
 
 ## 5. Entegrasyon Noktaları
 
-- Contract test baseline: **102 yeşil** (flag kapalıyken davranış değişmez) —
-  `rgsx-faz12-migration` SKILL.md.
+- Contract test baseline: **114 yeşil** (flag kapalıyken davranış değişmez) —
+  `rgsx-faz12-migration` SKILL.md. Not (TASK-012-gap-03 Faz B): `/api/es-input` ucu,
+  bugünkü TVUI in-process `load_best()` ile beslense de gelecek ayrık-süreç/uzak
+  tüketici senaryoları için kullanıcı kararıyla tutuldu (şu an HTTP tüketicisi yok).
 - Bilinen sapmalar zaten `ROADMAP_FAZ12_RUST_WEBUI_TVUI.md` §3 + skill "Bilinen sapmalar"
   altında; her yeni bilinçli ayrılma o listeye divergence-note ile işlenir.
 - Rust gap'leri (Faz 13): `tasks/gap/TASK-002-gap-*.md` — parity stratejisi bu görevlere

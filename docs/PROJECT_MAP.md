@@ -63,7 +63,7 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   tek tek `RGSX_SOURCES_FILE`/`RGSX_GAMES_FOLDER`/`RGSX_IMAGES_FOLDER`/`RGSX_LANGUAGES_FOLDER`
   override). Komut POST'ları (download/queue) native değildir → `NativeCatalog`
   içindeki opsiyonel `PythonCatalog` fallback'e proxy edilir. Ayrı crate yerine
-  `manager-http` içinde (trait zaten orada; döngü yok). 5 birim test + 102 contract yeşil.
+  `manager-http` içinde (trait zaten orada; döngü yok). 5 birim test + 114 contract yeşil.
 
 ### Native katalog OTA bootstrap (Faz 12f, TASK-004) — veri otomatik çekme
 - `manager-http/src/catalog_bootstrap.rs`: `ensure_catalog_ready()` — `RGSX_NATIVE_CATALOG=1`
@@ -107,7 +107,7 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   ile `/static/*` sunulur; `/` ve SPA route'ları (`/settings`,`/downloads`,...) hydrate
   edilmiş `index.html` döndürür (client-side routing, `lib.rs` fallback = `api::index`).
   Canlı ilerleme `EventSource('/api/events')` ile (SSE, TASK-002m). `RGSX_WEBUI_DIR=webui/dist`
-  + `RGSX_RUST_WEBUI=1` ile aktif. 102/102 contract testi yeşil.
+  + `RGSX_RUST_WEBUI=1` ile aktif. 114 contract testi yeşil.
 - `RGSX_RUST_WEBUI=1` → Rust 5000 (TV UI portu değişmez), Python SADECE `RGSX_CATALOG_PORT`
   (vars. 5001) üzerinden catalog servis eder; Rust oraya proxy'ler. `manager-bin/main.rs`
   port default 5000, `rgsx_manager.py` run_server portu 5001 + env'ler set edilir.

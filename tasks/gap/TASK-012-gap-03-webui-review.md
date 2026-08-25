@@ -91,16 +91,19 @@
 - [x] `seenHistory` üst sınırı (500, FIFO düşüm) (bulgu 8).
 
 ### Faz B — TV modunu resmen emekliye ayır (SEÇENEK A, kullanıcı onaylı)
-- [ ] `rgsx-webui-spa` SKILL.md: `?mode=tv`/gamepad bölümleri kaldırılır; SPA = desktop WebUI,
-      TVUI = native SDL2 (`manager-tvui`) olarak netleştirilir.
-- [ ] `/api/es-input` HTTP ucu sökülür: `lib.rs:54` route + `api::es_input` handler;
-      `contract.rs:210 test_es_input_shape` buna göre güncellenir (102 baseline sayısı değişir →
-      commit notuna yazılır). Sunucu içi `manager_http::es_input::load_best()` (native_input
-      gamepad yolu) ETKİLENMEZ — o HTTP'den geçmez.
-- [ ] `rgsx-faz12-migration` SKILL.md strateji satırı düzeltilir: "tek Vue 3 SPA'da birleşir"
-      ifadesi yön-B superseded notu alır.
-- [ ] `manager-bin/src/main.rs:362` civarındaki bayat "SPA kiosk/webview" yorumları
-      SDL2-shell gerçekine göre düzeltilir.
+- [x] ~~`rgsx-webui-spa` SKILL.md düzenlemesi~~ **N/A**: skill dosyası diskte yok
+      (yalnız `FAZ12_PARITY_STRATEGY.md` referansı var); `?mode=tv` SPA'da kod olarak
+      zaten yok, retire kararı dokümana işlendi.
+- [x] `/api/es-input` HTTP ucu: **söküm KULLANICI KARARIYLA iptal edildi** (2026-08-24) —
+      uç tutuldu. Not: bugünkü TVUI in-process `es_input::load_best()` ile besleniyor
+      (`main.rs:358` → `start_native_input`), uçtan geçmez; Python WebUI'de de tüketici
+      yoktu. Karar gerekçesi: gelecek ayrık-süreç TVUI / uzak tüketici / ayarlar-UI
+      gamepad bölümü senaryoları. Contract `test_es_input_shape` yerinde (114 baseline).
+- [x] ~~`rgsx-faz12-migration` SKILL.md satır düzeltmesi~~ **N/A**: skill dosyası yok;
+      `FAZ12_PARITY_STRATEGY.md` baseline satırı 114'e güncellendi + uç-kararı notu,
+      `ROADMAP_FAZ12_RUST_WEBUI_TVUI.md` §0 superseded bloğu zaten günceldi.
+- [x] `manager-bin/src/main.rs` bayat "SPA kiosk/webview" yorumları SDL2-shell
+      gerçekine göre düzeltildi.
 
 ### Faz C — parite tamamlama
 - [ ] Self-update WebUI banner'ı (TVUI parity; bulgu 3).
@@ -138,3 +141,8 @@
   (ENV_LOCK; `background_theme_roundtrip_persisted` paralel koşumda düzenli kırmızıydı).
   **Doğrulama:** `cargo test -p manager-core --lib` 73/73, `cargo test -p manager-http`
   yeşil (28 lib + 114 contract + smoke), `webui npm run build` sıfır hata.
+- 2026-08-24 — **Faz B uygulandı.** main.rs TVUI yorumları SDL2 gerçekine çevrildi;
+  skill-dosyası maddeleri N/A (diskte yoklar). `/api/es-input` sökümü kullanıcı kararıyla
+  iptal edildi — uç + `test_es_input_shape` yerinde (bkz. Faz B madde 2). Docs:
+  PROJECT_MAP contract sayıları 114'e, FAZ12_PARITY_STRATEGY baseline + uç-kararı notu.
+  **Doğrulama:** `cargo test -p manager-http` yeşil (114 contract dahil).

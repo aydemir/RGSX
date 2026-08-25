@@ -359,9 +359,10 @@ async fn run(paths: paths::RgsxPaths) {
         manager_tvui::native_input::start_native_input(events.clone(), es);
     }
 
-    // Faz 12b — TVUI shell: `RGSX_TVUI=1` ise SPA'yı kiosk/webview'da açar.
-    // Ayrı thread'de (webview feature event loop'u bloklar); kiosk yolunda
-    // tarayıcıyı spawn edip döner. Headless ortamda hata loglanır, sunucu etkilenmez.
+    // TVUI shell: `RGSX_TVUI=1` ise native SDL2 shell başlatır (manager-tvui).
+    // Ayrı thread'de (SDL event loop'u bloklar). TASK-012-gap-03 Faz B: SPA
+    // `?mode=tv` yolu emekli edildi — tek TVUI = native SDL2. Headless ortamda
+    // hata loglanır, sunucu etkilenmez.
     if std::env::var("RGSX_TVUI").map(|v| v == "1").unwrap_or(false) {
         let tv_port = port;
         std::thread::spawn(move || {
