@@ -1,4 +1,4 @@
-﻿//! TASK-012m Faz 5 - canli duman testi (Grok onerisi: once guvenli zincir, apply kapali).
+//! TASK-012m Faz 5 - canli duman testi (Grok onerisi: once guvenli zincir, apply kapali).
 //!
 //! Gercek manager_http::router uzerinden HTTP/SSE akisini dogrular:
 //! 1. Manifest -> manager_update SSE + snapshot (banner gorunur).
@@ -40,7 +40,9 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 async fn spawn_mock_server() -> u16 {
-    let blob: Vec<u8> = "fake-manager-binary-for-faz5-smoke-test-0123456789".as_bytes().to_vec();
+    let blob: Vec<u8> = "fake-manager-binary-for-faz5-smoke-test-0123456789"
+        .as_bytes()
+        .to_vec();
     let sha = {
         let mut h = Sha256::new();
         h.update(&blob);
@@ -48,7 +50,10 @@ async fn spawn_mock_server() -> u16 {
     };
     let bin = Arc::new(blob);
     let manifest = Arc::new(Mutex::new(json!({})));
-    let st = MockState { manifest: manifest.clone(), bin: bin.clone() };
+    let st = MockState {
+        manifest: manifest.clone(),
+        bin: bin.clone(),
+    };
 
     async fn manifest_handler(State(s): State<MockState>) -> (StatusCode, Json<Value>) {
         (StatusCode::OK, Json(s.manifest.lock().unwrap().clone()))
@@ -70,7 +75,9 @@ async fn spawn_mock_server() -> u16 {
         "url": format!("http://127.0.0.1:{port}/bin"),
         "sha256": sha
     });
-    tokio::spawn(async move { let _ = axum::serve(listener, app).await; });
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
     port
 }
 
@@ -78,13 +85,19 @@ async fn spawn_manager_http(state: AppState) -> u16 {
     let app = router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move { let _ = axum::serve(listener, app).await; });
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
     port
 }
 
 async fn get_manager_update(port: u16) -> Value {
     let c = reqwest::Client::new();
-    let r = c.get(format!("http://127.0.0.1:{port}/api/manager-update")).send().await.unwrap();
+    let r = c
+        .get(format!("http://127.0.0.1:{port}/api/manager-update"))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
     v["update"].clone()
 }
@@ -124,10 +137,19 @@ async fn faz5_smoke_download_chain_green_apply_closed() {
     let avail = wait_stage(mport, "available", Duration::from_secs(5)).await;
     assert_eq!(avail["available"].as_bool(), Some(true));
     assert_eq!(avail["version"].as_str(), Some("99.0.0"));
-    println!("[faz5-smoke] 1) manifest -> available v{} (banner)", avail["version"]);
+    println!(
+        "[faz5-smoke] 1) manifest -> available v{} (banner)",
+        avail["version"]
+    );
 
     let c = reqwest::Client::new();
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/download")).send().await.unwrap();
+    let r = c
+        .post(format!(
+            "http://127.0.0.1:{mport}/api/manager-update/download"
+        ))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
     assert!(v["success"].as_bool().unwrap_or(false));
     assert!(v["ok"].as_bool().unwrap_or(false));
@@ -137,7 +159,10 @@ async fn faz5_smoke_download_chain_green_apply_closed() {
     let _downloading = wait_stage(mport, "downloading", Duration::from_secs(5)).await;
     let ready = wait_stage(mport, "ready", Duration::from_secs(10)).await;
     let path = ready["path"].as_str().expect("ready ama path yok");
-    assert!(std::path::Path::new(path).exists(), "indirilen temp yok: {path}");
+    assert!(
+        std::path::Path::new(path).exists(),
+        "indirilen temp yok: {path}"
+    );
     println!("[faz5-smoke] 3) downloading->ready, temp={path}");
 
     let bin_bytes = std::fs::read(path).unwrap();
@@ -145,14 +170,28 @@ async fn faz5_smoke_download_chain_green_apply_closed() {
     h.update(&bin_bytes);
     let actual = hex(&h.finalize());
     let expected = avail["sha256"].as_str().unwrap();
-    assert_eq!(actual.to_lowercase(), expected.to_lowercase(), "temp SHA uyumsuz");
+    assert_eq!(
+        actual.to_lowercase(),
+        expected.to_lowercase(),
+        "temp SHA uyumsuz"
+    );
     println!("[faz5-smoke] 3b) SHA256 dogrulandi: {actual}");
 
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/apply")).send().await.unwrap();
+    let r = c
+        .post(format!("http://127.0.0.1:{mport}/api/manager-update/apply"))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
-    assert!(!v["ok"].as_bool().unwrap_or(true), "apply kapaliyken OK dondu!");
+    assert!(
+        !v["ok"].as_bool().unwrap_or(true),
+        "apply kapaliyken OK dondu!"
+    );
     let err = v["error"].as_str().unwrap_or("");
-    assert!(err.contains("devre d") && err.contains("RGSX_SELF_APPLY"), "beklenen devre disi hatasi, got: {err}");
+    assert!(
+        err.contains("devre d") && err.contains("RGSX_SELF_APPLY"),
+        "beklenen devre disi hatasi, got: {err}"
+    );
     println!("[faz5-smoke] 4) apply kapali -> reddedildi: {err}");
 }
 
@@ -175,18 +214,33 @@ async fn faz5_smoke_cancel_while_downloading() {
     assert_eq!(avail["available"].as_bool(), Some(true));
 
     let c = reqwest::Client::new();
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/download")).send().await.unwrap();
+    let r = c
+        .post(format!(
+            "http://127.0.0.1:{mport}/api/manager-update/download"
+        ))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
     assert!(v["ok"].as_bool().unwrap_or(false));
 
     let _dl = wait_stage(mport, "downloading", Duration::from_secs(5)).await;
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/queue/remove")).json(&json!({ "task_id": "manager-update" })).send().await.unwrap();
+    let r = c
+        .post(format!("http://127.0.0.1:{mport}/api/queue/remove"))
+        .json(&json!({ "task_id": "manager-update" }))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
     assert!(v["success"].as_bool().unwrap_or(false));
 
     let reverted = wait_stage(mport, "available", Duration::from_secs(5)).await;
     assert_eq!(reverted["stage"].as_str(), Some("available"));
-    assert!(reverted.get("path").is_none() || reverted["path"].is_null(), "iptal sonrasi path kaldi: {:?}", reverted.get("path"));
+    assert!(
+        reverted.get("path").is_none() || reverted["path"].is_null(),
+        "iptal sonrasi path kaldi: {:?}",
+        reverted.get("path")
+    );
     println!("[faz5-smoke] cancel) indirme iptal edildi, stage available dondu");
 }
 
@@ -201,7 +255,10 @@ async fn spawn_mock_server_exe() -> u16 {
     };
     let bin = Arc::new(bytes);
     let manifest = Arc::new(Mutex::new(json!({})));
-    let st = MockState { manifest: manifest.clone(), bin: bin.clone() };
+    let st = MockState {
+        manifest: manifest.clone(),
+        bin: bin.clone(),
+    };
 
     async fn manifest_handler(State(s): State<MockState>) -> (StatusCode, Json<Value>) {
         (StatusCode::OK, Json(s.manifest.lock().unwrap().clone()))
@@ -223,7 +280,9 @@ async fn spawn_mock_server_exe() -> u16 {
         "url": format!("http://127.0.0.1:{port}/bin"),
         "sha256": sha
     });
-    tokio::spawn(async move { let _ = axum::serve(listener, app).await; });
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
     port
 }
 
@@ -266,11 +325,21 @@ async fn faz5_apply_test_copy_replace_and_recover() {
     wait_stage(mport, "available", Duration::from_secs(5)).await;
 
     let c = reqwest::Client::new();
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/download")).send().await.unwrap();
+    let r = c
+        .post(format!(
+            "http://127.0.0.1:{mport}/api/manager-update/download"
+        ))
+        .send()
+        .await
+        .unwrap();
     let _v = r.json::<Value>().await.unwrap();
     wait_stage(mport, "ready", Duration::from_secs(15)).await;
 
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/apply")).send().await.unwrap();
+    let r = c
+        .post(format!("http://127.0.0.1:{mport}/api/manager-update/apply"))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
     assert!(v["ok"].as_bool().unwrap_or(false), "apply basarisiz: {v}");
 
@@ -278,15 +347,35 @@ async fn faz5_apply_test_copy_replace_and_recover() {
     let old_hash = sha_bytes(&std::fs::read(&old).unwrap());
     let orig_hash = sha_bytes(&orig);
     let flipped_hash = sha_bytes(&orig_flipped);
-    assert_eq!(target_hash.to_lowercase(), orig_hash.to_lowercase(), "hedef indirilenle eslesmiyor");
-    assert_eq!(old_hash.to_lowercase(), flipped_hash.to_lowercase(), "eski yedek orijinalle eslesmiyor");
-    assert_ne!(target_hash.to_lowercase(), old_hash.to_lowercase(), "degisiklik olmadi (hedef==old)");
+    assert_eq!(
+        target_hash.to_lowercase(),
+        orig_hash.to_lowercase(),
+        "hedef indirilenle eslesmiyor"
+    );
+    assert_eq!(
+        old_hash.to_lowercase(),
+        flipped_hash.to_lowercase(),
+        "eski yedek orijinalle eslesmiyor"
+    );
+    assert_ne!(
+        target_hash.to_lowercase(),
+        old_hash.to_lowercase(),
+        "degisiklik olmadi (hedef==old)"
+    );
     println!("[faz5-apply] replace + .old dogrulandi; relaunch probe tamam");
 
     std::fs::write(&target, b"CORRUPTED_BINARY_PAYLOAD").unwrap();
-    assert_ne!(sha_bytes(&std::fs::read(&target).unwrap()).to_lowercase(), orig_hash.to_lowercase(), "bozuk yazilmadi");
+    assert_ne!(
+        sha_bytes(&std::fs::read(&target).unwrap()).to_lowercase(),
+        orig_hash.to_lowercase(),
+        "bozuk yazilmadi"
+    );
     recover_update(Some(target.clone())).unwrap();
-    assert_eq!(sha_bytes(&std::fs::read(&target).unwrap()).to_lowercase(), old_hash.to_lowercase(), "recover .old dan donmedi");
+    assert_eq!(
+        sha_bytes(&std::fs::read(&target).unwrap()).to_lowercase(),
+        old_hash.to_lowercase(),
+        "recover .old dan donmedi"
+    );
     println!("[faz5-apply] corrupt -> recover(.old) dogrulandi");
 
     let _ = std::fs::remove_file(&target);
@@ -312,13 +401,30 @@ async fn faz5_apply_rejected_service() {
     wait_stage(mport, "available", Duration::from_secs(5)).await;
 
     let c = reqwest::Client::new();
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/download")).send().await.unwrap();
+    let r = c
+        .post(format!(
+            "http://127.0.0.1:{mport}/api/manager-update/download"
+        ))
+        .send()
+        .await
+        .unwrap();
     let _v = r.json::<Value>().await.unwrap();
     wait_stage(mport, "ready", Duration::from_secs(15)).await;
 
-    let r = c.post(format!("http://127.0.0.1:{mport}/api/manager-update/apply")).send().await.unwrap();
+    let r = c
+        .post(format!("http://127.0.0.1:{mport}/api/manager-update/apply"))
+        .send()
+        .await
+        .unwrap();
     let v: Value = r.json().await.unwrap();
-    assert!(!v["ok"].as_bool().unwrap_or(true), "serviste apply kabul edildi!");
-    assert!(v["error"].as_str().unwrap_or("").contains("servis"), "beklenen servis reddi: {:?}", v.get("error"));
+    assert!(
+        !v["ok"].as_bool().unwrap_or(true),
+        "serviste apply kabul edildi!"
+    );
+    assert!(
+        v["error"].as_str().unwrap_or("").contains("servis"),
+        "beklenen servis reddi: {:?}",
+        v.get("error")
+    );
     println!("[faz5-apply] serviste apply reddedildi: {:?}", "done");
 }

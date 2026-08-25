@@ -94,7 +94,10 @@ async fn smoke_full_update_flow_publishes_sse_and_downloads_with_sha() {
 
     // StateData snapshot alanı da doldu
     let sd = state_data.write().unwrap();
-    let mu = sd.manager_update.as_ref().expect("manager_update kaydedilmedi");
+    let mu = sd
+        .manager_update
+        .as_ref()
+        .expect("manager_update kaydedilmedi");
     assert_eq!(mu["version"], "99.0.0");
     drop(sd);
 

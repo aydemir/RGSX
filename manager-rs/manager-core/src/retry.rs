@@ -38,54 +38,122 @@ pub const PERMANENT_HTTP_STATUS: &[u16] = &[
 /// Python `_PERMANENT_MARKERS` (download_state.py:157) + Türkçe karşılıklar.
 pub const PERMANENT_MARKERS: &[&str] = &[
     // erişim / kimlik
-    "access denied", "accès refusé", "access refused", "erişim reddedildi",
-    "authentication required", "auth required", "unauthorized", "forbidden", "yasak",
-    "yetkisiz", "kimlik doğrulama gerekli",
+    "access denied",
+    "accès refusé",
+    "access refused",
+    "erişim reddedildi",
+    "authentication required",
+    "auth required",
+    "unauthorized",
+    "forbidden",
+    "yasak",
+    "yetkisiz",
+    "kimlik doğrulama gerekli",
     // tarayıcı challenge
-    "browser challenge", "interactive browser session", "etkileşimli tarayıcı",
+    "browser challenge",
+    "interactive browser session",
+    "etkileşimli tarayıcı",
     // arşiv bozuk
-    "payload is not a valid archive", "not a valid archive", "valid archive signature",
-    "geçerli bir arşiv değil", "geçerli arşiv imzası",
+    "payload is not a valid archive",
+    "not a valid archive",
+    "valid archive signature",
+    "geçerli bir arşiv değil",
+    "geçerli arşiv imzası",
     // html/challenge içerik
-    "html/challenge content", "downloaded html", "html/challenge", "indirilen html",
+    "html/challenge content",
+    "downloaded html",
+    "html/challenge",
+    "indirilen html",
     "html içerik",
     // boş yanıt
-    "empty response", "boş yanıt",
+    "empty response",
+    "boş yanıt",
     // kısıtlı / karartma
-    "restricted (is_dark", "is_dark=true", "kısıtlı",
+    "restricted (is_dark",
+    "is_dark=true",
+    "kısıtlı",
     // dosya yok
-    "file not found", "introuvable", "not found", "has been removed", "removed for abuse",
-    "piracy domain", "dosya bulunamadı", "kaldırıldı",
+    "file not found",
+    "introuvable",
+    "not found",
+    "has been removed",
+    "removed for abuse",
+    "piracy domain",
+    "dosya bulunamadı",
+    "kaldırıldı",
     // parola
-    "password incorrect", "invalid password", "mot de passe", "parola yanlış",
+    "password incorrect",
+    "invalid password",
+    "mot de passe",
+    "parola yanlış",
     // disk alanı
-    "pas assez d'espace", "insufficient disk space", "low disk space", "manque d'espace",
-    "disk alanı yetersiz", "yetersiz disk",
+    "pas assez d'espace",
+    "insufficient disk space",
+    "low disk space",
+    "manque d'espace",
+    "disk alanı yetersiz",
+    "yetersiz disk",
 ];
 
 /// Python `_TRANSIENT_MARKERS` (download_state.py:172) + Türkçe karşılıklar.
 pub const TRANSIENT_MARKERS: &[&str] = &[
     // timeout
-    "timeout", "timed out", "timed-out", "read timed", "zaman aşımı", "süre aşımı",
+    "timeout",
+    "timed out",
+    "timed-out",
+    "read timed",
+    "zaman aşımı",
+    "süre aşımı",
     // bağlantı
-    "connection error", "connexion", "connection aborted", "connection reset",
-    "connection refused", "connection timed", "unable to connect", "cannot connect",
-    "bağlantı", "bağlantı hatası", "bağlanılamadı", "bağlantı reddedildi",
+    "connection error",
+    "connexion",
+    "connection aborted",
+    "connection reset",
+    "connection refused",
+    "connection timed",
+    "unable to connect",
+    "cannot connect",
+    "bağlantı",
+    "bağlantı hatası",
+    "bağlanılamadı",
+    "bağlantı reddedildi",
     // retry hakkı
-    "max retries exceeded", "retries exceeded", "yeniden deneme", "retry",
+    "max retries exceeded",
+    "retries exceeded",
+    "yeniden deneme",
+    "retry",
     // rate limit
-    "rate limit", "too many requests", "temporarily unavailable", "hız sınırı",
-    "çok fazla istek", "geçici olarak kullanılamıyor",
+    "rate limit",
+    "too many requests",
+    "temporarily unavailable",
+    "hız sınırı",
+    "çok fazla istek",
+    "geçici olarak kullanılamıyor",
     // sunucu
-    "server error", "erreur serveur", "service unavailable", "bad gateway",
-    "sunucu hatası", "servis kullanılamıyor",
+    "server error",
+    "erreur serveur",
+    "service unavailable",
+    "bad gateway",
+    "sunucu hatası",
+    "servis kullanılamıyor",
     // ağ geçidi
-    "gateway time-out", "ağ geçidi zaman aşımı",
+    "gateway time-out",
+    "ağ geçidi zaman aşımı",
     // indirme sınırı
-    "limits downloads to one", "limite les téléchargements", "indirme sınırı",
+    "limits downloads to one",
+    "limite les téléchargements",
+    "indirme sınırı",
     // çeşitli
-    "link appears down", "temporary failure", "ressayer", "réessayez", "essayez plus tard",
-    "slow down", "n'existait pas", "temporairement", "geçici hata", "yavaşla",
+    "link appears down",
+    "temporary failure",
+    "ressayer",
+    "réessayez",
+    "essayez plus tard",
+    "slow down",
+    "n'existait pas",
+    "temporairement",
+    "geçici hata",
+    "yavaşla",
     "yeniden dene",
 ];
 
@@ -98,15 +166,23 @@ fn extract_http_status_codes(text: &str) -> HashSet<u16> {
         return codes;
     }
     for w in bytes.windows(3) {
-        if let (Some(a), Some(b), Some(c)) = (w[0].to_digit(10), w[1].to_digit(10), w[2].to_digit(10)) {
+        if let (Some(a), Some(b), Some(c)) =
+            (w[0].to_digit(10), w[1].to_digit(10), w[2].to_digit(10))
+        {
             let before_ok = w[0] == w[0] && (w[0].is_numeric() || true);
             // Önceki karakter rakam/nokta değilse ve sonraki karakter rakam/nokta değilse
-            let prev = if w[0] == bytes[0] { None } else { Some(bytes[bytes.len() - 3]) };
+            let prev = if w[0] == bytes[0] {
+                None
+            } else {
+                Some(bytes[bytes.len() - 3])
+            };
             let _ = (before_ok, prev);
             let val = (a * 100 + b * 10 + c) as u16;
             if (400..=599).contains(&val) {
                 let prev_is_digit = w[0] != bytes[0] && bytes[bytes.len() - 4].is_ascii_digit();
-                let next_is_digit = bytes.get(bytes.len() - 3 + 3).map_or(false, |c| c.is_ascii_digit());
+                let next_is_digit = bytes
+                    .get(bytes.len() - 3 + 3)
+                    .map_or(false, |c| c.is_ascii_digit());
                 if !prev_is_digit && !next_is_digit {
                     codes.insert(val);
                 }
@@ -199,9 +275,18 @@ mod tests {
 
     #[test]
     fn classify_markers_english() {
-        assert_eq!(classify_error("connection refused", None), ErrorClass::Transient);
-        assert_eq!(classify_error("rate limit exceeded", None), ErrorClass::Transient);
-        assert_eq!(classify_error("server error 500", None), ErrorClass::Transient);
+        assert_eq!(
+            classify_error("connection refused", None),
+            ErrorClass::Transient
+        );
+        assert_eq!(
+            classify_error("rate limit exceeded", None),
+            ErrorClass::Transient
+        );
+        assert_eq!(
+            classify_error("server error 500", None),
+            ErrorClass::Transient
+        );
         assert_eq!(
             classify_error("browser challenge detected", None),
             ErrorClass::Permanent
@@ -244,14 +329,23 @@ mod tests {
     #[test]
     fn classify_status_in_text() {
         // "HTTP 500" metinden çıkarılır.
-        assert_eq!(classify_error("request failed: HTTP 500", None), ErrorClass::Transient);
-        assert_eq!(classify_error("got HTTP 403 forbidden", None), ErrorClass::Permanent);
+        assert_eq!(
+            classify_error("request failed: HTTP 500", None),
+            ErrorClass::Transient
+        );
+        assert_eq!(
+            classify_error("got HTTP 403 forbidden", None),
+            ErrorClass::Permanent
+        );
     }
 
     #[test]
     fn classify_ambiguous_is_permanent() {
         // Tanınmayan hata → kalıcı (sonsuz retry döngüsü olmasın).
-        assert_eq!(classify_error("some weird glitch", None), ErrorClass::Permanent);
+        assert_eq!(
+            classify_error("some weird glitch", None),
+            ErrorClass::Permanent
+        );
     }
 
     #[test]

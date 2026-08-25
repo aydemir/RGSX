@@ -56,7 +56,17 @@ fn collect_disk_stems(dir: &Path, out: &mut HashSet<String>) {
                 .to_ascii_lowercase();
             if matches!(
                 ext.as_str(),
-                "json" | "txt" | "md" | "db" | "log" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp"
+                "json"
+                    | "txt"
+                    | "md"
+                    | "db"
+                    | "log"
+                    | "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "gif"
+                    | "svg"
+                    | "webp"
             ) {
                 continue;
             }
@@ -73,7 +83,11 @@ pub trait CatalogSource: Send + Sync {
     /// JSON dönen POST route'u proxy'ler (gövde iletilir).
     async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError>;
     /// İkili (zip) POST route'u proxy'ler (ham bayt + content-type).
-    async fn post_binary(&self, route: &str, body: &Value) -> Result<(Vec<u8>, String), CatalogError>;
+    async fn post_binary(
+        &self,
+        route: &str,
+        body: &Value,
+    ) -> Result<(Vec<u8>, String), CatalogError>;
     /// Box-art görselini (ham bayt + content-type) proxy'ler.
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError>;
 
@@ -127,10 +141,7 @@ impl CatalogSource for PythonCatalog {
             .send()
             .await
             .map_err(|e| CatalogError(e.to_string()))?;
-        let v: Value = resp
-            .json()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
+        let v: Value = resp.json().await.map_err(|e| CatalogError(e.to_string()))?;
         Ok(v)
     }
 
@@ -164,14 +175,15 @@ impl CatalogSource for PythonCatalog {
             .send()
             .await
             .map_err(|e| CatalogError(e.to_string()))?;
-        let v: Value = resp
-            .json()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
+        let v: Value = resp.json().await.map_err(|e| CatalogError(e.to_string()))?;
         Ok(v)
     }
 
-    async fn post_binary(&self, route: &str, body: &Value) -> Result<(Vec<u8>, String), CatalogError> {
+    async fn post_binary(
+        &self,
+        route: &str,
+        body: &Value,
+    ) -> Result<(Vec<u8>, String), CatalogError> {
         let url = format!("{}{}", self.base, route);
         let resp = self
             .client
@@ -208,7 +220,13 @@ use std::path::{Path, PathBuf};
 
 /// Box-art uzantısı → content-type.
 fn image_content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
@@ -312,11 +330,18 @@ impl NativeCatalog {
         for raw in sources.drain(..) {
             if let Value::Object(mut m) = raw {
                 if !m.contains_key("platform_image") {
-                    let legacy = m.remove("system_image").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+                    let legacy = m
+                        .remove("system_image")
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default();
                     m.insert("platform_image".into(), Value::String(legacy));
                 }
                 if !m.contains_key("folder") {
-                    if let Some(f) = m.get("dossier").and_then(|v| v.as_str()).map(str::to_string) {
+                    if let Some(f) = m
+                        .get("dossier")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                    {
                         m.insert("folder".into(), Value::String(f));
                     }
                 }
@@ -343,9 +368,13 @@ impl NativeCatalog {
         sources
             .into_iter()
             .filter(|s| {
-                let name = s.get("platform_name").and_then(|v| v.as_str()).unwrap_or("");
+                let name = s
+                    .get("platform_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let folder = s.get("folder").and_then(|v| v.as_str()).unwrap_or("");
-                let ok_name = !name.is_empty() && existing_files.contains(&name.to_ascii_lowercase());
+                let ok_name =
+                    !name.is_empty() && existing_files.contains(&name.to_ascii_lowercase());
                 let ok_folder =
                     !folder.is_empty() && existing_files.contains(&folder.to_ascii_lowercase());
                 name.is_empty() || ok_name || ok_folder
@@ -360,16 +389,11 @@ impl NativeCatalog {
     /// kabul ederiz ki `platform_name != folder` olan platformlar (ör. "Game Boy")
     /// drop olmasın (Faz 12.1 — platform yükleme eksik veri sorunu).
     fn games_file_for(&self, platform: &str) -> Option<PathBuf> {
-        let mut candidates: Vec<String> =
-            vec![platform.to_string(), platform.to_ascii_lowercase()];
-        if let Some(src) = self
-            .load_sources()
-            .iter()
-            .find(|s| {
-                s.get("platform_name").and_then(|x| x.as_str()) == Some(platform)
-                    || s.get("folder").and_then(|x| x.as_str()) == Some(platform)
-            })
-        {
+        let mut candidates: Vec<String> = vec![platform.to_string(), platform.to_ascii_lowercase()];
+        if let Some(src) = self.load_sources().iter().find(|s| {
+            s.get("platform_name").and_then(|x| x.as_str()) == Some(platform)
+                || s.get("folder").and_then(|x| x.as_str()) == Some(platform)
+        }) {
             // Python catalog games dosyaları platform ADIYLA adlandırılır
             // (ör. "3DO Interactive Multiplayer (Archive).json"), Rust sorgusu ise
             // folder ile gelir ("3do"). Her iki adı da aday olarak ekle ki dosya bulunabilsin.
@@ -382,12 +406,10 @@ impl NativeCatalog {
                 candidates.push(folder.to_ascii_lowercase());
             }
         }
-        candidates
-            .iter()
-            .find_map(|c| {
-                let p = self.games_folder.join(format!("{c}.json"));
-                p.is_file().then_some(p)
-            })
+        candidates.iter().find_map(|c| {
+            let p = self.games_folder.join(format!("{c}.json"));
+            p.is_file().then_some(p)
+        })
     }
 
     fn load_games(&self, platform: &str) -> Vec<(String, Option<String>, Option<String>)> {
@@ -401,9 +423,11 @@ impl NativeCatalog {
         };
         let arr = match &data {
             Value::Array(a) => a.clone(),
-            Value::Object(m) if m.contains_key("games") => {
-                m.get("games").and_then(|v| v.as_array()).cloned().unwrap_or_default()
-            }
+            Value::Object(m) if m.contains_key("games") => m
+                .get("games")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
             _ => return vec![],
         };
 
@@ -415,15 +439,26 @@ impl NativeCatalog {
                         continue;
                     }
                     let name = t.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let url = t.get(1).and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map(str::to_string);
-                    let size = t.get(2).and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map(str::to_string);
+                    let url = t
+                        .get(1)
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string);
+                    let size = t
+                        .get(2)
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string);
                     if !name.is_empty() {
                         out.push((name, url, size));
                     }
                 }
                 Value::Object(m) => {
                     let name = m
-                        .get("game_name").or_else(|| m.get("name")).or_else(|| m.get("title")).or_else(|| m.get("game"))
+                        .get("game_name")
+                        .or_else(|| m.get("name"))
+                        .or_else(|| m.get("title"))
+                        .or_else(|| m.get("game"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
@@ -431,11 +466,20 @@ impl NativeCatalog {
                         continue;
                     }
                     let url = m
-                        .get("url").or_else(|| m.get("download")).or_else(|| m.get("link")).or_else(|| m.get("href"))
-                        .and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map(str::to_string);
+                        .get("url")
+                        .or_else(|| m.get("download"))
+                        .or_else(|| m.get("link"))
+                        .or_else(|| m.get("href"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string);
                     let size = m
-                        .get("size").or_else(|| m.get("filesize")).or_else(|| m.get("length"))
-                        .and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).map(str::to_string);
+                        .get("size")
+                        .or_else(|| m.get("filesize"))
+                        .or_else(|| m.get("length"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string);
                     out.push((name, url, size));
                 }
                 _ => {}
@@ -464,7 +508,10 @@ impl NativeCatalog {
         let sources = self.load_sources();
         let mut platforms = Vec::new();
         for s in &sources {
-            let name = s.get("platform_name").and_then(|v| v.as_str()).unwrap_or("");
+            let name = s
+                .get("platform_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let folder = s.get("folder").and_then(|v| v.as_str()).unwrap_or("");
             if self.is_hidden(name, folder) {
                 continue;
@@ -489,7 +536,10 @@ impl NativeCatalog {
         let mut matching_platforms = Vec::new();
         let mut matching_games = Vec::new();
         for s in &sources {
-            let name = s.get("platform_name").and_then(|v| v.as_str()).unwrap_or("");
+            let name = s
+                .get("platform_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let folder = s.get("folder").and_then(|v| v.as_str()).unwrap_or("");
             if self.is_hidden(name, folder) {
                 continue;
@@ -539,10 +589,16 @@ impl NativeCatalog {
     }
 
     fn build_translations(&self, lang: &str) -> Value {
-        let lang = if lang.is_empty() { &self.default_language } else { lang };
+        let lang = if lang.is_empty() {
+            &self.default_language
+        } else {
+            lang
+        };
         let file = self.languages_folder.join(format!("{lang}.json"));
         let translations = match std::fs::read_to_string(&file) {
-            Ok(txt) => serde_json::from_str::<Value>(&txt).unwrap_or(Value::Object(Default::default())),
+            Ok(txt) => {
+                serde_json::from_str::<Value>(&txt).unwrap_or(Value::Object(Default::default()))
+            }
             Err(_) => Value::Object(Default::default()),
         };
         let mut t = match translations {
@@ -608,7 +664,11 @@ impl CatalogSource for NativeCatalog {
             return Ok(self.build_platforms());
         }
         if route.starts_with("/api/search") {
-            let q = route.split_once('?').map(|(_, q)| parse_query(q)).and_then(|m| m.get("q").cloned()).unwrap_or_default();
+            let q = route
+                .split_once('?')
+                .map(|(_, q)| parse_query(q))
+                .and_then(|m| m.get("q").cloned())
+                .unwrap_or_default();
             return Ok(self.build_search(&q));
         }
         if route.starts_with("/api/games/") {
@@ -630,21 +690,31 @@ impl CatalogSource for NativeCatalog {
         if let Some(p) = &self.python {
             return p.get_json(route).await;
         }
-        Err(CatalogError(format!("native catalog desteklemiyor: {route}")))
+        Err(CatalogError(format!(
+            "native catalog desteklemiyor: {route}"
+        )))
     }
 
     async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError> {
         if let Some(p) = &self.python {
             return p.post_json(route, body).await;
         }
-        Err(CatalogError(format!("native catalog POST desteklemiyor: {route}")))
+        Err(CatalogError(format!(
+            "native catalog POST desteklemiyor: {route}"
+        )))
     }
 
-    async fn post_binary(&self, route: &str, body: &Value) -> Result<(Vec<u8>, String), CatalogError> {
+    async fn post_binary(
+        &self,
+        route: &str,
+        body: &Value,
+    ) -> Result<(Vec<u8>, String), CatalogError> {
         if let Some(p) = &self.python {
             return p.post_binary(route, body).await;
         }
-        Err(CatalogError(format!("native catalog POST desteklemiyor: {route}")))
+        Err(CatalogError(format!(
+            "native catalog POST desteklemiyor: {route}"
+        )))
     }
 
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
@@ -767,7 +837,11 @@ impl CatalogSource for NativeCatalog {
 }
 
 fn env_path(key: &str, default: PathBuf) -> PathBuf {
-    std::env::var(key).ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -786,15 +860,27 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, NativeCatalog) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        write(&root.join("systems_list.json"),
-            r#"[{"platform_name":"NES","folder":"nes","platform_image":"nes.png"},{"platform_name":"SNES","folder":"snes"}]"#);
-        write(&root.join("games").join("NES.json"),
-            r#"[["Super Mario Bros","http://x/mario.zip","1.2M"],{"game_name":"Zelda","url":"http://x/zelda.zip","size":"2.0M"}]"#);
+        write(
+            &root.join("systems_list.json"),
+            r#"[{"platform_name":"NES","folder":"nes","platform_image":"nes.png"},{"platform_name":"SNES","folder":"snes"}]"#,
+        );
+        write(
+            &root.join("games").join("NES.json"),
+            r#"[["Super Mario Bros","http://x/mario.zip","1.2M"],{"game_name":"Zelda","url":"http://x/zelda.zip","size":"2.0M"}]"#,
+        );
         write(&root.join("games").join("SNES.json"), r#"{"games":[]}"#);
-        write(&root.join("languages").join("en.json"), r#"{"loading":"Loading..."}"#);
+        write(
+            &root.join("languages").join("en.json"),
+            r#"{"loading":"Loading..."}"#,
+        );
         // 1x1 PNG (minimal geçerli imza baytları)
-        write(&root.join("images").join("NES.png"),
-            &[0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52]);
+        write(
+            &root.join("images").join("NES.png"),
+            &[
+                0x89u8, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
+                0x48, 0x44, 0x52,
+            ],
+        );
         let cat = NativeCatalog {
             sources_file: root.join("systems_list.json"),
             games_folder: root.join("games"),
@@ -850,13 +936,23 @@ mod tests {
         // Format B: [[name, url, size], ...]
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        write(&root.join("systems_list.json"), r#"[{"platform_name":"XBOX","folder":"xbox"}]"#);
-        write(&root.join("games").join("XBOX.json"),
-            r#"[["Halo","http://x/halo.zip","3.0G"],["Forza","http://x/forza.zip","40.0G"]]"#);
+        write(
+            &root.join("systems_list.json"),
+            r#"[{"platform_name":"XBOX","folder":"xbox"}]"#,
+        );
+        write(
+            &root.join("games").join("XBOX.json"),
+            r#"[["Halo","http://x/halo.zip","3.0G"],["Forza","http://x/forza.zip","40.0G"]]"#,
+        );
         let cat = NativeCatalog {
-            sources_file: root.join("systems_list.json"), games_folder: root.join("games"),
-            images_folder: root.join("images"), languages_folder: root.join("languages"),
-            roms_folder: None, show_unsupported: true, default_language: "en".into(), python: None,
+            sources_file: root.join("systems_list.json"),
+            games_folder: root.join("games"),
+            images_folder: root.join("images"),
+            languages_folder: root.join("languages"),
+            roms_folder: None,
+            show_unsupported: true,
+            default_language: "en".into(),
+            python: None,
         };
         let v = cat.get_json("/api/games/xbox").await.unwrap();
         assert_eq!(v["count"], 2);
@@ -872,13 +968,23 @@ mod tests {
         // Format A: {"games":[{"game_name":...,"url":...,"size":...}]}
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        write(&root.join("systems_list.json"), r#"[{"platform_name":"XBOX","folder":"xbox"}]"#);
-        write(&root.join("games").join("XBOX.json"),
-            r#"{"games":[{"game_name":"Halo","url":"http://x/halo.zip","size":"3.0G"},{"name":"Forza","url":"http://x/forza.zip","size":"40.0G"}]}"#);
+        write(
+            &root.join("systems_list.json"),
+            r#"[{"platform_name":"XBOX","folder":"xbox"}]"#,
+        );
+        write(
+            &root.join("games").join("XBOX.json"),
+            r#"{"games":[{"game_name":"Halo","url":"http://x/halo.zip","size":"3.0G"},{"name":"Forza","url":"http://x/forza.zip","size":"40.0G"}]}"#,
+        );
         let cat = NativeCatalog {
-            sources_file: root.join("systems_list.json"), games_folder: root.join("games"),
-            images_folder: root.join("images"), languages_folder: root.join("languages"),
-            roms_folder: None, show_unsupported: true, default_language: "en".into(), python: None,
+            sources_file: root.join("systems_list.json"),
+            games_folder: root.join("games"),
+            images_folder: root.join("images"),
+            languages_folder: root.join("languages"),
+            roms_folder: None,
+            show_unsupported: true,
+            default_language: "en".into(),
+            python: None,
         };
         let v = cat.get_json("/api/games/xbox").await.unwrap();
         assert_eq!(v["count"], 2);
@@ -893,14 +999,25 @@ mod tests {
         // Gerçek senaryo: games dosyası platform ADIYLA adlandırılmış, sorgu folder ile gelir.
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        write(&root.join("systems_list.json"),
-            r#"[{"platform_name":"3DO Interactive Multiplayer (Archive)","folder":"3do"}]"#);
-        write(&root.join("games").join("3DO Interactive Multiplayer (Archive).json"),
-            r#"[["Almanac","http://x/a.chd","382.0M"]]"#);
+        write(
+            &root.join("systems_list.json"),
+            r#"[{"platform_name":"3DO Interactive Multiplayer (Archive)","folder":"3do"}]"#,
+        );
+        write(
+            &root
+                .join("games")
+                .join("3DO Interactive Multiplayer (Archive).json"),
+            r#"[["Almanac","http://x/a.chd","382.0M"]]"#,
+        );
         let cat = NativeCatalog {
-            sources_file: root.join("systems_list.json"), games_folder: root.join("games"),
-            images_folder: root.join("images"), languages_folder: root.join("languages"),
-            roms_folder: None, show_unsupported: true, default_language: "en".into(), python: None,
+            sources_file: root.join("systems_list.json"),
+            games_folder: root.join("games"),
+            images_folder: root.join("images"),
+            languages_folder: root.join("languages"),
+            roms_folder: None,
+            show_unsupported: true,
+            default_language: "en".into(),
+            python: None,
         };
         // WebUI folder ("3do") ile sorgular:
         let v = cat.get_json("/api/games/3do").await.unwrap();
@@ -935,13 +1052,19 @@ mod tests {
             python: None,
         };
         let v = cat.get_json("/api/platforms").await.unwrap();
-        assert_eq!(v["count"], 2, "tüm platformlar (name!=folder dahil) yüklenmeli");
+        assert_eq!(
+            v["count"], 2,
+            "tüm platformlar (name!=folder dahil) yüklenmeli"
+        );
         let plats = v["platforms"].as_array().unwrap();
         let gb = plats
             .iter()
             .find(|p| p["platform_name"] == "Game Boy")
             .expect("Game Boy drop olmamalı");
-        assert_eq!(gb["games_count"], 1, "gb.json (folder ile isimli) çözülmeli");
+        assert_eq!(
+            gb["games_count"], 1,
+            "gb.json (folder ile isimli) çözülmeli"
+        );
     }
 
     #[tokio::test]
@@ -979,7 +1102,10 @@ mod tests {
         write(&root.join("games").join("snes.json"), r#"{"games":[]}"#);
 
         // Diskte kurulu bir ROM: normalize("Super Mario Bros") == "supermariobros".
-        write(&root.join("roms").join("nes").join("Super Mario Bros.nes"), b"ROM");
+        write(
+            &root.join("roms").join("nes").join("Super Mario Bros.nes"),
+            b"ROM",
+        );
 
         let cat = NativeCatalog {
             sources_file: root.join("systems_list.json"),
@@ -998,7 +1124,10 @@ mod tests {
             Some(&["Super Mario Bros".to_string()][..]),
             "diskteki ROM kurulu oyun olarak bulunmalı"
         );
-        assert!(installed.get("SNES").is_none(), "ROM'suz platform boş olmalı");
+        assert!(
+            installed.get("SNES").is_none(),
+            "ROM'suz platform boş olmalı"
+        );
 
         let statuses = cat.game_statuses();
         let st = statuses["statuses"].as_object().unwrap();
@@ -1009,4 +1138,3 @@ mod tests {
         assert_eq!(entry["name"], "Super Mario Bros");
     }
 }
-

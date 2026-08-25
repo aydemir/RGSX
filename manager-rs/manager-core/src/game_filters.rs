@@ -20,9 +20,8 @@ pub const REGIONS: &[&str] = &[
 ];
 
 /// Varsayılan bölge öncelik sırası (Python `GameFilters.region_priority`).
-pub const DEFAULT_REGION_PRIORITY: &[&str] = &[
-    "USA", "Canada", "World", "Europe", "Japan", "Other",
-];
+pub const DEFAULT_REGION_PRIORITY: &[&str] =
+    &["USA", "Canada", "World", "Europe", "Japan", "Other"];
 
 /// Filtrelenebilir oyun kaydı (Python `Game` tuple `(name, url, size)` karşılığı).
 #[derive(Debug, Clone)]
@@ -99,9 +98,15 @@ impl GameFilters {
             .get("hide_downloaded")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        self.regex_mode = d.get("regex_mode").and_then(|v| v.as_bool()).unwrap_or(false);
+        self.regex_mode = d
+            .get("regex_mode")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if let Some(arr) = d.get("region_priority").and_then(|v| v.as_array()) {
-            let v: Vec<String> = arr.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+            let v: Vec<String> = arr
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect();
             if !v.is_empty() {
                 self.region_priority = v;
             }
@@ -123,10 +128,7 @@ impl GameFilters {
     /// En az bir filtre aktif mi (Python `is_active` parity'si).
     pub fn is_active(&self) -> bool {
         let has_exclude = self.region_filters.values().any(|s| s == "exclude");
-        has_exclude
-            || self.hide_non_release
-            || self.one_rom_per_game
-            || self.hide_downloaded
+        has_exclude || self.hide_non_release || self.one_rom_per_game || self.hide_downloaded
     }
 
     /// Tüm filtreleri sıfırlar (Python `reset` parity'si).
@@ -173,9 +175,12 @@ impl GameFilters {
         for g in games {
             if has_excl {
                 let gr = get_game_regions(&g.name);
-                let included = gr
-                    .iter()
-                    .any(|r| self.region_filters.get(r).map(|s| s == "include").unwrap_or(true));
+                let included = gr.iter().any(|r| {
+                    self.region_filters
+                        .get(r)
+                        .map(|s| s == "include")
+                        .unwrap_or(true)
+                });
                 if !included {
                     continue;
                 }
@@ -340,7 +345,16 @@ pub fn get_game_regions(name: &str) -> Vec<String> {
     }
 
     // Diğer bölgeler -> Other
-    for w in ["AUSTRALIA", "ASIA", "BRAZIL", "CHINA", "RUSSIA", "SCANDINAVIA", "SPAIN", "ITALY"] {
+    for w in [
+        "AUSTRALIA",
+        "ASIA",
+        "BRAZIL",
+        "CHINA",
+        "RUSSIA",
+        "SCANDINAVIA",
+        "SPAIN",
+        "ITALY",
+    ] {
         if contains_word(&name_up, w) {
             push_unique(&mut regions, "Other");
             break;
@@ -391,19 +405,25 @@ mod tests {
 
     #[test]
     fn regions_from_name() {
-        assert_eq!(get_game_regions("Super Mario (USA)"), vec!["USA".to_string()]);
-        assert_eq!(get_game_regions("Mega Man (EU)"), vec!["Europe".to_string()]);
+        assert_eq!(
+            get_game_regions("Super Mario (USA)"),
+            vec!["USA".to_string()]
+        );
+        assert_eq!(
+            get_game_regions("Mega Man (EU)"),
+            vec!["Europe".to_string()]
+        );
         assert_eq!(
             get_game_regions("Game (Fr,De)"),
             vec!["France".to_string(), "Germany".to_string()]
         );
         // EN yalnız başına belirsiz -> France (EU/EUR yok)
-        assert_eq!(get_game_regions("Zelda (En,Fr)"), vec!["France".to_string()]);
-        // EN + EU -> Europe
         assert_eq!(
-            get_game_regions("Game (En,Eu)"),
-            vec!["Europe".to_string()]
+            get_game_regions("Zelda (En,Fr)"),
+            vec!["France".to_string()]
         );
+        // EN + EU -> Europe
+        assert_eq!(get_game_regions("Game (En,Eu)"), vec!["Europe".to_string()]);
         assert_eq!(get_game_regions("Sonic (World)"), vec!["World".to_string()]);
         assert_eq!(get_game_regions("JRPG (Japan)"), vec!["Japan".to_string()]);
         // bölge yok -> Other
@@ -435,7 +455,8 @@ mod tests {
     #[test]
     fn apply_filters_region_exclude() {
         let mut f = GameFilters::new();
-        f.region_filters.insert("Europe".to_string(), "exclude".to_string());
+        f.region_filters
+            .insert("Europe".to_string(), "exclude".to_string());
         let games = vec![g("A (USA)"), g("B (Europe)"), g("C (World)")];
         let out = f.apply_filters(&games, |_| false);
         let names: Vec<&str> = out.iter().map(|x| x.name.as_str()).collect();
@@ -474,7 +495,8 @@ mod tests {
     #[test]
     fn load_and_to_dict_roundtrip() {
         let mut f = GameFilters::new();
-        f.region_filters.insert("Europe".to_string(), "exclude".to_string());
+        f.region_filters
+            .insert("Europe".to_string(), "exclude".to_string());
         f.hide_non_release = true;
         f.one_rom_per_game = true;
         let v = f.to_dict();

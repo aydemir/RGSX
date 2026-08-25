@@ -42,7 +42,13 @@ pub fn sse_event(event_type: &str, data: &Value) -> String {
 /// Snapshot yükü (`_build_snapshot`, rgsx_manager.py:86-109).
 ///
 /// Anahtarlar Python dict sırasıyla korunur (okuyucu dahil görünürlük).
-pub fn snapshot(history: &Value, queue: &Value, active: bool, progress: &Value, downloaded: &Value) -> Value {
+pub fn snapshot(
+    history: &Value,
+    queue: &Value,
+    active: bool,
+    progress: &Value,
+    downloaded: &Value,
+) -> Value {
     json!({
         "history": history,
         "queue": queue,
@@ -98,7 +104,9 @@ pub fn strip_history_error_noise(text: &str) -> String {
     }
     out = out.trim().to_string();
     while matches!(out.chars().last(), Some('.') | Some(':')) {
-        out = out[..out.len() - 1].trim_end_matches(['.', ':']).to_string();
+        out = out[..out.len() - 1]
+            .trim_end_matches(['.', ':'])
+            .to_string();
     }
     out.trim().to_string()
 }
@@ -118,7 +126,10 @@ mod tests {
 
     #[test]
     fn error_shape_matches_python() {
-        assert_eq!(error("Route non trouvée"), json!({ "success": false, "error": "Route non trouvée" }));
+        assert_eq!(
+            error("Route non trouvée"),
+            json!({ "success": false, "error": "Route non trouvée" })
+        );
     }
 
     #[test]
@@ -127,7 +138,10 @@ mod tests {
         assert!(event.starts_with("event: snapshot\n"), "got: {event}");
         assert!(event.contains("data: "));
         let data_part = event.split("data: ").nth(1).unwrap().trim();
-        assert_eq!(serde_json::from_str::<Value>(data_part).unwrap(), json!({"active": false}));
+        assert_eq!(
+            serde_json::from_str::<Value>(data_part).unwrap(),
+            json!({"active": false})
+        );
         assert!(event.ends_with("\n\n"));
     }
 
@@ -135,7 +149,10 @@ mod tests {
     fn sse_event_keeps_all_keys() {
         let snap = snapshot(&json!([]), &json!([]), false, &json!({}), &json!({}));
         for key in ["history", "queue", "active", "progress", "downloaded"] {
-            assert!(snap.as_object().unwrap().contains_key(key), "missing key {key}");
+            assert!(
+                snap.as_object().unwrap().contains_key(key),
+                "missing key {key}"
+            );
         }
         let text = sse_event("snapshot", &snap);
         assert!(text.starts_with("event: snapshot\n"));

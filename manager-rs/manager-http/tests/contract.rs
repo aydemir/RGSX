@@ -38,7 +38,11 @@ async fn call_get(app: Router, path: &str) -> (StatusCode, Vec<(String, String)>
     call_response(res).await
 }
 
-async fn call_post(app: Router, path: &str, body: Value) -> (StatusCode, Vec<(String, String)>, Value) {
+async fn call_post(
+    app: Router,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Vec<(String, String)>, Value) {
     let body_bytes = body.to_string();
     let res = app
         .oneshot(
@@ -61,13 +65,19 @@ async fn call_response(
     let headers: Vec<(String, String)> = res
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                v.to_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     let value = if bytes.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+        serde_json::from_slice(&bytes)
+            .unwrap_or(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
     };
     (status, headers, value)
 }
@@ -93,14 +103,22 @@ async fn call_post_raw(
     let headers: Vec<(String, String)> = res
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                v.to_str().unwrap_or_default().to_string(),
+            )
+        })
         .collect();
     let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
     (status, headers, bytes)
 }
 
 fn has_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+    headers
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
 }
 
 /// Bridge/placeholder/proxy sözleşme testleri için native DDL yolunu kapatır
@@ -120,7 +138,9 @@ fn disable_native_download() {
 async fn test_root_returns_html() {
     let (status, headers, text) = call_get(empty_app(), "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(has_header(&headers, "content-type").unwrap().contains("text/html"));
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("text/html"));
     let text = match text {
         Value::String(s) => s,
         other => other.to_string(),
@@ -183,8 +203,14 @@ async fn test_languages_shape() {
     let langs = &body["languages"];
     assert!(langs.is_array(), "languages must be an array");
     let arr = langs.as_array().unwrap();
-    assert!(arr.contains(&json!("en")), "en must be a supported language");
-    assert!(arr.contains(&json!("tr")), "tr must be a supported language");
+    assert!(
+        arr.contains(&json!("en")),
+        "en must be a supported language"
+    );
+    assert!(
+        arr.contains(&json!("tr")),
+        "tr must be a supported language"
+    );
 }
 
 #[tokio::test]
@@ -198,8 +224,14 @@ async fn test_scan_shape() {
     assert_eq!(body["success"], json!(true));
     assert!(body["root"].is_string(), "root must be a string");
     assert!(body["platforms"].is_array(), "platforms must be an array");
-    assert!(body["total_bytes"].is_number(), "total_bytes must be a number");
-    assert!(body["total_files"].is_number(), "total_files must be a number");
+    assert!(
+        body["total_bytes"].is_number(),
+        "total_bytes must be a number"
+    );
+    assert!(
+        body["total_files"].is_number(),
+        "total_files must be a number"
+    );
     let disk = &body["disk"];
     assert!(disk["total"].is_number(), "disk.total must be a number");
     assert!(disk["used"].is_number(), "disk.used must be a number");
@@ -218,7 +250,10 @@ async fn test_es_input_shape() {
         "es-input response must carry a boolean `found`"
     );
     if body["found"].as_bool() == Some(true) {
-        assert!(body["deviceName"].is_string(), "deviceName must be a string");
+        assert!(
+            body["deviceName"].is_string(),
+            "deviceName must be a string"
+        );
         assert!(body["guid"].is_string(), "guid must be a string");
         assert!(body["actions"].is_object(), "actions must be an object");
         assert!(body["rgsx"].is_object(), "rgsx map must be an object");
@@ -336,7 +371,11 @@ async fn test_browse_directories_root() {
 
 #[tokio::test]
 async fn test_browse_directories_missing_path() {
-    let (status, _, body) = call_get(empty_app(), "/api/browse-directories?path=/chemin/nonexistant-xyz").await;
+    let (status, _, body) = call_get(
+        empty_app(),
+        "/api/browse-directories?path=/chemin/nonexistant-xyz",
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["success"], json!(false));
     assert_eq!(body["error"], json!("Le chemin spécifié n'existe pas"));
@@ -346,7 +385,9 @@ async fn test_browse_directories_missing_path() {
 async fn test_platform_image_not_found() {
     let (status, headers, body) = call_get(empty_app(), "/api/image/NES").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(has_header(&headers, "content-type").unwrap().contains("image/png"));
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("image/png"));
     assert!(body.is_string());
     assert!(body.as_str().unwrap().contains("PNG"));
 }
@@ -355,7 +396,9 @@ async fn test_platform_image_not_found() {
 async fn test_favicon_served() {
     let (status, headers, _) = call_get(empty_app(), "/api/favicon").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(has_header(&headers, "content-type").unwrap().contains("image/x-icon"));
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("image/x-icon"));
 }
 
 #[tokio::test]
@@ -384,7 +427,10 @@ async fn test_update_cache_no_files() {
 #[tokio::test]
 async fn test_cors_header_on_json() {
     let (_, headers, _) = call_get(empty_app(), "/api/platforms").await;
-    assert_eq!(has_header(&headers, "access-control-allow-origin"), Some("*"));
+    assert_eq!(
+        has_header(&headers, "access-control-allow-origin"),
+        Some("*")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -404,15 +450,24 @@ async fn test_download_missing_params() {
 
 #[tokio::test]
 async fn test_download_invalid_index() {
-    let (status, _, body) = call_post(empty_app(), "/api/download", json!({"platform": "NES", "game_index": 0})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/download",
+        json!({"platform": "NES", "game_index": 0}),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], json!("Index de jeu invalide: 0"));
 }
 
 #[tokio::test]
 async fn test_download_game_name_not_found() {
-    let (status, _, body) =
-        call_post(empty_app(), "/api/download", json!({"platform": "NES", "game_name": "Introuvable"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/download",
+        json!({"platform": "NES", "game_name": "Introuvable"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], json!("Jeu non trouvé: Introuvable"));
 }
@@ -427,8 +482,12 @@ async fn test_cancel_missing_url() {
 
 #[tokio::test]
 async fn test_cancel_unknown_url() {
-    let (status, _, body) =
-        call_post(empty_app(), "/api/cancel", json!({"url": "https://exemple.invalid/rom.zip"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/cancel",
+        json!({"url": "https://exemple.invalid/rom.zip"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["message"], json!("Téléchargement annulé"));
@@ -445,13 +504,20 @@ async fn test_cancel_with_bridge_forwards_task_id() {
     });
     let app = app_with_bridge(bridge);
 
-    let (status, _, body) =
-        call_post(app, "/api/cancel", json!({"url": "https://exemple.invalid/rom.zip", "task_id": "t1"})).await;
+    let (status, _, body) = call_post(
+        app,
+        "/api/cancel",
+        json!({"url": "https://exemple.invalid/rom.zip", "task_id": "t1"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["canceled"], json!(true));
     assert_eq!(body["task_id"], json!("t1"));
-    assert_eq!(calls.lock().unwrap().as_slice(), &[("cancel_torrent".to_string(), "t1".to_string())]);
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &[("cancel_torrent".to_string(), "t1".to_string())]
+    );
 }
 
 /// Gap-3: bridge varken `/api/cancel` task_id yoksa `cancel_all`'a düşer.
@@ -463,11 +529,18 @@ async fn test_cancel_with_bridge_no_task_forwards_cancel_all() {
     });
     let app = app_with_bridge(bridge);
 
-    let (status, _, body) =
-        call_post(app, "/api/cancel", json!({"url": "https://exemple.invalid/rom.zip"})).await;
+    let (status, _, body) = call_post(
+        app,
+        "/api/cancel",
+        json!({"url": "https://exemple.invalid/rom.zip"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["canceled"], json!(true));
-    assert_eq!(calls.lock().unwrap().as_slice(), &[("cancel_all".to_string(), String::new())]);
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &[("cancel_all".to_string(), String::new())]
+    );
 }
 
 #[tokio::test]
@@ -484,7 +557,10 @@ async fn test_queue_clear_empty() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["cleared_count"], json!(0));
-    assert_eq!(body["message"], json!("0 éléments supprimés — tous les téléchargements annulés"));
+    assert_eq!(
+        body["message"],
+        json!("0 éléments supprimés — tous les téléchargements annulés")
+    );
 }
 
 #[tokio::test]
@@ -497,7 +573,8 @@ async fn test_queue_remove_missing_task_id() {
 
 #[tokio::test]
 async fn test_queue_remove_not_found() {
-    let (status, _, body) = call_post(empty_app(), "/api/queue/remove", json!({"task_id": "xyz"})).await;
+    let (status, _, body) =
+        call_post(empty_app(), "/api/queue/remove", json!({"task_id": "xyz"})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["success"], json!(false));
     assert_eq!(body["error"], json!("Élément non trouvé: xyz"));
@@ -507,7 +584,12 @@ async fn test_queue_remove_not_found() {
 async fn test_queue_remove_found() {
     let mut data = StateData::empty();
     data.queue = vec![json!({"task_id": "t1", "game_name": "Jeu"})];
-    let (status, _, body) = call_post(app_with(data), "/api/queue/remove", json!({"task_id": "t1"})).await;
+    let (status, _, body) = call_post(
+        app_with(data),
+        "/api/queue/remove",
+        json!({"task_id": "t1"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["task_id"], json!("t1"));
@@ -523,7 +605,12 @@ async fn test_settings_missing_param() {
 
 #[tokio::test]
 async fn test_settings_post() {
-    let (status, _, body) = call_post(empty_app(), "/api/settings", json!({"settings": {"dummy": 1}})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/settings",
+        json!({"settings": {"dummy": 1}}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
 }
@@ -552,8 +639,12 @@ async fn test_settings_native_roundtrip() {
     assert!(body["system_info"]["system"].is_string());
 
     // POST geçersiz (invariant ihlali) → 400.
-    let (bad_status, _, bad) =
-        call_post(app.clone(), "/api/settings", json!({"settings": {"max_simultaneous_downloads": 0}})).await;
+    let (bad_status, _, bad) = call_post(
+        app.clone(),
+        "/api/settings",
+        json!({"settings": {"max_simultaneous_downloads": 0}}),
+    )
+    .await;
     assert_eq!(bad_status, StatusCode::BAD_REQUEST);
     assert!(!bad["success"].as_bool().unwrap_or(true));
 
@@ -586,7 +677,12 @@ async fn test_settings_native_roundtrip() {
 
 #[tokio::test]
 async fn test_save_filters() {
-    let (status, _, body) = call_post(empty_app(), "/api/save_filters", json!({"region_filters": {}})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/save_filters",
+        json!({"region_filters": {}}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["message"], json!("Filtres sauvegardés"));
@@ -604,9 +700,21 @@ async fn test_game_filters() {
     f.region_filters
         .insert("Europe".to_string(), "exclude".to_string());
     let games = vec![
-        FilteredGame { name: "A (USA)".into(), url: "u1".into(), size: 0 },
-        FilteredGame { name: "B (Europe)".into(), url: "u2".into(), size: 0 },
-        FilteredGame { name: "C (World)".into(), url: "u3".into(), size: 0 },
+        FilteredGame {
+            name: "A (USA)".into(),
+            url: "u1".into(),
+            size: 0,
+        },
+        FilteredGame {
+            name: "B (Europe)".into(),
+            url: "u2".into(),
+            size: 0,
+        },
+        FilteredGame {
+            name: "C (World)".into(),
+            url: "u3".into(),
+            size: 0,
+        },
     ];
     let out = f.apply_filters(&games, |_| false);
     let names: Vec<&str> = out.iter().map(|g| g.name.as_str()).collect();
@@ -616,8 +724,16 @@ async fn test_game_filters() {
     let mut f2 = GameFilters::new();
     f2.one_rom_per_game = true;
     let games2 = vec![
-        FilteredGame { name: "Cool (Europe)".into(), url: "e".into(), size: 0 },
-        FilteredGame { name: "Cool (USA)".into(), url: "u".into(), size: 0 },
+        FilteredGame {
+            name: "Cool (Europe)".into(),
+            url: "e".into(),
+            size: 0,
+        },
+        FilteredGame {
+            name: "Cool (USA)".into(),
+            url: "u".into(),
+            size: 0,
+        },
     ];
     let out2 = f2.apply_filters(&games2, |_| false);
     assert_eq!(out2.len(), 1);
@@ -627,8 +743,16 @@ async fn test_game_filters() {
     let mut f3 = GameFilters::new();
     f3.hide_non_release = true;
     let games3 = vec![
-        FilteredGame { name: "Real (USA)".into(), url: "r".into(), size: 0 },
-        FilteredGame { name: "Leak (Beta)".into(), url: "b".into(), size: 0 },
+        FilteredGame {
+            name: "Real (USA)".into(),
+            url: "r".into(),
+            size: 0,
+        },
+        FilteredGame {
+            name: "Leak (Beta)".into(),
+            url: "b".into(),
+            size: 0,
+        },
     ];
     let out3 = f3.apply_filters(&games3, |_| false);
     assert_eq!(out3.len(), 1);
@@ -692,11 +816,18 @@ async fn test_download_direct_url_success() {
 #[tokio::test]
 async fn test_download_direct_url_missing_game_name() {
     disable_native_download();
-    let (status, _, body) =
-        call_post(empty_app(), "/api/download", json!({"url": "https://exemple.invalid/rom.zip", "platform": "NES"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/download",
+        json!({"url": "https://exemple.invalid/rom.zip", "platform": "NES"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["success"], json!(false));
-    assert_eq!(body["error"], json!("Paramètre manquant: game_name requis avec url"));
+    assert_eq!(
+        body["error"],
+        json!("Paramètre manquant: game_name requis avec url")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -715,7 +846,11 @@ impl manager_bridge::TorrentBackend for FakeEngine {
         "fake"
     }
 
-    async fn call(&self, method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+    async fn call(
+        &self,
+        method: &str,
+        _params: Value,
+    ) -> Result<Value, manager_bridge::BridgeError> {
         Err(manager_bridge::BridgeError::Rpc {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -725,7 +860,10 @@ impl manager_bridge::TorrentBackend for FakeEngine {
     async fn shutdown(&self) {}
 
     async fn get_app_paths(&self) -> Result<(String, String), manager_bridge::BridgeError> {
-        Ok(("/tmp/fake_downloads".to_string(), "/tmp/fake_logs".to_string()))
+        Ok((
+            "/tmp/fake_downloads".to_string(),
+            "/tmp/fake_logs".to_string(),
+        ))
     }
 
     async fn download_torrent(
@@ -754,7 +892,11 @@ impl manager_bridge::TorrentBackend for FakeCancelEngine {
         "fake-cancel"
     }
 
-    async fn call(&self, method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+    async fn call(
+        &self,
+        method: &str,
+        _params: Value,
+    ) -> Result<Value, manager_bridge::BridgeError> {
         Err(manager_bridge::BridgeError::Rpc {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -772,7 +914,10 @@ impl manager_bridge::TorrentBackend for FakeCancelEngine {
     }
 
     async fn cancel_all(&self) -> Result<usize, manager_bridge::BridgeError> {
-        self.calls.lock().unwrap().push(("cancel_all".to_string(), String::new()));
+        self.calls
+            .lock()
+            .unwrap()
+            .push(("cancel_all".to_string(), String::new()));
         Ok(1)
     }
 }
@@ -798,8 +943,9 @@ fn app_with_bridge(bridge: Arc<dyn manager_bridge::TorrentBackend>) -> Router {
 async fn test_download_with_bridge_forwards_to_engine() {
     disable_native_download();
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let bridge: Arc<dyn manager_bridge::TorrentBackend> =
-        Arc::new(FakeEngine { calls: calls.clone() });
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FakeEngine {
+        calls: calls.clone(),
+    });
     let app = app_with_bridge(bridge);
 
     let (status, _, body) = call_post(
@@ -842,8 +988,9 @@ async fn test_download_with_bridge_forwards_to_engine() {
 #[tokio::test]
 async fn test_download_torrent_scheme_intercepts_with_bridge_and_catalog() {
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let bridge: Arc<dyn manager_bridge::TorrentBackend> =
-        Arc::new(FakeEngine { calls: calls.clone() });
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FakeEngine {
+        calls: calls.clone(),
+    });
 
     let mut state = AppState::empty();
     state.bridge = Some(bridge);
@@ -891,7 +1038,11 @@ impl manager_bridge::TorrentBackend for FakeProgressEngine {
         "fake-progress"
     }
 
-    async fn call(&self, _method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+    async fn call(
+        &self,
+        _method: &str,
+        _params: Value,
+    ) -> Result<Value, manager_bridge::BridgeError> {
         Err(manager_bridge::BridgeError::Rpc {
             code: -32601,
             message: "Method not found".to_string(),
@@ -918,7 +1069,10 @@ impl manager_bridge::TorrentBackend for FakeProgressEngine {
                 paused: false,
             };
             // Engine'in aldığı olayı kaydet (handler'ın callback'inin çalıştığını kanıtlar).
-            self.events.lock().unwrap().push((ev.downloaded, ev.total, ev.speed, ev.finished));
+            self.events
+                .lock()
+                .unwrap()
+                .push((ev.downloaded, ev.total, ev.speed, ev.finished));
             cb(ev);
         }
         Ok(dest_path.to_path_buf())
@@ -928,8 +1082,9 @@ impl manager_bridge::TorrentBackend for FakeProgressEngine {
 #[tokio::test]
 async fn test_download_streams_progress_callback() {
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let engine: Arc<dyn manager_bridge::TorrentBackend> =
-        Arc::new(FakeProgressEngine { events: events.clone() });
+    let engine: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FakeProgressEngine {
+        events: events.clone(),
+    });
 
     let data = Arc::new(std::sync::RwLock::new(StateData::empty()));
     let mut state = AppState::empty();
@@ -984,8 +1139,9 @@ async fn test_download_streams_progress_callback() {
 async fn test_download_non_torrent_url_still_proxies_with_catalog() {
     disable_native_download();
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let bridge: Arc<dyn manager_bridge::TorrentBackend> =
-        Arc::new(FakeEngine { calls: calls.clone() });
+    let bridge: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FakeEngine {
+        calls: calls.clone(),
+    });
 
     let mut state = AppState::empty();
     state.bridge = Some(bridge);
@@ -1002,14 +1158,21 @@ async fn test_download_non_torrent_url_still_proxies_with_catalog() {
     // Proxy yanıtı: FakeCatalog echo döndürür (engine değil).
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["route"], json!("/api/download"));
-    assert!(calls.lock().unwrap().is_empty(), "düz http url engine'e düşmemeli");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "düz http url engine'e düşmemeli"
+    );
 }
 
 #[tokio::test]
 async fn test_download_bridge_none_keeps_placeholder() {
     disable_native_download();
-    let (status, _, body) =
-        call_post(empty_app(), "/api/download", json!({"url": "https://exemple.invalid/rom.zip", "game_name": "Rom", "platform": "NES"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/download",
+        json!({"url": "https://exemple.invalid/rom.zip", "game_name": "Rom", "platform": "NES"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["queued"], json!(true));
@@ -1026,7 +1189,8 @@ async fn test_finalize_download_updates_state() {
             "task_id": "web_123", "game_name": "Rom", "platform": "NES",
             "status": "Queued", "progress": 0,
         }));
-        data.queue.push(json!({ "task_id": "web_123", "status": "Queued" }));
+        data.queue
+            .push(json!({ "task_id": "web_123", "status": "Queued" }));
     }
     manager_http::api::finalize_download_in_state(
         &state,
@@ -1045,7 +1209,10 @@ async fn test_finalize_download_updates_state() {
         assert_eq!(data.history[0]["progress"], json!(100));
         assert!(data.queue.is_empty(), "kuyruk temizlenmeli");
         assert_eq!(data.downloaded["NES"], json!(["Rom"]));
-        assert_eq!(data.progress["https://exemple.invalid/rom.zip"]["status"], json!("Download_OK"));
+        assert_eq!(
+            data.progress["https://exemple.invalid/rom.zip"]["status"],
+            json!("Download_OK")
+        );
     }
 
     // Err sonucu status Erreur + downloaded'a eklenmez.
@@ -1062,7 +1229,10 @@ async fn test_finalize_download_updates_state() {
     {
         let data = state.read();
         assert_eq!(data.history[0]["status"], json!("Download_OK"));
-        assert!(data.downloaded.get("SNES").is_none(), "hata SNES'e eklenmemeli");
+        assert!(
+            data.downloaded.get("SNES").is_none(),
+            "hata SNES'e eklenmemeli"
+        );
     }
 }
 
@@ -1074,7 +1244,11 @@ fn test_dest_path_for_uses_url_basename_when_known_ext() {
         std::path::PathBuf::from("/tmp/dl/rom.zip")
     );
     assert_eq!(
-        manager_http::api::dest_path_for(root, "https://exemple.invalid/console/pack.torrent", "Pack"),
+        manager_http::api::dest_path_for(
+            root,
+            "https://exemple.invalid/console/pack.torrent",
+            "Pack"
+        ),
         std::path::PathBuf::from("/tmp/dl/pack.torrent")
     );
 }
@@ -1130,8 +1304,12 @@ async fn test_qbittorrent_start() {
 
 #[tokio::test]
 async fn test_qbittorrent_change_password_ok() {
-    let (status, _, body) =
-        call_post(empty_app(), "/api/qbittorrent/change-password", json!({"password": "nouveau-mdp-123"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/qbittorrent/change-password",
+        json!({"password": "nouveau-mdp-123"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["success"], json!(true));
     assert_eq!(body["message"], json!("ok"));
@@ -1139,8 +1317,12 @@ async fn test_qbittorrent_change_password_ok() {
 
 #[tokio::test]
 async fn test_qbittorrent_change_password_failure() {
-    let (status, _, body) =
-        call_post(empty_app(), "/api/qbittorrent/change-password", json!({"password": "x"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/qbittorrent/change-password",
+        json!({"password": "x"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["success"], json!(false));
     assert_eq!(body["message"], json!("password_too_short"));
@@ -1166,7 +1348,10 @@ async fn test_sse_event_format() {
     assert!(event.starts_with("event: snapshot\n"));
     assert!(event.contains("data: "));
     let data_part = event.split("data: ").nth(1).unwrap().trim();
-    assert_eq!(serde_json::from_str::<Value>(data_part).unwrap(), json!({"active": false}));
+    assert_eq!(
+        serde_json::from_str::<Value>(data_part).unwrap(),
+        json!({"active": false})
+    );
     assert!(event.ends_with("\n\n"));
 }
 
@@ -1174,18 +1359,22 @@ async fn test_sse_event_format() {
 async fn test_sse_handler_returns_event_stream_and_snapshot() {
     let app = empty_app();
     let res = app
-        .oneshot(Request::builder().uri("/api/events").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    assert!(
-        res.headers()
-            .get("content-type")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .contains("text/event-stream")
-    );
+    assert!(res
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("text/event-stream"));
     // SSE gövdesi sonsuz akıştır (snapshot + `rx` broadcast loop); tüm gövdeyi
     // `collect()` ile toplamak asılır. Yalnızca ilk SSE event frame'ini (snapshot)
     // oku ve event sınırına ("\n\n") kadar biriktir.
@@ -1200,7 +1389,11 @@ async fn test_sse_handler_returns_event_stream_and_snapshot() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.starts_with("event: snapshot\n"), "got: {text:?}");
     assert!(text.contains("\"history\"") && text.contains("\"queue\""));
-    assert!(text.contains("\"active\"") && text.contains("\"progress\"") && text.contains("\"downloaded\""));
+    assert!(
+        text.contains("\"active\"")
+            && text.contains("\"progress\"")
+            && text.contains("\"downloaded\"")
+    );
 }
 
 #[tokio::test]
@@ -1217,24 +1410,35 @@ fn test_snapshot_has_all_keys() {
     let data = StateData::empty();
     let snap = manager_http::sse::snapshot_json(&data);
     for key in ["history", "queue", "active", "progress", "downloaded"] {
-        assert!(snap.as_object().unwrap().contains_key(key), "missing key {key}");
+        assert!(
+            snap.as_object().unwrap().contains_key(key),
+            "missing key {key}"
+        );
     }
 }
 
 #[tokio::test]
 async fn debug_alt_syntax() {
-    let r = axum::Router::new()
-        .route("/api/g/{p}", axum::routing::get(|| async { "ok1" }));
+    let r = axum::Router::new().route("/api/g/{p}", axum::routing::get(|| async { "ok1" }));
     let res = r
-        .oneshot(axum::http::Request::builder().uri("/api/g/NES").body(Body::empty()).unwrap())
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/g/NES")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     println!("NEW-SYNTAX STATUS: {:?}", res.status());
 
-    let r2 = axum::Router::new()
-        .route("/api/g/:p", axum::routing::get(|| async { "ok2" }));
+    let r2 = axum::Router::new().route("/api/g/:p", axum::routing::get(|| async { "ok2" }));
     let res2 = r2
-        .oneshot(axum::http::Request::builder().uri("/api/g/NES").body(Body::empty()).unwrap())
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/g/NES")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     println!("OLD-SYNTAX STATUS: {:?}", res2.status());
@@ -1260,7 +1464,11 @@ fn static_app(unique: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("rgsx_static_{unique}"));
     std::fs::create_dir_all(dir.join("js")).unwrap();
     std::fs::create_dir_all(dir.join("css")).unwrap();
-    std::fs::write(dir.join("index.html"), "<h1>RGSX</h1>__CSS_VERSION__ __JS_VERSION__").unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        "<h1>RGSX</h1>__CSS_VERSION__ __JS_VERSION__",
+    )
+    .unwrap();
     std::fs::write(dir.join("js/app.js"), "console.log('rgsx');").unwrap();
     std::fs::write(dir.join("css/app.css"), "body{}").unwrap();
     dir
@@ -1271,7 +1479,9 @@ async fn test_static_index_served() {
     let dir = static_app("index_served");
     let (status, headers, text) = call_get(app_with_static(&dir), "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(has_header(&headers, "content-type").unwrap().contains("text/html"));
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("text/html"));
     let text = match text {
         Value::String(s) => s,
         other => other.to_string(),
@@ -1289,9 +1499,18 @@ async fn test_static_index_hydrates_versions() {
         Value::String(s) => s,
         other => other.to_string(),
     };
-    assert!(!text.contains("__CSS_VERSION__"), "css placeholder hydrate edilmeli");
-    assert!(!text.contains("__JS_VERSION__"), "js placeholder hydrate edilmeli");
-    assert!(!text.contains("{version}"), "version placeholder hydrate edilmeli");
+    assert!(
+        !text.contains("__CSS_VERSION__"),
+        "css placeholder hydrate edilmeli"
+    );
+    assert!(
+        !text.contains("__JS_VERSION__"),
+        "js placeholder hydrate edilmeli"
+    );
+    assert!(
+        !text.contains("{version}"),
+        "version placeholder hydrate edilmeli"
+    );
     cleanup_static_root(&dir);
 }
 
@@ -1300,7 +1519,9 @@ async fn test_static_js_served() {
     let dir = static_app("js_served");
     let (status, headers, text) = call_get(app_with_static(&dir), "/static/js/app.js").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(has_header(&headers, "content-type").unwrap().contains("javascript"));
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("javascript"));
     let text = match text {
         Value::String(s) => s,
         other => other.to_string(),
@@ -1314,7 +1535,9 @@ async fn test_static_css_served() {
     let dir = static_app("css_served");
     let (status, headers, _) = call_get(app_with_static(&dir), "/static/css/app.css").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(has_header(&headers, "content-type").unwrap().contains("text/css"));
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("text/css"));
     cleanup_static_root(&dir);
 }
 
@@ -1354,7 +1577,10 @@ async fn test_spa_settings_serves_index() {
         other => other.to_string(),
     };
     assert!(text.contains("RGSX"), "index içermeli");
-    assert!(!text.contains("__CSS_VERSION__"), "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)");
+    assert!(
+        !text.contains("__CSS_VERSION__"),
+        "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)"
+    );
     cleanup_static_root(&dir);
 }
 
@@ -1368,7 +1594,10 @@ async fn test_spa_downloads_serves_index() {
         other => other.to_string(),
     };
     assert!(text.contains("RGSX"));
-    assert!(!text.contains("__CSS_VERSION__"), "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)");
+    assert!(
+        !text.contains("__CSS_VERSION__"),
+        "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)"
+    );
     cleanup_static_root(&dir);
 }
 
@@ -1381,7 +1610,10 @@ async fn test_spa_platform_serves_index() {
         Value::String(s) => s,
         other => other.to_string(),
     };
-    assert!(!text.contains("__CSS_VERSION__"), "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)");
+    assert!(
+        !text.contains("__CSS_VERSION__"),
+        "gerçek index hydrate edilmiş olmalı (placeholder fallback değil)"
+    );
     cleanup_static_root(&dir);
 }
 
@@ -1415,11 +1647,18 @@ impl CatalogSource for FakeCatalog {
             "echo": body,
         }))
     }
-    async fn post_binary(&self, _route: &str, _body: &Value) -> Result<(Vec<u8>, String), CatalogError> {
+    async fn post_binary(
+        &self,
+        _route: &str,
+        _body: &Value,
+    ) -> Result<(Vec<u8>, String), CatalogError> {
         Ok((b"ZIPDATA".to_vec(), "application/zip".to_string()))
     }
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
-        Ok((format!("IMG:{platform}").into_bytes(), "image/png".to_string()))
+        Ok((
+            format!("IMG:{platform}").into_bytes(),
+            "image/png".to_string(),
+        ))
     }
 }
 
@@ -1516,14 +1755,20 @@ async fn test_game_status_proxied() {
 
 #[tokio::test]
 async fn test_browse_directories_proxied() {
-    let (status, _, body) = call_get(app_with_catalog(), "/api/browse-directories?path=/roms").await;
+    let (status, _, body) =
+        call_get(app_with_catalog(), "/api/browse-directories?path=/roms").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["route"], json!("/api/browse-directories?path=/roms"));
 }
 
 #[tokio::test]
 async fn test_settings_post_proxied() {
-    let (status, _, body) = call_post(app_with_catalog(), "/api/settings", json!({"settings": {"x": 1}})).await;
+    let (status, _, body) = call_post(
+        app_with_catalog(),
+        "/api/settings",
+        json!({"settings": {"x": 1}}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["route"], json!("/api/settings"));
     assert_eq!(body["echo"]["settings"]["x"], json!(1));
@@ -1531,7 +1776,8 @@ async fn test_settings_post_proxied() {
 
 #[tokio::test]
 async fn test_save_filters_proxied() {
-    let (status, _, body) = call_post(app_with_catalog(), "/api/save_filters", json!({"a": 1})).await;
+    let (status, _, body) =
+        call_post(app_with_catalog(), "/api/save_filters", json!({"a": 1})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["route"], json!("/api/save_filters"));
 }
@@ -1577,7 +1823,12 @@ async fn test_queue_clear_proxied() {
 
 #[tokio::test]
 async fn test_queue_remove_proxied() {
-    let (status, _, body) = call_post(app_with_catalog(), "/api/queue/remove", json!({"task_id": "t1"})).await;
+    let (status, _, body) = call_post(
+        app_with_catalog(),
+        "/api/queue/remove",
+        json!({"task_id": "t1"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["route"], json!("/api/queue/remove"));
 }
@@ -1621,7 +1872,10 @@ async fn test_resume_proxied() {
 async fn test_support_proxied_binary() {
     let (status, headers, body) = call_post(app_with_catalog(), "/api/support", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(has_header(&headers, "content-type"), Some("application/zip"));
+    assert_eq!(
+        has_header(&headers, "content-type"),
+        Some("application/zip")
+    );
     let bytes = match body {
         Value::String(s) => s.into_bytes(),
         other => other.to_string().into_bytes(),
@@ -1666,7 +1920,10 @@ async fn test_support_redacted_offline() {
     // hassas olmayanlar dokunulmaz.
     assert_eq!(parsed["language"], json!("tr"));
     assert_eq!(parsed["sources"]["mode"], json!("rgsx"));
-    assert_eq!(parsed["sources"]["custom_url"], json!("https://example.com"));
+    assert_eq!(
+        parsed["sources"]["custom_url"],
+        json!("https://example.com")
+    );
     // ham şifre/key ZIP içinde görünmemeli.
     assert!(!settings_text.contains("s3cret!"));
     assert!(!settings_text.contains("k123"));
@@ -1705,7 +1962,12 @@ async fn test_clear_history_preserves_active() {
 
 #[tokio::test]
 async fn test_download_batch_proxied() {
-    let (status, _, body) = call_post(app_with_catalog(), "/api/download/batch", json!({"games": []})).await;
+    let (status, _, body) = call_post(
+        app_with_catalog(),
+        "/api/download/batch",
+        json!({"games": []}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["route"], json!("/api/download/batch"));
 }
@@ -1734,7 +1996,12 @@ async fn test_mgmt_placeholder_when_no_source() {
 
 #[tokio::test]
 async fn test_qb_change_password_short_fails() {
-    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/change-password", json!({"password": "x"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/qbittorrent/change-password",
+        json!({"password": "x"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(!body["success"].as_bool().unwrap_or(true));
     assert_eq!(body["message"], json!("password_too_short"));
@@ -1742,7 +2009,12 @@ async fn test_qb_change_password_short_fails() {
 
 #[tokio::test]
 async fn test_qb_change_password_ok_placeholder() {
-    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/change-password", json!({"password": "longenough"})).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/qbittorrent/change-password",
+        json!({"password": "longenough"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["message"], json!("ok"));
 }
@@ -1768,7 +2040,12 @@ async fn test_qb_password_status_placeholder() {
 #[tokio::test]
 async fn test_qb_regenerate_password_bridge_unavailable() {
     // Köprü yok → 500 + birebir Python sözleşmesi (success:false, message).
-    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/regenerate-password", Value::Null).await;
+    let (status, _, body) = call_post(
+        empty_app(),
+        "/api/qbittorrent/regenerate-password",
+        Value::Null,
+    )
+    .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(body["success"], json!(false));
     assert!(body["message"].as_str().is_some());
@@ -1790,7 +2067,11 @@ impl manager_bridge::TorrentBackend for FlakyEngine {
     fn engine(&self) -> &'static str {
         "flaky"
     }
-    async fn call(&self, _method: &str, _params: Value) -> Result<Value, manager_bridge::BridgeError> {
+    async fn call(
+        &self,
+        _method: &str,
+        _params: Value,
+    ) -> Result<Value, manager_bridge::BridgeError> {
         Err(manager_bridge::BridgeError::Rpc {
             code: -32601,
             message: "n/a".into(),
@@ -1819,11 +2100,10 @@ impl manager_bridge::TorrentBackend for FlakyEngine {
 #[tokio::test]
 async fn test_download_retries_then_succeeds() {
     let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let engine: Arc<dyn manager_bridge::TorrentBackend> =
-        Arc::new(FlakyEngine {
-            calls: calls.clone(),
-            fail_times: 2,
-        });
+    let engine: Arc<dyn manager_bridge::TorrentBackend> = Arc::new(FlakyEngine {
+        calls: calls.clone(),
+        fail_times: 2,
+    });
     let data = Arc::new(std::sync::RwLock::new(StateData::empty()));
     let mut state = AppState::empty();
     state.bridge = Some(engine);
@@ -1856,7 +2136,11 @@ async fn test_download_retries_then_succeeds() {
     // Faz A (retry aggregation): 1 başlangıç + 2 retry = 3 engine çağrısı
     // AMA history'de yalnızca TEK entry (parent task_id) — retry'ler aynı satırı
     // günceller, yeni satır açmaz (IDM/Aria2 davranışı).
-    assert_eq!(entries.len(), 1, "retry'ler ayrı history entry açmamalı (aggregation)");
+    assert_eq!(
+        entries.len(),
+        1,
+        "retry'ler ayrı history entry açmamalı (aggregation)"
+    );
     let task_ids: Vec<&str> = entries
         .iter()
         .map(|e| e["task_id"].as_str().unwrap())

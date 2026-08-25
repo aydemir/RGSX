@@ -5,9 +5,9 @@
 pub mod contract;
 pub mod disk;
 pub mod extract;
+pub mod game_filters;
 pub mod retry;
 pub mod secrets;
+pub mod settings;
 pub mod state;
 pub mod watchdog;
-pub mod settings;
-pub mod game_filters;

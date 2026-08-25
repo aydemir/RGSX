@@ -22,7 +22,10 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ExtractError {
     #[error("io hatası ({path}): {source}")]
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("desteklenmeyen arşiv formatı: {ext}")]
     UnsupportedFormat { ext: String },
     #[error("bozuk arşiv (bütünlük testi başarısız): {reason}")]
@@ -113,20 +116,27 @@ fn is_within(dest_dir: &Path, candidate: &Path) -> bool {
 }
 
 fn extract_zip(src: &Path, dest_dir: &Path) -> Result<ExtractOutcome, ExtractError> {
-    let file = std::fs::File::open(src)
-        .map_err(|e| ExtractError::Io { path: src.to_path_buf(), source: e })?;
+    let file = std::fs::File::open(src).map_err(|e| ExtractError::Io {
+        path: src.to_path_buf(),
+        source: e,
+    })?;
     // Bütünlük testi: merkezi dizin okunamazsa bozuk arşiv (BadZipFile parity).
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| ExtractError::CorruptArchive { reason: e.to_string() })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| ExtractError::CorruptArchive {
+        reason: e.to_string(),
+    })?;
 
-    std::fs::create_dir_all(dest_dir)
-        .map_err(|e| ExtractError::Io { path: dest_dir.to_path_buf(), source: e })?;
+    std::fs::create_dir_all(dest_dir).map_err(|e| ExtractError::Io {
+        path: dest_dir.to_path_buf(),
+        source: e,
+    })?;
 
     let mut count = 0usize;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| ExtractError::CorruptArchive { reason: e.to_string() })?;
+            .map_err(|e| ExtractError::CorruptArchive {
+                reason: e.to_string(),
+            })?;
         let name = match entry.enclosed_name() {
             Some(n) => n.to_path_buf(),
             None => continue, // güvensiz isim → atla
@@ -136,17 +146,25 @@ fn extract_zip(src: &Path, dest_dir: &Path) -> Result<ExtractOutcome, ExtractErr
             continue; // path traversal
         }
         if entry.is_dir() {
-            std::fs::create_dir_all(&out)
-                .map_err(|e| ExtractError::Io { path: out.clone(), source: e })?;
+            std::fs::create_dir_all(&out).map_err(|e| ExtractError::Io {
+                path: out.clone(),
+                source: e,
+            })?;
         } else {
             if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| ExtractError::Io { path: parent.to_path_buf(), source: e })?;
+                std::fs::create_dir_all(parent).map_err(|e| ExtractError::Io {
+                    path: parent.to_path_buf(),
+                    source: e,
+                })?;
             }
-            let mut f = std::fs::File::create(&out)
-                .map_err(|e| ExtractError::Io { path: out.clone(), source: e })?;
-            std::io::copy(&mut entry, &mut f)
-                .map_err(|e| ExtractError::Io { path: out.clone(), source: e })?;
+            let mut f = std::fs::File::create(&out).map_err(|e| ExtractError::Io {
+                path: out.clone(),
+                source: e,
+            })?;
+            std::io::copy(&mut entry, &mut f).map_err(|e| ExtractError::Io {
+                path: out.clone(),
+                source: e,
+            })?;
             count += 1;
         }
     }
@@ -158,21 +176,22 @@ fn extract_zip(src: &Path, dest_dir: &Path) -> Result<ExtractOutcome, ExtractErr
 }
 
 fn extract_7z(src: &Path, dest_dir: &Path) -> Result<ExtractOutcome, ExtractError> {
-    let src_s = src
-        .to_str()
-        .ok_or_else(|| ExtractError::NotAnArchive)?;
+    let src_s = src.to_str().ok_or_else(|| ExtractError::NotAnArchive)?;
     let dest_s = dest_dir
         .to_str()
         .ok_or_else(|| ExtractError::NotAnArchive)?;
 
-    std::fs::create_dir_all(dest_dir)
-        .map_err(|e| ExtractError::Io { path: dest_dir.to_path_buf(), source: e })?;
+    std::fs::create_dir_all(dest_dir).map_err(|e| ExtractError::Io {
+        path: dest_dir.to_path_buf(),
+        source: e,
+    })?;
 
     // Çıkarma öncesi dosya sayısı (diff ile yeni açılanları sayarız).
     let before = count_files(dest_dir);
     // Bütünlük testi + çıkarma: bozuk arşivde sevenz hata verir (BadZipFile parity).
-    sevenz_rust::decompress_file(src_s, dest_s)
-        .map_err(|e| ExtractError::CorruptArchive { reason: e.to_string() })?;
+    sevenz_rust::decompress_file(src_s, dest_s).map_err(|e| ExtractError::CorruptArchive {
+        reason: e.to_string(),
+    })?;
     let after = count_files(dest_dir);
     Ok(ExtractOutcome {
         extracted_dir: dest_dir.to_path_buf(),
@@ -202,7 +221,11 @@ mod tests {
     use std::io::Write;
 
     fn tmp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("rgsx_extract_test_{}_{}", label, std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "rgsx_extract_test_{}_{}",
+            label,
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -220,8 +243,7 @@ mod tests {
         use zip::write::SimpleFileOptions;
         let file = std::fs::File::create(path).unwrap();
         let mut writer = zip::ZipWriter::new(file);
-        let opts = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         for (name, data) in entries {
             writer.start_file(*name, opts).unwrap();
             writer.write_all(data).unwrap();
@@ -236,7 +258,10 @@ mod tests {
         write_file(&zip, b"this is not a zip file at all");
         let out = dir.join("out");
         let res = extract_archive(&zip, &out);
-        assert!(matches!(res, Err(ExtractError::CorruptArchive { .. })), "got: {res:?}");
+        assert!(
+            matches!(res, Err(ExtractError::CorruptArchive { .. })),
+            "got: {res:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

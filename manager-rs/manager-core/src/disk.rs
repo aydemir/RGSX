@@ -23,7 +23,10 @@ impl std::fmt::Display for DiskError {
         match self {
             DiskError::PermissionDenied(m) => write!(f, "yazma izni yok: {m}"),
             DiskError::InsufficientSpace { free, required } => {
-                write!(f, "disk alanı yetersiz: gerekli {required} bayt, mevcut {free} bayt")
+                write!(
+                    f,
+                    "disk alanı yetersiz: gerekli {required} bayt, mevcut {free} bayt"
+                )
             }
             DiskError::QueryFailed(m) => write!(f, "disk sorgusu başarısız: {m}"),
         }

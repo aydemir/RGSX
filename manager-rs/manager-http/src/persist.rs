@@ -4,8 +4,8 @@
 //! değişiklikte atomik yaz (temp + fsync + rename). `history_path = None` ise
 //! kalıcılık atlanır (test / env set değil).
 
-use std::path::Path;
 use serde_json::Value;
+use std::path::Path;
 
 /// `history.json`'ı yükler; parse edilemezse veya dizi değilse boş döner.
 /// Geçersiz (obje olmayan) entry'ler elenir (Python `load_history` parity'si).

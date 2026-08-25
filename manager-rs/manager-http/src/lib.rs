@@ -19,11 +19,11 @@ pub mod catalog;
 pub mod catalog_bootstrap;
 pub mod es_input;
 pub mod persist;
-pub mod sse;
 pub mod self_update;
+pub mod sse;
 pub mod state;
 
-use axum::routing::{get, post, get_service};
+use axum::routing::{get, get_service, post};
 use axum::Router;
 use tower_http::services::ServeDir;
 
@@ -46,7 +46,10 @@ pub fn router(app: AppState) -> Router {
         .route("/api/game-status", get(api::game_status))
         .route("/api/history", get(api::history))
         .route("/api/queue", get(api::queue).post(api::queue_post))
-        .route("/api/settings", get(api::settings_get).post(api::settings_post))
+        .route(
+            "/api/settings",
+            get(api::settings_get).post(api::settings_post),
+        )
         .route("/api/system_info", get(api::system_info))
         .route("/api/browse-directories", get(api::browse_directories))
         .route("/api/scan", get(api::scan))
@@ -55,7 +58,10 @@ pub fn router(app: AppState) -> Router {
         .route("/api/favicon", get(api::favicon))
         .route("/api/update-cache", get(api::update_cache))
         .route("/api/manager-update", get(api::manager_update_status))
-        .route("/api/manager-update/download", post(api::manager_update_download))
+        .route(
+            "/api/manager-update/download",
+            post(api::manager_update_download),
+        )
         .route("/api/manager-update/apply", post(api::manager_update_apply))
         .route("/api/catalog/retry", post(api::catalog_retry))
         .route("/api/download", post(api::download))
@@ -71,10 +77,19 @@ pub fn router(app: AppState) -> Router {
         .route("/api/shutdown", post(api::shutdown))
         .route("/api/pause", post(api::pause))
         .route("/api/resume", post(api::resume))
-        .route("/api/qbittorrent/change-password", post(api::change_password))
+        .route(
+            "/api/qbittorrent/change-password",
+            post(api::change_password),
+        )
         .route("/api/qbittorrent/start", post(api::qb_start))
-        .route("/api/qbittorrent/password-status", get(api::qb_password_status))
-        .route("/api/qbittorrent/regenerate-password", post(api::qb_regenerate_password))
+        .route(
+            "/api/qbittorrent/password-status",
+            get(api::qb_password_status),
+        )
+        .route(
+            "/api/qbittorrent/regenerate-password",
+            post(api::qb_regenerate_password),
+        )
         .route("/api/events", get(sse::events));
 
     // Statik katman (Faz 12a): SPA sunumu. `static_root` yoksa statik kapalı.

@@ -14,8 +14,11 @@ use std::sync::{Arc, RwLock};
 static PARTIAL_SEQ: AtomicU64 = AtomicU64::new(0);
 fn unique_partial_name() -> PathBuf {
     let seq = PARTIAL_SEQ.fetch_add(1, Ordering::SeqCst);
-    std::env::temp_dir()
-        .join(format!("rgsx-manager-update-{}-{}.partial", std::process::id(), seq))
+    std::env::temp_dir().join(format!(
+        "rgsx-manager-update-{}-{}.partial",
+        std::process::id(),
+        seq
+    ))
 }
 
 use serde::{Deserialize, Serialize};
@@ -25,8 +28,8 @@ use tracing::{info, warn};
 use crate::state::{AppState, StateData};
 
 use futures_util::StreamExt;
-use sha2::{Digest, Sha256};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::io::Write;
 
 /// Self-update indirmesinin kuyruk görevi kimliği (WebUI/Python TVUI parity:
@@ -162,9 +165,15 @@ fn set_manager_stage(state: &AppState, events: &Sender<String>, stage: &str, err
                 obj.remove("error");
             }
         }
-        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let payload = state.read().manager_update.clone().unwrap_or(serde_json::Value::Null);
+    let payload = state
+        .read()
+        .manager_update
+        .clone()
+        .unwrap_or(serde_json::Value::Null);
     crate::sse::publish(events, "manager_update", &payload);
 }
 
@@ -182,19 +191,36 @@ fn cleanup_update_queue(state: &AppState) {
         obj.remove(MANAGER_UPDATE_TASK_ID);
     }
     d.active = !d.queue.is_empty();
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Self-update indirmesini **arka plan görevi** olarak başlatır (non-blocking).
 /// İndirme `data.queue`'ya girer (WebUI/Python TVUI parity → `/api/queue/remove`
 /// ile iptal), `data.progress` üzerinden ilerleme yayınlanır. Tamamlanınca SHA256
 /// doğrulanır; uyumluysa `manager_update["path"]` + `stage:"ready"` set edilir.
-pub fn start_update_download(state: AppState, events: Sender<String>, url: String, sha256: Option<String>) {
-    state.write().manager_update_cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+pub fn start_update_download(
+    state: AppState,
+    events: Sender<String>,
+    url: String,
+    sha256: Option<String>,
+) {
+    state
+        .write()
+        .manager_update_cancel
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     tokio::spawn(async move {
-        if let Err(e) = run_update_download(state.clone(), events.clone(), &url, sha256.as_deref()).await {
+        if let Err(e) =
+            run_update_download(state.clone(), events.clone(), &url, sha256.as_deref()).await
+        {
             warn!("manager self-update indirme hatası: {e}");
-            set_manager_stage(&state, &events, "failed", Some(&format!("indirme hatası: {e}")));
+            set_manager_stage(
+                &state,
+                &events,
+                "failed",
+                Some(&format!("indirme hatası: {e}")),
+            );
             cleanup_update_queue(&state);
         }
     });
@@ -218,12 +244,18 @@ async fn run_update_download(
         }));
         d.progress = serde_json::json!({ MANAGER_UPDATE_TASK_ID: { "received": 0, "total": 0, "percent": 0 } });
         d.active = true;
-        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
     set_manager_stage(&state, &events, "downloading", None);
 
     let client = reqwest::Client::new();
-    let resp = client.get(url).send().await.map_err(|e| format!("istek: {e}"))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("istek: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
@@ -238,7 +270,11 @@ async fn run_update_download(
 
     while let Some(chunk) = stream.next().await {
         // İptal sinyali (kuyruktan iptal) → temizle, başa dön.
-        if state.read().manager_update_cancel.load(std::sync::atomic::Ordering::SeqCst) {
+        if state
+            .read()
+            .manager_update_cancel
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             let _ = std::fs::remove_file(&tmp);
             cleanup_update_queue(&state);
             set_manager_stage(&state, &events, "available", None);
@@ -248,7 +284,11 @@ async fn run_update_download(
         file.write_all(&bytes).map_err(|e| format!("yazma: {e}"))?;
         hasher.update(&bytes);
         received += bytes.len() as u64;
-        let percent = if total > 0 { (received * 100 / total) as u64 } else { 0 };
+        let percent = if total > 0 {
+            (received * 100 / total) as u64
+        } else {
+            0
+        };
         {
             let mut d = state.write();
             d.progress = serde_json::json!({ MANAGER_UPDATE_TASK_ID: { "received": received, "total": total, "percent": percent } });
@@ -257,10 +297,16 @@ async fn run_update_download(
                 m["received"] = serde_json::json!(received);
                 m["total"] = serde_json::json!(total);
             }
-            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+            state
+                .dirty
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let prog = state.read().progress.clone();
-        crate::sse::publish(&events, "progress", &serde_json::json!({ "progress": prog, "active": true }));
+        crate::sse::publish(
+            &events,
+            "progress",
+            &serde_json::json!({ "progress": prog, "active": true }),
+        );
     }
 
     // SHA256 doğrula.
@@ -269,7 +315,12 @@ async fn run_update_download(
         if actual.to_lowercase() != exp.to_lowercase() {
             let _ = std::fs::remove_file(&tmp);
             cleanup_update_queue(&state);
-            set_manager_stage(&state, &events, "failed", Some(&format!("SHA256 uyumsuz (beklenen {exp}, gerçek {actual})")));
+            set_manager_stage(
+                &state,
+                &events,
+                "failed",
+                Some(&format!("SHA256 uyumsuz (beklenen {exp}, gerçek {actual})")),
+            );
             return Err("sha256 uyuşmazlığı".into());
         }
     }
@@ -289,16 +340,25 @@ async fn run_update_download(
             m["path"] = serde_json::json!(final_path.display().to_string());
             m["sha256_actual"] = serde_json::json!(actual);
         }
-        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let payload = state.read().manager_update.clone().unwrap_or(serde_json::Value::Null);
+    let payload = state
+        .read()
+        .manager_update
+        .clone()
+        .unwrap_or(serde_json::Value::Null);
     crate::sse::publish(&events, "manager_update", &payload);
     Ok(())
 }
 
 /// Self-update indirmesini iptal eder (WebUI/Python TVUI: kuyruktan iptal).
 pub fn cancel_update_download(state: &AppState) {
-    state.write().manager_update_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    state
+        .write()
+        .manager_update_cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,19 +370,36 @@ pub fn cancel_update_download(state: &AppState) {
 /// Serviste (`RGSX_SERVICE=1`) reddedilir. Gerçek replace yalnız `RGSX_SELF_APPLY=1`
 /// ile; aksi halde güvenli şekilde hata döner (henüz uygulanmadı).
 pub async fn apply_update(state: AppState, events: Sender<String>) -> Result<(), String> {
-    if std::env::var("RGSX_SERVICE").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("RGSX_SERVICE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         warn!("manager self-update: servis ortamında apply reddedildi");
         return Err("servis ortamında uygulama devre dışı (RGSX_SERVICE=1)".into());
     }
-    if std::env::var("RGSX_SELF_APPLY").map(|v| v == "1").unwrap_or(false) == false {
+    if std::env::var("RGSX_SELF_APPLY")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+        == false
+    {
         return Err("self-apply devre dışı — RGSX_SELF_APPLY=1 gerekli".into());
     }
     // SHA + versiyon kapıları (apply'da da zorunlu).
     let (path, expected_sha) = {
         let d = state.read();
-        let m = d.manager_update.clone().ok_or("indirilmiş güncelleme yok (önce indir)")?;
-        let p = m.get("path").and_then(|x| x.as_str()).map(|s| s.to_string()).ok_or("indirilmiş güncelleme yolu yok")?;
-        let s = m.get("sha256").and_then(|x| x.as_str()).map(|s| s.to_string());
+        let m = d
+            .manager_update
+            .clone()
+            .ok_or("indirilmiş güncelleme yok (önce indir)")?;
+        let p = m
+            .get("path")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
+            .ok_or("indirilmiş güncelleme yolu yok")?;
+        let s = m
+            .get("sha256")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
         (p, s)
     };
     if let Some(exp) = expected_sha {
@@ -347,7 +424,10 @@ pub async fn apply_update(state: AppState, events: Sender<String>) -> Result<(),
     std::fs::copy(&target, &old).map_err(|e| format!(".old yedek: {e}"))?;
     // Test modu: gerçek process exit yerine senkron replace + probe relaunch.
     // (Test process'ini öldürmemek ve izole kopya üzerinde çalışmak için.)
-    if std::env::var("RGSX_SELF_APPLY_TEST").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("RGSX_SELF_APPLY_TEST")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         std::fs::rename(&path, &target).map_err(|e| format!("rename: {e}"))?;
         let mut child = std::process::Command::new(&target)
             .arg("--exact")
@@ -438,7 +518,6 @@ fn replace_and_relaunch(src: &str, dst: &std::path::Path) -> Result<(), String> 
     let err = cmd.exec();
     Err(format!("execve: {err}"))
 }
-
 
 #[cfg(test)]
 mod tests {

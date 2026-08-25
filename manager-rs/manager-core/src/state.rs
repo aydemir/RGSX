@@ -331,15 +331,28 @@ mod tests {
         assert_eq!(DownloadState::Verifying.to_string(), "VERIFYING");
         assert_eq!(DownloadState::Extracting.to_string(), "EXTRACTING");
         assert_eq!(DownloadState::RetryScheduled.to_string(), "RETRY_SCHEDULED");
-        assert_eq!(DownloadState::FailedTransient.to_string(), "FAILED_TRANSIENT");
-        assert_eq!(DownloadState::FailedPermanent.to_string(), "FAILED_PERMANENT");
+        assert_eq!(
+            DownloadState::FailedTransient.to_string(),
+            "FAILED_TRANSIENT"
+        );
+        assert_eq!(
+            DownloadState::FailedPermanent.to_string(),
+            "FAILED_PERMANENT"
+        );
         assert_eq!(DownloadState::Completed.to_string(), "COMPLETED");
         assert_eq!(DownloadState::Canceled.to_string(), "CANCELED");
     }
 
     #[test]
     fn from_str_roundtrip() {
-        let manager = ["INIT", "RUNNING", "DEGRADED", "UNRESPONSIVE", "RESTARTING", "CRASHED"];
+        let manager = [
+            "INIT",
+            "RUNNING",
+            "DEGRADED",
+            "UNRESPONSIVE",
+            "RESTARTING",
+            "CRASHED",
+        ];
         for repr in manager {
             assert_eq!(ManagerState::from_str(repr).unwrap().to_string(), repr);
         }
@@ -374,7 +387,10 @@ mod tests {
     fn legacy_map_matches_python() {
         assert_eq!(state_from_legacy("Queued"), DownloadState::Queued);
         assert_eq!(state_from_legacy("Downloading"), DownloadState::Downloading);
-        assert_eq!(state_from_legacy("Téléchargement"), DownloadState::Downloading);
+        assert_eq!(
+            state_from_legacy("Téléchargement"),
+            DownloadState::Downloading
+        );
         assert_eq!(state_from_legacy("Connecting"), DownloadState::Downloading);
         assert_eq!(state_from_legacy("Paused"), DownloadState::Paused);
         assert_eq!(state_from_legacy("Converting"), DownloadState::Extracting);
@@ -388,47 +404,155 @@ mod tests {
     #[test]
     fn legacy_unknown_and_empty_default_to_downloading() {
         assert_eq!(state_from_legacy(""), DownloadState::Downloading);
-        assert_eq!(state_from_legacy("Try again later"), DownloadState::Downloading);
-        assert_eq!(state_from_legacy("SomeUnknownStatus"), DownloadState::Downloading);
-        assert_eq!(state_from_legacy("Try Slow.serv"), DownloadState::Downloading);
+        assert_eq!(
+            state_from_legacy("Try again later"),
+            DownloadState::Downloading
+        );
+        assert_eq!(
+            state_from_legacy("SomeUnknownStatus"),
+            DownloadState::Downloading
+        );
+        assert_eq!(
+            state_from_legacy("Try Slow.serv"),
+            DownloadState::Downloading
+        );
     }
 
     #[test]
     fn legacy_history_status_matches_python() {
         assert_eq!(legacy_history_status(DownloadState::Queued), "Queued");
-        assert_eq!(legacy_history_status(DownloadState::Downloading), "Téléchargement");
-        assert_eq!(legacy_history_status(DownloadState::Verifying), "Downloading");
-        assert_eq!(legacy_history_status(DownloadState::RetryScheduled), "Téléchargement");
-        assert_eq!(legacy_history_status(DownloadState::FailedTransient), "Téléchargement");
-        assert_eq!(legacy_history_status(DownloadState::FailedPermanent), "Erreur");
-        assert_eq!(legacy_history_status(DownloadState::Completed), "Download_OK");
+        assert_eq!(
+            legacy_history_status(DownloadState::Downloading),
+            "Téléchargement"
+        );
+        assert_eq!(
+            legacy_history_status(DownloadState::Verifying),
+            "Downloading"
+        );
+        assert_eq!(
+            legacy_history_status(DownloadState::RetryScheduled),
+            "Téléchargement"
+        );
+        assert_eq!(
+            legacy_history_status(DownloadState::FailedTransient),
+            "Téléchargement"
+        );
+        assert_eq!(
+            legacy_history_status(DownloadState::FailedPermanent),
+            "Erreur"
+        );
+        assert_eq!(
+            legacy_history_status(DownloadState::Completed),
+            "Download_OK"
+        );
         assert_eq!(legacy_history_status(DownloadState::Canceled), "Canceled");
     }
 
     #[test]
     fn transition_valid_table_matches_python() {
         let valid: &[((DownloadState, DownloadEvent), DownloadState)] = &[
-            ((DownloadState::Queued, DownloadEvent::Started), DownloadState::Downloading),
-            ((DownloadState::Downloading, DownloadEvent::PauseRequested), DownloadState::Paused),
-            ((DownloadState::Paused, DownloadEvent::ResumeRequested), DownloadState::Downloading),
-            ((DownloadState::Paused, DownloadEvent::CancelRequested), DownloadState::Canceled),
-            ((DownloadState::Downloading, DownloadEvent::Transitioned), DownloadState::Verifying),
-            ((DownloadState::Verifying, DownloadEvent::Transitioned), DownloadState::Extracting),
-            ((DownloadState::Verifying, DownloadEvent::Completed), DownloadState::Completed),
-            ((DownloadState::Extracting, DownloadEvent::Completed), DownloadState::Completed),
-            ((DownloadState::Downloading, DownloadEvent::Completed), DownloadState::Completed),
-            ((DownloadState::Downloading, DownloadEvent::TransientFailure), DownloadState::FailedTransient),
-            ((DownloadState::FailedTransient, DownloadEvent::RetryTriggered), DownloadState::RetryScheduled),
-            ((DownloadState::RetryScheduled, DownloadEvent::Started), DownloadState::Downloading),
-            ((DownloadState::FailedTransient, DownloadEvent::PermanentFailure), DownloadState::FailedPermanent),
-            ((DownloadState::FailedTransient, DownloadEvent::RetryExhausted), DownloadState::FailedPermanent),
-            ((DownloadState::RetryScheduled, DownloadEvent::PermanentFailure), DownloadState::FailedPermanent),
-            ((DownloadState::RetryScheduled, DownloadEvent::CancelRequested), DownloadState::Canceled),
-            ((DownloadState::Downloading, DownloadEvent::PermanentFailure), DownloadState::FailedPermanent),
-            ((DownloadState::Downloading, DownloadEvent::CancelRequested), DownloadState::Canceled),
-            ((DownloadState::Verifying, DownloadEvent::CancelRequested), DownloadState::Canceled),
-            ((DownloadState::Extracting, DownloadEvent::CancelRequested), DownloadState::Canceled),
-            ((DownloadState::FailedTransient, DownloadEvent::CancelRequested), DownloadState::Canceled),
+            (
+                (DownloadState::Queued, DownloadEvent::Started),
+                DownloadState::Downloading,
+            ),
+            (
+                (DownloadState::Downloading, DownloadEvent::PauseRequested),
+                DownloadState::Paused,
+            ),
+            (
+                (DownloadState::Paused, DownloadEvent::ResumeRequested),
+                DownloadState::Downloading,
+            ),
+            (
+                (DownloadState::Paused, DownloadEvent::CancelRequested),
+                DownloadState::Canceled,
+            ),
+            (
+                (DownloadState::Downloading, DownloadEvent::Transitioned),
+                DownloadState::Verifying,
+            ),
+            (
+                (DownloadState::Verifying, DownloadEvent::Transitioned),
+                DownloadState::Extracting,
+            ),
+            (
+                (DownloadState::Verifying, DownloadEvent::Completed),
+                DownloadState::Completed,
+            ),
+            (
+                (DownloadState::Extracting, DownloadEvent::Completed),
+                DownloadState::Completed,
+            ),
+            (
+                (DownloadState::Downloading, DownloadEvent::Completed),
+                DownloadState::Completed,
+            ),
+            (
+                (DownloadState::Downloading, DownloadEvent::TransientFailure),
+                DownloadState::FailedTransient,
+            ),
+            (
+                (
+                    DownloadState::FailedTransient,
+                    DownloadEvent::RetryTriggered,
+                ),
+                DownloadState::RetryScheduled,
+            ),
+            (
+                (DownloadState::RetryScheduled, DownloadEvent::Started),
+                DownloadState::Downloading,
+            ),
+            (
+                (
+                    DownloadState::FailedTransient,
+                    DownloadEvent::PermanentFailure,
+                ),
+                DownloadState::FailedPermanent,
+            ),
+            (
+                (
+                    DownloadState::FailedTransient,
+                    DownloadEvent::RetryExhausted,
+                ),
+                DownloadState::FailedPermanent,
+            ),
+            (
+                (
+                    DownloadState::RetryScheduled,
+                    DownloadEvent::PermanentFailure,
+                ),
+                DownloadState::FailedPermanent,
+            ),
+            (
+                (
+                    DownloadState::RetryScheduled,
+                    DownloadEvent::CancelRequested,
+                ),
+                DownloadState::Canceled,
+            ),
+            (
+                (DownloadState::Downloading, DownloadEvent::PermanentFailure),
+                DownloadState::FailedPermanent,
+            ),
+            (
+                (DownloadState::Downloading, DownloadEvent::CancelRequested),
+                DownloadState::Canceled,
+            ),
+            (
+                (DownloadState::Verifying, DownloadEvent::CancelRequested),
+                DownloadState::Canceled,
+            ),
+            (
+                (DownloadState::Extracting, DownloadEvent::CancelRequested),
+                DownloadState::Canceled,
+            ),
+            (
+                (
+                    DownloadState::FailedTransient,
+                    DownloadEvent::CancelRequested,
+                ),
+                DownloadState::Canceled,
+            ),
         ];
         assert_eq!(valid.len(), 21, "Python _TRANSITIONS 21 satır");
         for ((s, e), expected) in valid {
@@ -454,7 +578,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(allowed, 21, "yalnızca Python _TRANSITIONS'deki 21 kombinasyon geçerli");
+        assert_eq!(
+            allowed, 21,
+            "yalnızca Python _TRANSITIONS'deki 21 kombinasyon geçerli"
+        );
     }
 
     #[test]
@@ -464,7 +591,10 @@ mod tests {
             (DownloadState::Paused, DownloadEvent::Started),
             (DownloadState::Completed, DownloadEvent::Completed),
             (DownloadState::Canceled, DownloadEvent::ResumeRequested),
-            (DownloadState::FailedPermanent, DownloadEvent::RetryTriggered),
+            (
+                DownloadState::FailedPermanent,
+                DownloadEvent::RetryTriggered,
+            ),
         ] {
             assert!(transition(s, e).is_err(), "{s} + {e} yasak olmali");
         }
@@ -473,7 +603,10 @@ mod tests {
     #[test]
     fn transition_error_display() {
         let err = transition(DownloadState::Queued, DownloadEvent::PauseRequested).unwrap_err();
-        assert_eq!(err.to_string(), "Illegal transition: QUEUED + PAUSE_REQUESTED");
+        assert_eq!(
+            err.to_string(),
+            "Illegal transition: QUEUED + PAUSE_REQUESTED"
+        );
         assert!(err.to_string().contains("QUEUED"));
     }
 }

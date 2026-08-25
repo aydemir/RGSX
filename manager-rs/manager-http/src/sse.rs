@@ -14,8 +14,8 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{self, Sender};
 use tokio::time::interval;
 
 use manager_core::contract;
@@ -61,12 +61,24 @@ pub fn snapshot_json(data: &StateData) -> serde_json::Value {
     if let Some(obj) = snap.as_object_mut() {
         obj.insert("status".into(), serde_json::json!(s));
         // TASK-002-gap-32: UI'nin ağ-koptu durumunu görmesi (banner + "Ağ bekleniyor").
-        obj.insert("network_down".into(), serde_json::json!(data.network_down.load(Ordering::Relaxed)));
+        obj.insert(
+            "network_down".into(),
+            serde_json::json!(data.network_down.load(Ordering::Relaxed)),
+        );
         // Faz 2c-race: katalog bootstrap durumu TVUI'ye snapshot'ta sinyal (geç abone kurtulur).
-        obj.insert("catalog_ready".into(), serde_json::json!(data.catalog_ready.load(Ordering::Relaxed)));
-        obj.insert("catalog_error".into(), serde_json::json!(data.catalog_error));
+        obj.insert(
+            "catalog_ready".into(),
+            serde_json::json!(data.catalog_ready.load(Ordering::Relaxed)),
+        );
+        obj.insert(
+            "catalog_error".into(),
+            serde_json::json!(data.catalog_error),
+        );
         // TASK-012m: manager self-update durumu TVUI'ye snapshot'ta sinyal.
-        obj.insert("manager_update".into(), serde_json::json!(data.manager_update));
+        obj.insert(
+            "manager_update".into(),
+            serde_json::json!(data.manager_update),
+        );
     }
     snap
 }
@@ -84,7 +96,8 @@ pub async fn events(State(state): State<AppState>) -> impl IntoResponse {
         contract::sse_event("snapshot", &snapshot_json(&data))
     };
 
-    let first = futures_util::stream::once(async move { Ok::<_, axum::Error>(snapshot.into_bytes()) });
+    let first =
+        futures_util::stream::once(async move { Ok::<_, axum::Error>(snapshot.into_bytes()) });
 
     let rest = futures_util::stream::unfold(rx, |mut rx| async move {
         loop {
@@ -100,7 +113,10 @@ pub async fn events(State(state): State<AppState>) -> impl IntoResponse {
 
     (
         [
-            (header::CONTENT_TYPE, "text/event-stream; charset=utf-8".to_string()),
+            (
+                header::CONTENT_TYPE,
+                "text/event-stream; charset=utf-8".to_string(),
+            ),
             (header::CACHE_CONTROL, "no-cache".to_string()),
             (header::CONNECTION, "keep-alive".to_string()),
             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
@@ -136,7 +152,10 @@ pub async fn broadcast_loop(state: AppState) {
         // refresh). Bir `dirty` set'i atlanırsa en fazla 30s bayatlar, kalıcı
         // SSE uyumsuzluğu oluşmaz.
         if last_snapshot.elapsed() >= Duration::from_secs(30) {
-            let snap = { let d = state.read(); snapshot_json(&d) };
+            let snap = {
+                let d = state.read();
+                snapshot_json(&d)
+            };
             publish(&state.events, "snapshot", &snap);
             last_snapshot = Instant::now();
             state.dirty.store(false, Ordering::Relaxed);
@@ -160,19 +179,35 @@ pub async fn broadcast_loop(state: AppState) {
         };
         if last_history.as_deref() != Some(history.as_str()) {
             last_history = Some(history.clone());
-            publish(&state.events, "history", &json!({ "history": parse_value(&history) }));
+            publish(
+                &state.events,
+                "history",
+                &json!({ "history": parse_value(&history) }),
+            );
         }
         if last_queue.as_deref() != Some(queue.as_str()) {
             last_queue = Some(queue.clone());
-            publish(&state.events, "queue", &json!({ "queue": parse_value(&queue), "active": active }));
+            publish(
+                &state.events,
+                "queue",
+                &json!({ "queue": parse_value(&queue), "active": active }),
+            );
         }
         if last_progress.as_deref() != Some(progress.as_str()) {
             last_progress = Some(progress.clone());
-            publish(&state.events, "progress", &json!({ "progress": parse_value(&progress), "active": active }));
+            publish(
+                &state.events,
+                "progress",
+                &json!({ "progress": parse_value(&progress), "active": active }),
+            );
         }
         if last_downloaded.as_deref() != Some(downloaded.as_str()) {
             last_downloaded = Some(downloaded.clone());
-            publish(&state.events, "downloaded", &json!({ "downloaded": parse_value(&downloaded) }));
+            publish(
+                &state.events,
+                "downloaded",
+                &json!({ "downloaded": parse_value(&downloaded) }),
+            );
         }
         state.dirty.store(false, Ordering::Relaxed);
     }

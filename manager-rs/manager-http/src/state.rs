@@ -9,12 +9,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
-use tokio::sync::Semaphore;
 use tokio::sync::Notify;
+use tokio::sync::Semaphore;
 
+use crate::catalog::CatalogSource;
 use manager_bridge::TorrentBackend;
 use manager_core::state::ManagerState;
-use crate::catalog::CatalogSource;
 
 use crate::sse;
 use serde_json::json;
@@ -388,7 +388,11 @@ impl AppState {
 
     /// bridge yoksa sahte `BridgeError::Spawn` döndürür (handler'lar placeholder
     /// davranışına düşer). Varsa `call`'ı proxy eder.
-    pub async fn bridge_call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, manager_bridge::BridgeError> {
+    pub async fn bridge_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, manager_bridge::BridgeError> {
         match &self.bridge {
             Some(b) => b.call(method, params).await,
             None => Err(manager_bridge::BridgeError::Spawn(

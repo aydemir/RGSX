@@ -42,14 +42,12 @@ fn catalog_present(data_dir: &Path) -> bool {
         return false;
     }
     match std::fs::read_dir(&games) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok())
-            .any(|e| {
-                e.path()
-                    .extension()
-                    .map(|x| x.eq_ignore_ascii_case("json"))
-                    .unwrap_or(false)
-            }),
+        Ok(entries) => entries.filter_map(|e| e.ok()).any(|e| {
+            e.path()
+                .extension()
+                .map(|x| x.eq_ignore_ascii_case("json"))
+                .unwrap_or(false)
+        }),
         Err(_) => false,
     }
 }
@@ -92,7 +90,11 @@ fn mark_catalog_ready(app_data: Option<Arc<RwLock<StateData>>>, ok: bool, reason
     if let Some(d) = app_data {
         let mut g = d.write().unwrap();
         g.catalog_ready.store(ok, Ordering::Relaxed);
-        g.catalog_error = if ok { None } else { reason.map(|s| s.to_string()) };
+        g.catalog_error = if ok {
+            None
+        } else {
+            reason.map(|s| s.to_string())
+        };
     }
 }
 
@@ -101,7 +103,7 @@ pub async fn ensure_catalog_ready(
     app_data: Option<Arc<RwLock<StateData>>>,
 ) -> bool {
     let data_dir = default_data_dir();
-        if catalog_present(&data_dir) {
+    if catalog_present(&data_dir) {
         if let Some(e) = events {
             crate::sse::publish(
                 e,
@@ -154,7 +156,11 @@ pub async fn ensure_catalog_ready(
     };
 
     if let Some(e) = events {
-        crate::sse::publish(e, "catalog_update", &serde_json::json!({ "stage": "extract" }));
+        crate::sse::publish(
+            e,
+            "catalog_update",
+            &serde_json::json!({ "stage": "extract" }),
+        );
     }
 
     let ok = extract_zip(&zip_path, &data_dir);
@@ -174,7 +180,10 @@ pub async fn ensure_catalog_ready(
     mark_catalog_ready(app_data, ok, if ok { None } else { Some("extract_failed") });
 
     if ok {
-        info!("native katalog verisi indirildi/çıkarıldı: {}", data_dir.display());
+        info!(
+            "native katalog verisi indirildi/çıkarıldı: {}",
+            data_dir.display()
+        );
     } else {
         warn!("native katalog verisi kurulamadı: {}", data_dir.display());
     }
@@ -188,10 +197,7 @@ async fn download(url: &str, dest: &Path, events: Option<&Sender<String>>) -> bo
     if let Some(parent) = dest.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let client = match reqwest::Client::builder()
-        .user_agent("Mozilla/5.0")
-        .build()
-    {
+    let client = match reqwest::Client::builder().user_agent("Mozilla/5.0").build() {
         Ok(c) => c,
         Err(e) => {
             warn!("HTTP istemcisi kurulamadı: {e}");
@@ -242,7 +248,9 @@ async fn download(url: &str, dest: &Path, events: Option<&Sender<String>>) -> bo
                 };
                 let now = Instant::now();
                 if let Some(e) = events {
-                    if pct != last_pct || now.duration_since(last_send) >= Duration::from_millis(200) {
+                    if pct != last_pct
+                        || now.duration_since(last_send) >= Duration::from_millis(200)
+                    {
                         crate::sse::publish(
                             e,
                             "catalog_update",

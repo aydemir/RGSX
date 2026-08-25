@@ -49,8 +49,9 @@ pub fn redact_secrets(value: &Value) -> Value {
 /// parity'si — dosya bozuksa ham içerik eklenir).
 pub fn redact_json_text(text: &str) -> String {
     match serde_json::from_str::<Value>(text) {
-        Ok(v) => serde_json::to_string_pretty(&redact_secrets(&v))
-            .unwrap_or_else(|_| text.to_string()),
+        Ok(v) => {
+            serde_json::to_string_pretty(&redact_secrets(&v)).unwrap_or_else(|_| text.to_string())
+        }
         Err(_) => text.to_string(),
     }
 }
@@ -70,7 +71,8 @@ mod tests {
 
     #[test]
     fn redacts_nested_sensitive() {
-        let data = json!({ "sources": { "mode": "rgsx", "custom_url": "https://x", "api_key": "k123" } });
+        let data =
+            json!({ "sources": { "mode": "rgsx", "custom_url": "https://x", "api_key": "k123" } });
         let out = redact_secrets(&data);
         assert_eq!(out["sources"]["api_key"], json!(REDACTED_PLACEHOLDER));
         assert_eq!(out["sources"]["mode"], json!("rgsx"));
@@ -117,7 +119,8 @@ mod tests {
 
     #[test]
     fn json_text_redacts_and_is_pretty() {
-        let text = r#"{"language":"en","qbittorrent_webui_password":"s3cret!","sources":{"mode":"rgsx"}}"#;
+        let text =
+            r#"{"language":"en","qbittorrent_webui_password":"s3cret!","sources":{"mode":"rgsx"}}"#;
         let out = redact_json_text(text);
         assert!(out.contains("<redacted>"));
         assert!(!out.contains("s3cret!"));

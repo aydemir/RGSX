@@ -198,7 +198,11 @@ mod tests {
         assert_eq!(l.record_restart(t0), true);
         assert_eq!(l.record_restart(t0 + 1.0), true);
         assert_eq!(l.record_restart(t0 + 2.0), true);
-        assert_eq!(l.record_restart(t0 + 3.0), false, "limit dolu — 4. restart yasak");
+        assert_eq!(
+            l.record_restart(t0 + 3.0),
+            false,
+            "limit dolu — 4. restart yasak"
+        );
         assert_eq!(l.restart_count(), 3);
     }
 
@@ -209,7 +213,11 @@ mod tests {
         l.record_restart(t0); // [5000]
         l.record_restart(t0 + 60.0); // [5000, 5060]
         l.record_restart(t0 + 120.0); // [5000, 5060, 5120]
-        assert_eq!(l.record_restart(t0 + 180.0), false, "pencere doluyken limit");
+        assert_eq!(
+            l.record_restart(t0 + 180.0),
+            false,
+            "pencere doluyken limit"
+        );
         // Pencere taştı: ilk restart düşer, tekrar izin açılır
         assert_eq!(l.can_restart(t0 + 3600.0 + 1.0), true); // cutoff 5001 → [5060, 5120]
         assert_eq!(l.restart_count(), 2);
