@@ -166,6 +166,9 @@ onMounted(async () => {
         const key = h.task_id || h.url || h.name
         if (seenHistory.has(key)) continue
         seenHistory.add(key)
+        // TASK-012-gap-03 (bulgu 8): Set sınırsız büyümesin (uzun oturum belleği);
+        // üst sınır aşılsa da toast tekrar-bastırma işlevi korunur.
+        if (seenHistory.size > 500) seenHistory.delete(seenHistory.values().next().value)
         const s = String(h.status || '').toUpperCase()
         const nm = h.name || h.game_name || (h.url ? String(h.url).split('/').pop() : '')
         if (s === 'COMPLETED' || s === 'DOWNLOAD_OK' || s === 'ALREADY_PRESENT') pushToast(tt('download_complete', { n: nm }), 'success')
@@ -220,15 +223,9 @@ async function bootRetry() {
 // Çevrimdışı devam: grid'e geç (boş kategori), kırmızı rozet gösterilir.
 function bootOffline() { boot.offline = true }
 
-async function updateGamesList() {
-  try {
-    await apiPost('/api/update-cache', {})
-  } catch (e) { /* sessiz */ }
-  // Katalog yenilendikten sonra görünümü tazele
-  await loadPlatforms()
-  if (selectedPlatform.value) await selectPlatform(selectedPlatform.value)
-  pushToast(tt('catalog_refreshed'), 'success')
-}
+// TASK-012-gap-03 (bulgu 2): 🔄/update-cache butonu kaldırıldı — endpoint hâlâ
+// placeholder ({deleted:0}) ve SPA POST 405 yutup sahte "yenilendi" toast'u
+// basıyordu. Gerçek gamelist-refresh backend işi ayrı karar/görev.
 
 async function selectPlatform(name) {
   selectedPlatform.value = name
@@ -449,14 +446,15 @@ function saveRegionPriority() { closeRegionPriority(); saveFilters() }
 function resetRegionPriority() { regionPriorityOrder.value = [...REGION_PRIORITY_DEFAULT]; saveFilters() }
 
 // ===================== Downloads =====================
-async function downloadGame(g, mode) {
+// TASK-012-gap-03 (bulgu 4): mode 'now'|'queue' backend'de hiç okunmuyordu;
+// ⬇️ ile ➕ aynı davranıyordu. Tek davranışa indirildi: tek buton, mode yok.
+async function downloadGame(g) {
   if (!g.url) return
   try {
     await apiPost('/api/download', {
       url: g.url,
       platform: selectedPlatform.value || g.platform || '',
       game_name: g.name || g.game_name || '',
-      mode: mode || 'queue',
     })
     pushToast(tt('download_started'), 'info')
   } catch (e) { pushToast(tt('download_failed'), 'error') }
@@ -517,19 +515,28 @@ function queueSpeed(item) {
   return (p.speed / 1048576).toFixed(1) + ' MB/s'
 }
 async function removeFromQueue(taskId) {
-  try { await apiPost('/api/queue/remove', { task_id: taskId }) } catch (e) {}
+  try { await apiPost('/api/queue/remove', { task_id: taskId }) }
+  catch (e) { pushToast(tt('action_failed'), 'error') }
 }
 async function clearQueue() {
   openConfirm(tt('confirm_clear_queue_title'), tt('confirm_clear_queue_msg'), async () => {
-    try { await apiPost('/api/queue/clear', {}) } catch (e) {}
+    try { await apiPost('/api/queue/clear', {}) }
+    catch (e) { pushToast(tt('action_failed'), 'error') }
     queueScrollTop.value = 0
   })
 }
 async function cancelDownload(item) {
-  try { await apiPost('/api/cancel', item.task_id ? { task_id: item.task_id } : { url: item.url }) } catch (e) {}
+  try { await apiPost('/api/cancel', item.task_id ? { task_id: item.task_id } : { url: item.url }) }
+  catch (e) { pushToast(tt('action_failed'), 'error') }
 }
-async function pauseAll() { try { await apiPost('/api/pause', {}); snapshot.status = 'Paused' } catch (e) {} }
-async function resumeAll() { try { await apiPost('/api/resume', {}); snapshot.status = 'Running' } catch (e) {} }
+async function pauseAll() {
+  try { await apiPost('/api/pause', {}); snapshot.status = 'Paused' }
+  catch (e) { pushToast(tt('action_failed'), 'error') }
+}
+async function resumeAll() {
+  try { await apiPost('/api/resume', {}); snapshot.status = 'Running' }
+  catch (e) { pushToast(tt('action_failed'), 'error') }
+}
 
 // ===================== History =====================
 const historyItems = computed(() => snapshot.history || [])
@@ -656,7 +663,7 @@ async function doSearch() {
 function clearSearch() { searchResults.value = null; searchTerm.value = '' }
 function searchDownload(g) {
   if (!g.url) return
-  apiPost('/api/download', { url: g.url, platform: g.platform || '', game_name: g.game_name || g.name || '', mode: 'queue' })
+  apiPost('/api/download', { url: g.url, platform: g.platform || '', game_name: g.game_name || g.name || '' })
     .then(() => pushToast(tt('download_started'), 'info'))
     .catch(() => pushToast(tt('download_failed'), 'error'))
 }
@@ -722,7 +729,8 @@ async function switchTab(t) {
       <h1>{{ tt('app_title') }}</h1>
       <span class="status" :class="{ on: connected }">{{ connected ? tt('status_connected') : tt('status_connecting') }}</span>
       <span class="active" v-if="snapshot.active">{{ tt('active_dl') }}</span>
-      <button class="gear" @click="updateGamesList" :title="tt('refresh_title')" :aria-label="tt('refresh_title')">🔄</button>
+      <!-- TASK-012-gap-03 (bulgu 2): 🔄/update-cache butonu kaldırıldı (endpoint placeholder). -->
+
       <button class="gear" :class="{ on: tab === 'settings' }" @click="switchTab('settings')" :title="tt('settings_title')" :aria-label="tt('settings_title')">⚙</button>
       <Support />
     </header>
@@ -836,8 +844,7 @@ async function switchTab(t) {
             <span class="badge sm" v-if="catalogStatus(g)" :style="{ background: catalogStatus(g).color }">{{ catalogStatus(g).marker }}</span>
             <div class="row"><span class="name">{{ g.name }}</span><span class="size">{{ g.size || '' }}</span></div>
             <div class="dlgrp">
-              <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g, 'now')" :title="tt('dl_now_title')" :aria-label="tt('dl_now_title')">⬇️</button>
-              <button class="dlbtn q" :disabled="!g.url" @click="downloadGame(g, 'queue')" :title="tt('dl_queue_title')" :aria-label="tt('dl_queue_title')">➕</button>
+              <button class="dlbtn" :disabled="!g.url" @click="downloadGame(g)" :title="tt('dl_now_title')" :aria-label="tt('dl_now_title')">⬇️</button>
             </div>
           </li>
         </ul>
@@ -941,8 +948,10 @@ async function switchTab(t) {
         <div class="field">
           <label>{{ tt('grid') }}</label>
           <select v-model="settings.display.grid" @change="saveSettings()">
-            <option value="2x4">2x4</option><option value="3x4">3x4</option>
-            <option value="4x3">4x3</option><option value="5x3">5x3</option>
+            <!-- TASK-012-gap-03 (bulgu 10): Python izin kümesi {(3,3),(3,4),(4,3),(4,4)} parity;
+                 2x4/5x3 geçersizdi ve Rust validate'e de takılmadan yazılabiliyordu. -->
+            <option value="3x3">3x3</option><option value="3x4">3x4</option>
+            <option value="4x3">4x3</option><option value="4x4">4x4</option>
           </select>
         </div>
         <div class="field">
@@ -1167,7 +1176,6 @@ small { color: #666; font-weight: normal; }
 .dlbtn { background: #28a745; color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
 .dlbtn:hover { background: #218838; }
 .dlbtn:disabled { background: #c6c6c6; color: #fff; cursor: not-allowed; }
-.dlbtn.q { background: #6c757d; }
 .dlgrp { display: flex; gap: 4px; flex-shrink: 0; }
 
 .back { font-size: 11px; color: #667eea; cursor: pointer; margin-left: 8px; }

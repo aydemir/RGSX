@@ -177,6 +177,16 @@ fn normalize_background_theme(value: &str) -> String {
     }
 }
 
+fn normalize_grid(value: &str) -> String {
+    // Python `set_display_grid` parity: izin verilen küme {(3,3),(3,4),(4,3),(4,4)}
+    // dışındaki değerler "3x4"e düşer (TASK-012-gap-03 bulgu 10-grid; SPA eskiden
+    // 2x4/5x3 sunabiliyordu).
+    match value.trim().to_ascii_lowercase().replace(' ', "").as_str() {
+        "3x3" | "3x4" | "4x3" | "4x4" => value.trim().to_ascii_lowercase().replace(' ', ""),
+        _ => "3x4".to_string(),
+    }
+}
+
 impl Default for Accessibility {
     fn default() -> Self {
         Accessibility {
@@ -272,6 +282,14 @@ impl Settings {
         self.extra.remove("web_service_at_boot");
         self.extra.remove("custom_dns_at_boot");
         self.display.background_theme = normalize_background_theme(&self.display.background_theme);
+        self.display.grid = normalize_grid(&self.display.grid);
+    }
+
+    /// Load-path normalizasyonlarını (geçici alan düşümü + değer coercion) elle
+    /// kurulan örnekler için de uygula (ör. POST /api/settings deserialize yolu).
+    pub fn normalized(mut self) -> Self {
+        self.normalize_transient();
+        self
     }
 
     /// GAP-6 (Madde A): `auto_extract` ayarını oku (Python `get_auto_extract` parity).
@@ -366,7 +384,10 @@ mod tests {
     fn extra_fields_preserved_roundtrip() {
         let s: Settings =
             serde_json::from_str(r#"{"game_filters": {"hide_downloaded": true}}"#).unwrap();
-        assert_eq!(s.extra.get("game_filters"), Some(&serde_json::json!({"hide_downloaded": true})));
+        assert_eq!(
+            s.extra.get("game_filters"),
+            Some(&serde_json::json!({"hide_downloaded": true}))
+        );
     }
 
     #[test]
@@ -374,19 +395,28 @@ mod tests {
         let dir = std::env::temp_dir().join("rgsx_settings_test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("rgsx_settings.json");
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("RGSX_SETTINGS_PATH", &p);
         let mut s = Settings::default();
-        s.api_keys
-            .insert("archive.org".into(), "test-key".into());
+        s.api_keys.insert("archive.org".into(), "test-key".into());
         s.save().unwrap();
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         // Faz 12.6e: api_keys artık kalıcı (eskiden `extra`'dan siliniyordu).
         assert_eq!(
-            v.get("api_keys").and_then(|x| x.get("archive.org")).and_then(|x| x.as_str()),
+            v.get("api_keys")
+                .and_then(|x| x.get("archive.org"))
+                .and_then(|x| x.as_str()),
             Some("test-key")
         );
         assert_eq!(v.get("language").and_then(|x| x.as_str()), Some("en"));
     }
+
+    /// RGSX_SETTINGS_PATH process-genel env'dir; env'e dokunan testler bu kilitle
+    /// sıraya girer (manager-http ENV_LOCK deseni, poison-safe). Aksi halde
+    /// set_var → load/save arası başka test yolu okur (TASK-012-gap-03'te
+    /// background_theme_roundtrip'in düzenli kırmızısı bu yüzden açıldı).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn validate_rejects_bad_invariants() {
@@ -403,6 +433,7 @@ mod tests {
         let dir = std::env::temp_dir().join("rgsx_settings_bg_test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("rgsx_settings.json");
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("RGSX_SETTINGS_PATH", &p);
         let mut s = Settings::default();
         s.display.background_theme = "forest".into();
@@ -419,6 +450,7 @@ mod tests {
         let dir = std::env::temp_dir().join("rgsx_settings_bg_invalid");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("rgsx_settings.json");
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("RGSX_SETTINGS_PATH", &p);
         std::fs::write(&p, r#"{"display": {"background_theme": "NEON"}}"#).unwrap();
         let s = Settings::load();
@@ -432,9 +464,27 @@ mod tests {
 
     #[test]
     fn load_missing_file_returns_defaults() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("RGSX_SETTINGS_PATH", "/nonexistent/rgsx_settings.json");
         let s = Settings::load();
         assert_eq!(s.language.as_deref(), Some("en"));
         assert_eq!(s.max_simultaneous_downloads, 5);
+    }
+
+    #[test]
+    fn invalid_grid_coerces_to_default_on_normalized() {
+        // TASK-012-gap-03 (bulgu 10-grid): Python set_display_grid parity —
+        // {(3,3),(3,4),(4,3),(4,4)} dışı değer "3x4"e düşer; POST /api/settings
+        // yolu normalized() ile aynı coercion'dan geçer.
+        let mut s = Settings::default();
+        s.display.grid = "2x4".into();
+        let s = s.normalized();
+        assert_eq!(s.display.grid, "3x4");
+        let mut s2 = Settings::default();
+        s2.display.grid = " 4X4 ".into();
+        assert_eq!(s2.normalized().display.grid, "4x4");
+        let mut s3 = Settings::default();
+        s3.display.grid = "5x3".into();
+        assert_eq!(s3.normalized().display.grid, "3x4");
     }
 }

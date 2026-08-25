@@ -10,8 +10,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path as AxumPath, Query, State};
@@ -22,11 +22,11 @@ use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Notify};
 
+use manager_bridge::BridgeError;
 use manager_core::contract;
 use manager_core::retry::{self, ErrorClass};
 use manager_core::secrets::redact_secrets;
 use manager_core::state::ManagerState;
-use manager_bridge::BridgeError;
 use manager_download::http::stream::CancelFlag;
 use manager_download::http::DownloadError;
 
@@ -74,7 +74,12 @@ pub async fn index(State(state): State<AppState>) -> Response {
     let index_path = root.join("index.html");
     if let Ok(html) = std::fs::read_to_string(&index_path) {
         let html = hydrate_index(&html, &root);
-        return (StatusCode::OK, [("Content-Type", "text/html; charset=utf-8")], html).into_response();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response();
     }
     placeholder_index()
 }
@@ -83,7 +88,12 @@ pub async fn index(State(state): State<AppState>) -> Response {
 fn placeholder_index() -> Response {
     let html = "<!doctype html><html><head><title>RGSX Manager</title></head>\
                 <body><h1>RGSX Manager</h1></body></html>";
-    (StatusCode::OK, [("Content-Type", "text/html; charset=utf-8")], html).into_response()
+    (
+        StatusCode::OK,
+        [("Content-Type", "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
 }
 
 /// `__CSS_VERSION__`/`__JS_VERSION__` placeholder'larını asset mtime'larına,
@@ -101,7 +111,12 @@ fn hydrate_index(html: &str, static_root: &std::path::Path) -> String {
 fn asset_version(static_root: &std::path::Path, relative: &str) -> String {
     std::fs::metadata(static_root.join(relative))
         .and_then(|m| m.modified())
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0).to_string())
+        .map(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+                .to_string()
+        })
         .unwrap_or_default()
 }
 
@@ -116,14 +131,27 @@ pub async fn static_file(
     };
     // Normalleştir; `..` geçişini reddet.
     let safe: std::path::PathBuf = path.split('/').collect();
-    if safe.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
+    if safe.components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir | std::path::Component::RootDir
+        )
+    }) {
         return (StatusCode::NOT_FOUND, "404 Not Found").into_response();
     }
     let file_path = root.join(&safe);
     match std::fs::read(&file_path) {
         Ok(bytes) => {
             let mime = mime_for(&file_path);
-            (StatusCode::OK, [("Content-Type", mime), ("Cache-Control", "public, max-age=3600")], bytes).into_response()
+            (
+                StatusCode::OK,
+                [
+                    ("Content-Type", mime),
+                    ("Cache-Control", "public, max-age=3600"),
+                ],
+                bytes,
+            )
+                .into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
     }
@@ -158,10 +186,16 @@ pub async fn platforms(State(state): State<AppState>) -> Response {
 }
 
 /// GET `/api/search?q=...` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
-pub async fn search(State(state): State<AppState>, Query(params): Query<std::collections::HashMap<String, String>>) -> Response {
+pub async fn search(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
     let term = params.get("q").cloned().unwrap_or_default();
     if let Some(c) = &state.catalog {
-        let route = format!("/api/search?q={}", percent_encoding::utf8_percent_encode(&term, percent_encoding::NON_ALPHANUMERIC));
+        let route = format!(
+            "/api/search?q={}",
+            percent_encoding::utf8_percent_encode(&term, percent_encoding::NON_ALPHANUMERIC)
+        );
         if let Ok(v) = c.get_json(&route).await {
             return ok(v);
         }
@@ -174,7 +208,10 @@ pub async fn search(State(state): State<AppState>, Query(params): Query<std::col
 
 /// GET `/api/translations` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
 /// Opsiyonel `?lang=` ile dil seçilebilir (native backend).
-pub async fn translations(Query(params): Query<HashMap<String, String>>, State(state): State<AppState>) -> Response {
+pub async fn translations(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> Response {
     let lang = params.get("lang").cloned().unwrap_or_default();
     if let Some(c) = &state.catalog {
         let route = if lang.is_empty() {
@@ -203,9 +240,15 @@ pub async fn languages(State(state): State<AppState>) -> Response {
 }
 
 /// GET `/api/games/{platform}` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa placeholder.
-pub async fn games(State(state): State<AppState>, AxumPath(platform): AxumPath<String>) -> Response {
+pub async fn games(
+    State(state): State<AppState>,
+    AxumPath(platform): AxumPath<String>,
+) -> Response {
     if let Some(c) = &state.catalog {
-        let route = format!("/api/games/{}", percent_encoding::utf8_percent_encode(&platform, percent_encoding::NON_ALPHANUMERIC));
+        let route = format!(
+            "/api/games/{}",
+            percent_encoding::utf8_percent_encode(&platform, percent_encoding::NON_ALPHANUMERIC)
+        );
         if let Ok(v) = c.get_json(&route).await {
             return ok(v);
         }
@@ -247,7 +290,9 @@ pub async fn history(State(state): State<AppState>) -> Response {
             entry
         })
         .collect();
-    ok(contract::ok(json!({ "count": cleaned.len(), "history": cleaned })))
+    ok(contract::ok(
+        json!({ "count": cleaned.len(), "history": cleaned }),
+    ))
 }
 
 /// GET `/api/queue` — kuyruk durumu.
@@ -347,14 +392,16 @@ pub async fn browse_directories(
         }
     }
     // Saf-Rust modda pathsiz çağrı kök yerine RGSX_DATA_DIR'i (yoksa cwd) listeler.
-    let base = requested.cloned().unwrap_or_else(|| {
-        match std::env::var("RGSX_DATA_DIR") {
+    let base = requested
+        .cloned()
+        .unwrap_or_else(|| match std::env::var("RGSX_DATA_DIR") {
             Ok(d) if std::path::Path::new(&d).is_dir() => d,
             _ => ".".to_string(),
-        }
-    });
+        });
     let (current, dirs) = state.read().browse(&base);
-    ok(contract::ok(json!({ "current_path": current, "directories": dirs })))
+    ok(contract::ok(
+        json!({ "current_path": current, "directories": dirs }),
+    ))
 }
 
 /// GET `/api/scan` — Faz 12d: `ROMS_FOLDER` (env `RGSX_ROMS_FOLDER`) HDD taraması.
@@ -381,11 +428,17 @@ pub async fn scan(State(state): State<AppState>) -> Response {
 }
 
 /// GET `/api/image/{platform}` — Faz 10c/3/2: `catalog` varsa Python'a proxy, yoksa 404 placeholder.
-pub async fn image(State(state): State<AppState>, AxumPath(platform): AxumPath<String>) -> Response {
+pub async fn image(
+    State(state): State<AppState>,
+    AxumPath(platform): AxumPath<String>,
+) -> Response {
     if let Some(c) = &state.catalog {
         if let Ok((bytes, ct)) = c.get_image(&platform).await {
             return (
-                [("Content-Type", ct), ("Access-Control-Allow-Origin", "*".to_string())],
+                [
+                    ("Content-Type", ct),
+                    ("Access-Control-Allow-Origin", "*".to_string()),
+                ],
                 bytes,
             )
                 .into_response();
@@ -394,7 +447,10 @@ pub async fn image(State(state): State<AppState>, AxumPath(platform): AxumPath<S
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
     (
         StatusCode::NOT_FOUND,
-        [("Content-Type", "image/png"), ("Access-Control-Allow-Origin", "*")],
+        [
+            ("Content-Type", "image/png"),
+            ("Access-Control-Allow-Origin", "*"),
+        ],
         PNG,
     )
         .into_response()
@@ -404,7 +460,10 @@ pub async fn image(State(state): State<AppState>, AxumPath(platform): AxumPath<S
 pub async fn favicon() -> Response {
     (
         StatusCode::OK,
-        [("Content-Type", "image/x-icon"), ("Access-Control-Allow-Origin", "*")],
+        [
+            ("Content-Type", "image/x-icon"),
+            ("Access-Control-Allow-Origin", "*"),
+        ],
         b"\x00\x00\x01\x00".as_slice(),
     )
         .into_response()
@@ -432,14 +491,18 @@ pub async fn manager_update_status(State(state): State<AppState>) -> Response {
 pub async fn manager_update_download(State(state): State<AppState>) -> Response {
     let pending = state.data.read().unwrap().manager_update.clone();
     let Some(info) = pending else {
-        return ok(contract::ok(json!({ "ok": false, "error": "bekleyen güncelleme yok" })));
+        return ok(contract::ok(
+            json!({ "ok": false, "error": "bekleyen güncelleme yok" }),
+        ));
     };
     let stage = info
         .get("stage")
         .and_then(|v| v.as_str())
         .unwrap_or("available");
     if stage != "available" {
-        return ok(contract::ok(json!({ "ok": false, "error": format!("zaten {stage} aşamasında") })));
+        return ok(contract::ok(
+            json!({ "ok": false, "error": format!("zaten {stage} aşamasında") }),
+        ));
     }
     let url = match info.get("url").and_then(|v| v.as_str()) {
         Some(u) if !u.is_empty() => u.to_string(),
@@ -513,7 +576,8 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     // engine'e yönlendirilir (canlıda catalog olsa bile). Aksi halde mevcut davranış:
     // `catalog` varsa game_index/game_name çözümü için Python'a proxy edilir.
     let direct_url = body.get("url").and_then(Value::as_str);
-    let intercept_locally = direct_url.map(is_torrent_url).unwrap_or(false) && state.bridge.is_some();
+    let intercept_locally =
+        direct_url.map(is_torrent_url).unwrap_or(false) && state.bridge.is_some();
 
     // Faz 12e: native DDL çözümü + doğrudan HTTP indirme. Yalnız `RGSX_NATIVE_DOWNLOAD=1`
     // ile; debrid yapılandırılmamışsa `DownloadManager` DirectResolver'a düşer ve düz
@@ -546,7 +610,14 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                             StatusCode::BAD_REQUEST,
                         );
                     }
-                    return native_ddl_download(state, direct.to_string(), resolved, platform, game_name).await;
+                    return native_ddl_download(
+                        state,
+                        direct.to_string(),
+                        resolved,
+                        platform,
+                        game_name,
+                    )
+                    .await;
                 }
             }
         }
@@ -602,27 +673,27 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
             }
         }
 
-    // Bridge varsa indirmeyi başlat (arka plan task; yanıt beklemez).
-    // Await'ler kilit öncesi — spawn closure'u `'static' olduğundan değerler klonlanır.
-    if let Some(bridge) = state.bridge.clone() {
-        let downloads = bridge
-            .get_app_paths()
-            .await
-            .map(|(d, _)| d)
-            .unwrap_or_default();
-        // Faz 10c/2: Python, kendi hedef yolunu (`dest_path`) verebilir; yoksa
-        // eski davranış — `downloads_folder` + türetilen dosya adı (geriye uyumlu).
-        let dest_path = match body.get("dest_path").and_then(Value::as_str) {
-            Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
-            _ => {
-        let roms_dest = match effective_roms_folder() {
-            Some(rf) => rom_dest_for(&rf, &platform, &gname, &game_url),
-            None => dest_path_for(&downloads, &game_url, &gname),
-        };
-                // gap-28: BIOS benzeri platformlar USERDATA_FOLDER'a yönlenir.
-                redirect_bios_dest(roms_dest, &platform, &gname)
-            }
-        };
+        // Bridge varsa indirmeyi başlat (arka plan task; yanıt beklemez).
+        // Await'ler kilit öncesi — spawn closure'u `'static' olduğundan değerler klonlanır.
+        if let Some(bridge) = state.bridge.clone() {
+            let downloads = bridge
+                .get_app_paths()
+                .await
+                .map(|(d, _)| d)
+                .unwrap_or_default();
+            // Faz 10c/2: Python, kendi hedef yolunu (`dest_path`) verebilir; yoksa
+            // eski davranış — `downloads_folder` + türetilen dosya adı (geriye uyumlu).
+            let dest_path = match body.get("dest_path").and_then(Value::as_str) {
+                Some(p) if !p.is_empty() => std::path::PathBuf::from(p),
+                _ => {
+                    let roms_dest = match effective_roms_folder() {
+                        Some(rf) => rom_dest_for(&rf, &platform, &gname, &game_url),
+                        None => dest_path_for(&downloads, &game_url, &gname),
+                    };
+                    // gap-28: BIOS benzeri platformlar USERDATA_FOLDER'a yönlenir.
+                    redirect_bios_dest(roms_dest, &platform, &gname)
+                }
+            };
             let state2 = state.clone();
             let u = game_url.clone();
             let n = gname.clone();
@@ -684,7 +755,8 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                             d.network_down.store(false, Ordering::SeqCst);
                             d.network_error_streak.store(0, Ordering::SeqCst);
                             for q in d.queue.iter_mut() {
-                                if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
+                                if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor")
+                                {
                                     q["status"] = json!("Downloading");
                                 }
                             }
@@ -692,13 +764,25 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                             state2.dirty.store(true, Ordering::SeqCst);
                             // TASK-002-gap-32: yalnızca GERÇEK kesinti sonrası restore bildirimi
                             // (ölü-host titreşiminde spam olmasın). Onay bayrağı tek emitçi garantiler.
-                            if d.network_outage_confirmed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                                crate::sse::publish(&state2.events, "network_restored", &serde_json::json!({ "network_down": false }));
+                            if d.network_outage_confirmed
+                                .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                crate::sse::publish(
+                                    &state2.events,
+                                    "network_restored",
+                                    &serde_json::json!({ "network_down": false }),
+                                );
                             }
                         } else {
-                            state2.write().network_outage_confirmed.store(true, Ordering::SeqCst);
+                            state2
+                                .write()
+                                .network_outage_confirmed
+                                .store(true, Ordering::SeqCst);
                             let nr = state2.read().network_resume.clone();
-                            let _ = tokio::time::timeout(Duration::from_millis(1000), nr.notified()).await;
+                            let _ =
+                                tokio::time::timeout(Duration::from_millis(1000), nr.notified())
+                                    .await;
                             continue;
                         }
                     }
@@ -706,33 +790,34 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                     let cb_url = current_url.clone();
                     // F6: progress SSE'i artık `broadcast_loop` (250ms batched delta)
                     // tarafından yayınlanır; burada yalnızca durum yazılır.
-                    let on_progress: Option<Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>> =
-                        Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
-                            let pct = if ev.total > 0 {
-                                ((ev.downloaded as f64 / ev.total as f64) * 100.0) as u64
-                            } else {
-                                0
-                            };
-                            let mut data = cb_state.write();
-                            if let Value::Object(map) = &mut data.progress {
-                                map.insert(
-                                    cb_url.clone(),
-                                    json!({
-                                        "status": if ev.finished {
-                                            "Download_OK"
-                                        } else if ev.paused {
-                                            "Paused"
-                                        } else {
-                                            "Downloading"
-                                        },
-                                        "progress": pct,
-                                        "downloaded": ev.downloaded,
-                                        "total": ev.total,
-                                        "speed": ev.speed,
-                                    }),
-                                );
-                            }
-                        }));
+                    let on_progress: Option<
+                        Arc<dyn Fn(manager_bridge::ProgressEvent) + Send + Sync>,
+                    > = Some(Arc::new(move |ev: manager_bridge::ProgressEvent| {
+                        let pct = if ev.total > 0 {
+                            ((ev.downloaded as f64 / ev.total as f64) * 100.0) as u64
+                        } else {
+                            0
+                        };
+                        let mut data = cb_state.write();
+                        if let Value::Object(map) = &mut data.progress {
+                            map.insert(
+                                cb_url.clone(),
+                                json!({
+                                    "status": if ev.finished {
+                                        "Download_OK"
+                                    } else if ev.paused {
+                                        "Paused"
+                                    } else {
+                                        "Downloading"
+                                    },
+                                    "progress": pct,
+                                    "downloaded": ev.downloaded,
+                                    "total": ev.total,
+                                    "speed": ev.speed,
+                                }),
+                            );
+                        }
+                    }));
                     // GAP-6: indirme sonrası otomatik çıkarma ipucu üret.
                     // `platform` + `get_auto_extract()` + URL uzantısından türetilir
                     // (Python `should_force_extract` parity: BIOS/PS3 zorunlu, ya da
@@ -761,14 +846,36 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                         .await;
                     match res {
                         Ok(src) => {
-                            state2.write().network_error_streak.store(0, Ordering::SeqCst);
-                            finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, true, src.to_string_lossy().as_ref()).await;
+                            state2
+                                .write()
+                                .network_error_streak
+                                .store(0, Ordering::SeqCst);
+                            finalize_download_in_state(
+                                &state2,
+                                &current_task_id,
+                                &current_url,
+                                &n,
+                                &p,
+                                true,
+                                src.to_string_lossy().as_ref(),
+                            )
+                            .await;
                             break;
                         }
                         Err(e) => {
                             let cls = classify_bridge_error(&e);
                             let is_network = matches!(e, BridgeError::Timeout(_));
-                            match decide_retry(&state2, &current_url, &n, &current_task_id, &e.to_string(), cls, is_network).await {
+                            match decide_retry(
+                                &state2,
+                                &current_url,
+                                &n,
+                                &current_task_id,
+                                &e.to_string(),
+                                cls,
+                                is_network,
+                            )
+                            .await
+                            {
                                 RetryDecision::Retry { new_task_id, delay } => {
                                     let dur = Duration::from_secs_f64(delay.max(0.0));
                                     tokio::select! {
@@ -778,14 +885,35 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
                                     }
                                     match aborted {
                                         Some(ref msg) => {
-                                            finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, false, msg).await;
+                                            finalize_download_in_state(
+                                                &state2,
+                                                &current_task_id,
+                                                &current_url,
+                                                &n,
+                                                &p,
+                                                false,
+                                                msg,
+                                            )
+                                            .await;
                                             break;
                                         }
-                                        None => { current_task_id = new_task_id; continue; }
+                                        None => {
+                                            current_task_id = new_task_id;
+                                            continue;
+                                        }
                                     }
                                 }
                                 RetryDecision::Stop => {
-                                    finalize_download_in_state(&state2, &current_task_id, &current_url, &n, &p, false, &e.to_string()).await;
+                                    finalize_download_in_state(
+                                        &state2,
+                                        &current_task_id,
+                                        &current_url,
+                                        &n,
+                                        &p,
+                                        false,
+                                        &e.to_string(),
+                                    )
+                                    .await;
                                     break;
                                 }
                             }
@@ -825,7 +953,10 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         return json_err(format!("Jeu non trouvé: {name}"), StatusCode::BAD_REQUEST);
     }
     let idx = game_index.and_then(Value::as_i64).unwrap_or(-1);
-    json_err(format!("Index de jeu invalide: {idx}"), StatusCode::BAD_REQUEST)
+    json_err(
+        format!("Index de jeu invalide: {idx}"),
+        StatusCode::BAD_REQUEST,
+    )
 }
 
 /// POST `/api/download/batch` — Faz 12.6d: native modda `platform + game_names`
@@ -878,7 +1009,10 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
             skipped += 1;
             continue;
         }
-        let url = state.catalog.as_ref().and_then(|c| c.game_url(&platform, &name));
+        let url = state
+            .catalog
+            .as_ref()
+            .and_then(|c| c.game_url(&platform, &name));
         let Some(url) = url else {
             skipped += 1;
             errors.push(format!("Jeu introuvable: {name}"));
@@ -896,7 +1030,11 @@ pub async fn download_batch(State(state): State<AppState>, Json(body): Json<Valu
             results.push(json!({ "ok": false, "game_name": name, "error": "already_downloaded" }));
             continue;
         }
-        items.push(QueuedItem { platform: platform.clone(), name: name.clone(), url });
+        items.push(QueuedItem {
+            platform: platform.clone(),
+            name: name.clone(),
+            url,
+        });
         queued += 1;
         results.push(json!({ "ok": true, "game_name": name }));
     }
@@ -946,7 +1084,9 @@ pub async fn queue_worker(mut rx: mpsc::Receiver<QueueCommand>, state: AppState)
                         d.tasks.insert(url.clone(), TaskState::Active);
                         d.queued_items.remove(&url)
                     };
-                    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                    state
+                        .dirty
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     if let Some(item) = item {
                         let _ = dispatch_queued(&state, item).await;
                     }
@@ -1108,7 +1248,9 @@ pub async fn queue_clear(State(state): State<AppState>) -> Response {
         data.active = false;
         data.progress = json!({});
         // SSE: kuyruk/aktif/progress sıfırlandı → yayıncıyı uyandır (idle'da noop olur).
-        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         // 5c) Consumer'ı uyandır (boş seti bulup beklemeye geçer).
         data.pending_notify.notify_one();
         // F6: queue/progress SSE'i `broadcast_loop` (250ms) yayınlar.
@@ -1135,7 +1277,10 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
         }
     }
     let Some(task_id) = body.get("task_id").and_then(Value::as_str) else {
-        return json_err("Paramètre manquant: task_id requis", StatusCode::BAD_REQUEST);
+        return json_err(
+            "Paramètre manquant: task_id requis",
+            StatusCode::BAD_REQUEST,
+        );
     };
     let task_id = task_id.to_string();
     // TASK-012m Faz 5: self-update indirmesi iptali (WebUI/Python TVUI parity).
@@ -1153,11 +1298,16 @@ pub async fn queue_remove(State(state): State<AppState>, Json(body): Json<Value>
             obj.remove(task_id.as_str());
         }
         data.active = !data.queue.is_empty();
-        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         // F6: queue SSE'i `broadcast_loop` (250ms) yayınlar.
         return ok(contract::ok(json!({ "task_id": task_id })));
     }
-    json_err(format!("Élément non trouvé: {task_id}"), StatusCode::NOT_FOUND)
+    json_err(
+        format!("Élément non trouvé: {task_id}"),
+        StatusCode::NOT_FOUND,
+    )
 }
 
 /// POST `/api/settings` — Faz 10c/3/3: `catalog` varsa Python'a proxy; `RGSX_NATIVE_SETTINGS=1`
@@ -1173,7 +1323,11 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
     };
     if manager_core::settings::native_enabled() {
         match serde_json::from_value::<manager_core::settings::Settings>(settings.clone()) {
-                Ok(s) => match s.validate() {
+            Ok(s) => {
+                // TASK-012-gap-03: kayıt yolunda da coercion (ör. geçersiz grid → 3x4);
+                // normalize yalnız load()'da koşuyordu, POST ile bayat değer yazılabiliyordu.
+                let s = s.normalized();
+                match s.validate() {
                     Ok(()) => match s.save() {
                         Ok(()) => {
                             // Faz 12.6d: eşzamanlı indirme sınırını güncelle.
@@ -1192,24 +1346,27 @@ pub async fn settings_post(State(state): State<AppState>, Json(body): Json<Value
                                 d.downloaded = serde_json::json!(installed);
                                 // F3-F4: O(1) indeksi tazele (batch dedupe bunu kullanır).
                                 d.rebuild_downloaded_index();
-                                state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                                state
+                                    .dirty
+                                    .store(true, std::sync::atomic::Ordering::Relaxed);
                             }
                             return ok(contract::ok(Value::Null));
                         }
                         Err(e) => {
+                            return json_err(
+                                format!("Sauvegarde des paramètres échouée: {e}"),
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                            )
+                        }
+                    },
+                    Err(e) => {
                         return json_err(
-                            format!("Sauvegarde des paramètres échouée: {e}"),
-                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Paramètres invalides: {e}"),
+                            StatusCode::BAD_REQUEST,
                         )
                     }
-                },
-                Err(e) => {
-                    return json_err(
-                        format!("Paramètres invalides: {e}"),
-                        StatusCode::BAD_REQUEST,
-                    )
                 }
-            },
+            }
             Err(e) => {
                 return json_err(
                     format!("Paramètres invalides: {e}"),
@@ -1296,12 +1453,20 @@ pub async fn clear_history(State(state): State<AppState>) -> Response {
             .history
             .iter()
             .filter(|e| {
-                is_active_history_entry(e, &queue_ids, &queue_urls, &retry_urls, &progress_active_urls)
+                is_active_history_entry(
+                    e,
+                    &queue_ids,
+                    &queue_urls,
+                    &retry_urls,
+                    &progress_active_urls,
+                )
             })
             .cloned()
             .collect();
         data.history = preserved.clone();
-        state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         (preserved, data.history_path.clone())
     };
     persist_history(&preserved, &path);
@@ -1316,7 +1481,9 @@ pub async fn restart(State(state): State<AppState>) -> Response {
             return ok(v);
         }
     }
-    ok(contract::ok(json!({ "message": "Redémarrage en cours..." })))
+    ok(contract::ok(
+        json!({ "message": "Redémarrage en cours..." }),
+    ))
 }
 
 /// POST `/api/support` — Faz 10c/3/4: `catalog` varsa Python'a proxy (zip), yoksa
@@ -1328,7 +1495,10 @@ pub async fn support(State(state): State<AppState>, Json(body): Json<Value>) -> 
                 [
                     ("Content-Type", ct),
                     ("Access-Control-Allow-Origin", "*".to_string()),
-                    ("Content-Disposition", "attachment; filename=rgsx_support.zip".to_string()),
+                    (
+                        "Content-Disposition",
+                        "attachment; filename=rgsx_support.zip".to_string(),
+                    ),
                 ],
                 bytes,
             )
@@ -1341,7 +1511,10 @@ pub async fn support(State(state): State<AppState>, Json(body): Json<Value>) -> 
         [
             ("Content-Type", "application/zip".to_string()),
             ("Access-Control-Allow-Origin", "*".to_string()),
-            ("Content-Disposition", "attachment; filename=rgsx_support.zip".to_string()),
+            (
+                "Content-Disposition",
+                "attachment; filename=rgsx_support.zip".to_string(),
+            ),
         ],
         zip_bytes,
     )
@@ -1399,7 +1572,9 @@ fn build_support_zip(state: &AppState) -> Vec<u8> {
     let _ = zip.start_file("README.txt", opts);
     let _ = zip.write_all(readme.as_bytes());
 
-    let cursor = zip.finish().unwrap_or_else(|_| std::io::Cursor::new(Vec::new()));
+    let cursor = zip
+        .finish()
+        .unwrap_or_else(|_| std::io::Cursor::new(Vec::new()));
     cursor.into_inner()
 }
 
@@ -1439,7 +1614,10 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
             return ok(v);
         }
     }
-    let task_id = body.as_ref().and_then(|b| b.get("task_id")).and_then(Value::as_str);
+    let task_id = body
+        .as_ref()
+        .and_then(|b| b.get("task_id"))
+        .and_then(Value::as_str);
     if let Some(bridge) = &state.bridge {
         match task_id {
             Some(id) => {
@@ -1456,9 +1634,13 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
                 // "Pause All" kuyruğu gerçekten durdurmaz (native yol parity'si).
                 let paused = bridge.pause_all().await.unwrap_or(0);
                 let mut d = state.write();
-                state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+                state
+                    .global_paused
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 d.status = QueueStatus::Paused;
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                state
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 for sig in d.pause_signals.values() {
                     sig.notify_one();
                 }
@@ -1471,9 +1653,13 @@ pub async fn pause(State(state): State<AppState>, Json(body): Json<Option<Value>
     // F2 (gap-30): kuyruk durum makinesini `Paused`'a çeker → worker yeni
     // dispatch'i durdurur, gelen Add/AddBatch öğeleri `pending_set`'te buffer'lanır.
     let mut d = state.write();
-    state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .global_paused
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     d.status = QueueStatus::Paused;
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let paused = d.pause_signals.len();
     for sig in d.pause_signals.values() {
         sig.notify_one();
@@ -1490,7 +1676,10 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
             return ok(v);
         }
     }
-    let task_id = body.as_ref().and_then(|b| b.get("task_id")).and_then(Value::as_str);
+    let task_id = body
+        .as_ref()
+        .and_then(|b| b.get("task_id"))
+        .and_then(Value::as_str);
     if let Some(bridge) = &state.bridge {
         match task_id {
             Some(id) => {
@@ -1506,9 +1695,13 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
                 // ile bekleyen worker uyanır, `pending_set` drene edilir.
                 let resumed = bridge.resume_all().await.unwrap_or(0);
                 let mut d = state.write();
-                state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+                state
+                    .global_paused
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 d.status = QueueStatus::Running;
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                state
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 d.pause_resume.notify_waiters();
                 d.pending_notify.notify_waiters();
                 return ok(contract::ok(json!({ "resumed": resumed })));
@@ -1520,9 +1713,13 @@ pub async fn resume(State(state): State<AppState>, Json(body): Json<Option<Value
     // F2 (gap-30): kuyruk durum makinesini `Running`'a çeker ve `pending_notify`
     // ile bekleyen worker'ı anında uyandırır → buffer'daki `pending_set` drene edilir.
     let mut d = state.write();
-    state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .global_paused
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     d.status = QueueStatus::Running;
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     d.pause_resume.notify_waiters();
     d.pending_notify.notify_waiters();
     ok(contract::ok(json!({ "resumed": 0 })))
@@ -1535,7 +1732,10 @@ pub async fn change_password(
     Json(body): Json<serde_json::Map<String, Value>>,
 ) -> Response {
     let Some(pw) = body.get("password").and_then(Value::as_str) else {
-        return json_err("Paramètre manquant: password requis", StatusCode::BAD_REQUEST);
+        return json_err(
+            "Paramètre manquant: password requis",
+            StatusCode::BAD_REQUEST,
+        );
     };
     match state
         .bridge_call("change_webui_password", json!({ "password": pw }))
@@ -1578,7 +1778,9 @@ pub async fn qb_start(State(state): State<AppState>) -> Response {
         .await
         .map(|u| u.as_str().unwrap_or_default().to_string())
         .unwrap_or_default();
-    ok(contract::ok(json!({ "success": ready, "ready": ready, "url": url })))
+    ok(contract::ok(
+        json!({ "success": ready, "ready": ready, "url": url }),
+    ))
 }
 
 /// GET `/api/qbittorrent/password-status` — bridge `get_password_status`.
@@ -1611,7 +1813,10 @@ pub async fn qb_regenerate_password(State(state): State<AppState>) -> Response {
     {
         Ok(v) => {
             let arr = v.as_array();
-            let ok_flag = arr.and_then(|a| a.first()).and_then(Value::as_bool).unwrap_or(false);
+            let ok_flag = arr
+                .and_then(|a| a.first())
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let pw = arr
                 .and_then(|a| a.get(1))
                 .and_then(Value::as_str)
@@ -1655,7 +1860,12 @@ pub async fn fallback(State(state): State<AppState>, req: axum::extract::Request
     if is_spa_path(&path) {
         return index(State(state)).await;
     }
-    (StatusCode::NOT_FOUND, [("Access-Control-Allow-Origin", "*")], "404 Not Found").into_response()
+    (
+        StatusCode::NOT_FOUND,
+        [("Access-Control-Allow-Origin", "*")],
+        "404 Not Found",
+    )
+        .into_response()
 }
 
 /// Tepsi/Açma navigasyon yolları (`/`, `/index.html`, `/platform/`, `/settings`,
@@ -1763,68 +1973,81 @@ pub async fn finalize_download_in_state(
     let status = if ok { "Download_OK" } else { "Erreur" };
     let (history_snapshot, path) = {
         let mut data = state.write();
-    let retries_for_url = data.retries.get(game_url).copied().unwrap_or(0);
-    let retry_at_for_url = data.retry_at.get(game_url).copied();
-    if let Some(entry) = data
-        .history
-        .iter_mut()
-        .find(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id))
-    {
-        entry["status"] = json!(status);
-        entry["message"] = json!(message);
-        entry["timestamp"] = json!(now_timestamp()); // D: tamamlanma zamanı
-        if ok {
-            entry["progress"] = json!(100);
-            entry["entity_state"] = json!("COMPLETED");
-        } else {
-            entry["entity_state"] = json!("FAILED_PERMANENT");
-            entry["error"] = json!(message);
-        }
-        entry["retry_count"] = json!(retries_for_url);
-        entry["max_retries"] = json!(retry::DEFAULT_MAX_RETRIES);
-        if let Some(ra) = retry_at_for_url {
-            entry["retry_at"] = json!(ra);
-        }
-    }
-    data.retries.remove(game_url);
-    data.retry_at.remove(game_url);
-    if let Some(pos) = data
-        .queue
-        .iter()
-        .position(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id))
-    {
-        data.queue.remove(pos);
-    }
-    if ok {
-        if let Value::Object(map) = &mut data.downloaded {
-            let list = map.entry(platform.to_string()).or_insert_with(|| json!([]));
-            if let Some(arr) = list.as_array_mut() {
-                if !arr.iter().any(|g| g.as_str() == Some(game_name)) {
-                    arr.push(json!(game_name));
-                }
+        let retries_for_url = data.retries.get(game_url).copied().unwrap_or(0);
+        let retry_at_for_url = data.retry_at.get(game_url).copied();
+        if let Some(entry) = data
+            .history
+            .iter_mut()
+            .find(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id))
+        {
+            entry["status"] = json!(status);
+            entry["message"] = json!(message);
+            entry["timestamp"] = json!(now_timestamp()); // D: tamamlanma zamanı
+            if ok {
+                entry["progress"] = json!(100);
+                entry["entity_state"] = json!("COMPLETED");
+            } else {
+                entry["entity_state"] = json!("FAILED_PERMANENT");
+                entry["error"] = json!(message);
+            }
+            entry["retry_count"] = json!(retries_for_url);
+            entry["max_retries"] = json!(retry::DEFAULT_MAX_RETRIES);
+            if let Some(ra) = retry_at_for_url {
+                entry["retry_at"] = json!(ra);
             }
         }
-        // F3-F4: O(1) "already downloaded?" indeksini artırımlı güncelle (batch
-        // handler'ının O(N) array taraması yapmaması için).
-        data.downloaded_index.insert((platform.to_string(), game_name.to_string()));
-        // Faz 12.6e — indirilen dosyaya symlink oluştur (settings.symlink etkinse).
-        apply_symlink(message);
-    }
-    // F3-F4: görev durumu tamamlandı olarak işaretle (O(1) `get_status`).
-    // `set_task_state` eviction FIFO'sunu günceller ve `TASKS_CAP` tahliyesini tetikler.
-    data.set_task_state(
-        game_url.to_string(),
-        if ok { TaskState::Completed } else { TaskState::Failed },
-    );
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
-    if let Value::Object(prog) = &mut data.progress {
-        if ok {
-            prog.insert(game_url.to_string(), json!({ "status": "Download_OK", "progress": 100 }));
-        } else {
-            prog.insert(game_url.to_string(), json!({ "status": "Erreur", "message": message }));
+        data.retries.remove(game_url);
+        data.retry_at.remove(game_url);
+        if let Some(pos) = data
+            .queue
+            .iter()
+            .position(|e| e.get("task_id").and_then(Value::as_str) == Some(task_id))
+        {
+            data.queue.remove(pos);
         }
-    }
-    // F6: queue/history/downloaded/progress SSE'i `broadcast_loop` (250ms) yayınlar.
+        if ok {
+            if let Value::Object(map) = &mut data.downloaded {
+                let list = map.entry(platform.to_string()).or_insert_with(|| json!([]));
+                if let Some(arr) = list.as_array_mut() {
+                    if !arr.iter().any(|g| g.as_str() == Some(game_name)) {
+                        arr.push(json!(game_name));
+                    }
+                }
+            }
+            // F3-F4: O(1) "already downloaded?" indeksini artırımlı güncelle (batch
+            // handler'ının O(N) array taraması yapmaması için).
+            data.downloaded_index
+                .insert((platform.to_string(), game_name.to_string()));
+            // Faz 12.6e — indirilen dosyaya symlink oluştur (settings.symlink etkinse).
+            apply_symlink(message);
+        }
+        // F3-F4: görev durumu tamamlandı olarak işaretle (O(1) `get_status`).
+        // `set_task_state` eviction FIFO'sunu günceller ve `TASKS_CAP` tahliyesini tetikler.
+        data.set_task_state(
+            game_url.to_string(),
+            if ok {
+                TaskState::Completed
+            } else {
+                TaskState::Failed
+            },
+        );
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Value::Object(prog) = &mut data.progress {
+            if ok {
+                prog.insert(
+                    game_url.to_string(),
+                    json!({ "status": "Download_OK", "progress": 100 }),
+                );
+            } else {
+                prog.insert(
+                    game_url.to_string(),
+                    json!({ "status": "Erreur", "message": message }),
+                );
+            }
+        }
+        // F6: queue/history/downloaded/progress SSE'i `broadcast_loop` (250ms) yayınlar.
         (data.history.clone(), data.history_path.clone())
     };
     persist_history(&history_snapshot, &path);
@@ -1866,38 +2089,40 @@ fn push_queued_history_entry(
 ) {
     let (history_snapshot, path) = {
         let mut data = state.write();
-    // TASK-002-gap-12: kuyruğa eklenen öğe henüz semaphore iznini edinmediyse
-    // indirme yapmıyor; progress durumu "Queued" olmalı (gerçek transfer başlayınca
-    // indirme döngüsü callback'i "Downloading"e günceller). Aksi halde N oyun
-    // semaphore'da beklerken UI hepsini "Downloading" gösterir → "5 limit çalışmıyor"
-    // yanılgısı (aktif transfer yine download_semaphore ile 5 ile sınırlı).
-    data.progress[url] = json!({ "status": status, "progress": 0 });
-    data.queue.push(json!({
-        "url": url,
-        "platform": platform,
-        "game_name": name,
-        "task_id": task_id,
-        "status": "Queued",
-    }));
-    data.history.push(json!({
-        "game_name": name,
-        "platform": platform,
-        "url": url,
-        "status": status,
-        "progress": 0,
-        "message": message,
-        "timestamp": now_timestamp(),
-        "downloaded_size": 0,
-        "total_size": 0,
-        "task_id": task_id,
-        "entity_state": if status == "Queued" { "QUEUED" } else { "RETRY_SCHEDULED" },
-        "retry_count": retry_count,
-        "max_retries": retry::DEFAULT_MAX_RETRIES,
-        "retry_at": 0,
-    }));
-    // F6: queue/progress/history SSE'i `broadcast_loop` (250ms) yayınlar; `dirty`
-    // bayrağını set et (idle daemon'da gereksiz serialization önlenir).
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        // TASK-002-gap-12: kuyruğa eklenen öğe henüz semaphore iznini edinmediyse
+        // indirme yapmıyor; progress durumu "Queued" olmalı (gerçek transfer başlayınca
+        // indirme döngüsü callback'i "Downloading"e günceller). Aksi halde N oyun
+        // semaphore'da beklerken UI hepsini "Downloading" gösterir → "5 limit çalışmıyor"
+        // yanılgısı (aktif transfer yine download_semaphore ile 5 ile sınırlı).
+        data.progress[url] = json!({ "status": status, "progress": 0 });
+        data.queue.push(json!({
+            "url": url,
+            "platform": platform,
+            "game_name": name,
+            "task_id": task_id,
+            "status": "Queued",
+        }));
+        data.history.push(json!({
+            "game_name": name,
+            "platform": platform,
+            "url": url,
+            "status": status,
+            "progress": 0,
+            "message": message,
+            "timestamp": now_timestamp(),
+            "downloaded_size": 0,
+            "total_size": 0,
+            "task_id": task_id,
+            "entity_state": if status == "Queued" { "QUEUED" } else { "RETRY_SCHEDULED" },
+            "retry_count": retry_count,
+            "max_retries": retry::DEFAULT_MAX_RETRIES,
+            "retry_at": 0,
+        }));
+        // F6: queue/progress/history SSE'i `broadcast_loop` (250ms) yayınlar; `dirty`
+        // bayrağını set et (idle daemon'da gereksiz serialization önlenir).
+        state
+            .dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         (data.history.clone(), data.history_path.clone())
     };
     persist_history(&history_snapshot, &path);
@@ -1906,9 +2131,9 @@ fn push_queued_history_entry(
 fn classify_bridge_error(err: &BridgeError) -> ErrorClass {
     match err {
         BridgeError::Timeout(_) => ErrorClass::Transient,
-        BridgeError::DiskSpace(_)
-        | BridgeError::PermissionDenied(_)
-        | BridgeError::Extract(_) => ErrorClass::Permanent,
+        BridgeError::DiskSpace(_) | BridgeError::PermissionDenied(_) | BridgeError::Extract(_) => {
+            ErrorClass::Permanent
+        }
         _ => {
             let msg = err.to_string();
             retry::classify_error(&msg, None)
@@ -2013,13 +2238,14 @@ async fn decide_retry(
             let mut data = state.write();
             if !data.network_down.load(Ordering::SeqCst) {
                 data.network_down.store(true, Ordering::SeqCst);
-                eprintln!(
-                    "[TRACE] network_down -> TRUE (probe, url={})",
-                    url
-                );
+                eprintln!("[TRACE] network_down -> TRUE (probe, url={})", url);
                 for q in data.queue.iter_mut() {
                     let s = q.get("status").and_then(Value::as_str).unwrap_or("");
-                    if s == "Downloading" || s == "Retrying" || s == "Connecting" || s == "Verifying" {
+                    if s == "Downloading"
+                        || s == "Retrying"
+                        || s == "Connecting"
+                        || s == "Verifying"
+                    {
                         q["status"] = json!("Ağ bekleniyor");
                     }
                 }
@@ -2149,7 +2375,10 @@ async fn native_ddl_download(
     let shutdown = c_state.shutdown.clone();
     tokio::spawn(async move {
         let dl_t0 = std::time::Instant::now();
-        eprintln!("[TRACE] dl={} name={} spawned, waiting permit", c_task, c_name);
+        eprintln!(
+            "[TRACE] dl={} name={} spawned, waiting permit",
+            c_task, c_name
+        );
         // Faz 12.6d: eşzamanlı indirme sınırı (max_simultaneous_downloads).
         // `queue_clear` (stop-all) semaphore'u kapatınca `acquire` Err döner → görev
         // iptal edilir. Ayrıca `aborting` bayrağı geç klonlanan görevleri yakalar.
@@ -2189,7 +2418,10 @@ async fn native_ddl_download(
         loop {
             // TASK-002-gap-29: global pause aktifken yeni indirme başlamaz;
             // resume sinyaline kadar bekle (Python pause_all_downloads parity'si).
-            if c_state.global_paused.load(std::sync::atomic::Ordering::Relaxed) {
+            if c_state
+                .global_paused
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
                 let pr = c_state.read().pause_resume.clone();
                 // gap-30: missed-wakeup koruması. `notify_waiters()` bekleyen yokken
                 // çağrılırsa notify KAYBOLUR → indirme sonsuza dek park kalır
@@ -2199,36 +2431,46 @@ async fn native_ddl_download(
                 let _ = tokio::time::timeout(Duration::from_millis(1000), pr.notified()).await;
                 continue;
             }
-                // TASK-002-gap-32: ağ koptuysa indirmeyi başlatmadan PARK et.
-                let down = c_state.read().network_down.load(Ordering::Relaxed);
-                if down {
-                    if probe_connectivity().await {
-                        let mut d = c_state.write();
-                        d.network_down.store(false, Ordering::SeqCst);
-                        eprintln!(
-                            "[TRACE] network_down -> FALSE (restored, url={})",
-                            current_url
-                        );
-                        d.network_error_streak.store(0, Ordering::SeqCst);
-                        for q in d.queue.iter_mut() {
-                            if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
-                                q["status"] = json!("Downloading");
-                            }
+            // TASK-002-gap-32: ağ koptuysa indirmeyi başlatmadan PARK et.
+            let down = c_state.read().network_down.load(Ordering::Relaxed);
+            if down {
+                if probe_connectivity().await {
+                    let mut d = c_state.write();
+                    d.network_down.store(false, Ordering::SeqCst);
+                    eprintln!(
+                        "[TRACE] network_down -> FALSE (restored, url={})",
+                        current_url
+                    );
+                    d.network_error_streak.store(0, Ordering::SeqCst);
+                    for q in d.queue.iter_mut() {
+                        if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
+                            q["status"] = json!("Downloading");
                         }
-                        d.network_resume.notify_waiters();
-                        c_state.dirty.store(true, Ordering::SeqCst);
-                        // TASK-002-gap-32: yalnızca GERÇEK kesinti sonrası restore bildirimi.
-                        if d.network_outage_confirmed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                            crate::sse::publish(&c_state.events, "network_restored", &serde_json::json!({ "network_down": false }));
-                        }
-                    } else {
-                        c_state.write().network_outage_confirmed.store(true, Ordering::SeqCst);
-                        let nr = c_state.read().network_resume.clone();
-                        let _ = tokio::time::timeout(Duration::from_millis(1000), nr.notified()).await;
-                        continue;
                     }
+                    d.network_resume.notify_waiters();
+                    c_state.dirty.store(true, Ordering::SeqCst);
+                    // TASK-002-gap-32: yalnızca GERÇEK kesinti sonrası restore bildirimi.
+                    if d.network_outage_confirmed
+                        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                    {
+                        crate::sse::publish(
+                            &c_state.events,
+                            "network_restored",
+                            &serde_json::json!({ "network_down": false }),
+                        );
+                    }
+                } else {
+                    c_state
+                        .write()
+                        .network_outage_confirmed
+                        .store(true, Ordering::SeqCst);
+                    let nr = c_state.read().network_resume.clone();
+                    let _ = tokio::time::timeout(Duration::from_millis(1000), nr.notified()).await;
+                    continue;
                 }
-                let progress_state = c_state.clone();
+            }
+            let progress_state = c_state.clone();
             let progress_url = current_url.clone();
             let req = manager_download::http::DownloadRequest {
                 url: resolved.clone(),
@@ -2267,7 +2509,9 @@ async fn native_ddl_download(
                     let mut data = progress_state.write();
                     data.progress[&progress_url] =
                         json!({ "status": "Downloading", "progress": pct });
-                    progress_state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                    progress_state
+                        .dirty
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     // F6: progress SSE'i artık `broadcast_loop` (250ms batched delta) yayınlar.
                 });
             let dl_fut = downloader.download_async(&req);
@@ -2295,7 +2539,10 @@ async fn native_ddl_download(
 
             match result {
                 Ok(path) => {
-                    c_state.write().network_error_streak.store(0, Ordering::SeqCst);
+                    c_state
+                        .write()
+                        .network_error_streak
+                        .store(0, Ordering::SeqCst);
                     eprintln!(
                         "[TRACE] dl={} download OK, finalizing ({}ms since spawn)",
                         current_task_id,
@@ -2335,7 +2582,9 @@ async fn native_ddl_download(
                         &e.message(),
                         cls,
                         is_network,
-                    ).await {
+                    )
+                    .await
+                    {
                         RetryDecision::Retry { new_task_id, delay } => {
                             let dur = Duration::from_secs_f64(delay.max(0.0));
                             tokio::select! {
@@ -2476,9 +2725,17 @@ fn apply_symlink(src_path: &str) {
     #[cfg(windows)]
     let res = std::os::windows::fs::symlink_file(src, &link);
     #[cfg(not(any(unix, windows)))]
-    let res = Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "symlink unsupported"));
+    let res = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "symlink unsupported",
+    ));
     if let Err(e) = res {
-        tracing::warn!("symlink oluşturulamadı ({} → {}): {}", src.display(), link.display(), e);
+        tracing::warn!(
+            "symlink oluşturulamadı ({} → {}): {}",
+            src.display(),
+            link.display(),
+            e
+        );
     }
 }
 
@@ -2497,15 +2754,44 @@ fn is_torrent_url(url: &str) -> bool {
 
 /// Bilinen ROM / torrent dosya uzantısı (Python `check_extension_before_download`).
 fn known_torrent_extension(seg: &str) -> bool {
-    match std::path::Path::new(seg).extension().and_then(|e| e.to_str()) {
+    match std::path::Path::new(seg)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
         Some(ext) => {
             let ext = ext.to_ascii_lowercase();
             matches!(
                 ext.as_str(),
-                "torrent" | "zip" | "7z" | "rar" | "iso" | "chd" | "cue" | "bin"
-                    | "gdi" | "nes" | "snes" | "smc" | "gb" | "gbc" | "gba" | "nds"
-                    | "n64" | "z64" | "v64" | "psp" | "pbp" | "cso" | "img" | "ccd"
-                    | "m3u" | "sv" | "wbfs" | "wad" | "xci" | "nsp"
+                "torrent"
+                    | "zip"
+                    | "7z"
+                    | "rar"
+                    | "iso"
+                    | "chd"
+                    | "cue"
+                    | "bin"
+                    | "gdi"
+                    | "nes"
+                    | "snes"
+                    | "smc"
+                    | "gb"
+                    | "gbc"
+                    | "gba"
+                    | "nds"
+                    | "n64"
+                    | "z64"
+                    | "v64"
+                    | "psp"
+                    | "pbp"
+                    | "cso"
+                    | "img"
+                    | "ccd"
+                    | "m3u"
+                    | "sv"
+                    | "wbfs"
+                    | "wad"
+                    | "xci"
+                    | "nsp"
             )
         }
         None => false,
@@ -2610,7 +2896,11 @@ fn userdata_folder() -> Option<std::path::PathBuf> {
 /// klasörüne açılıyordu. Bu fonksiyon o açığı kapatır. Çıkarma hedefi zaten
 /// `dest_path.parent()` olduğundan, dest_path USERDATA'ya kaydırılınca çıkarma
 /// da otomatik olarak USERDATA'ya düşer.
-fn redirect_bios_dest(roms_dest: std::path::PathBuf, platform: &str, game_name: &str) -> std::path::PathBuf {
+fn redirect_bios_dest(
+    roms_dest: std::path::PathBuf,
+    platform: &str,
+    game_name: &str,
+) -> std::path::PathBuf {
     if manager_core::extract::is_bios_platform(&platform_folder_for(platform), platform) {
         if let Some(ud) = userdata_folder() {
             return ud.join(sanitize_file_name(game_name));
@@ -2674,30 +2964,51 @@ mod tests {
 
         let downloading = json!({ "status": "Downloading", "task_id": "t1", "url": "http://x" });
         assert!(is_active_history_entry(
-            &downloading, &queue_ids, &queue_urls, &retry_urls, &prog
+            &downloading,
+            &queue_ids,
+            &queue_urls,
+            &retry_urls,
+            &prog
         ));
 
         let queued_active = json!({ "status": "Queued", "task_id": "t1", "url": "http://x" });
         assert!(is_active_history_entry(
-            &queued_active, &queue_ids, &queue_urls, &retry_urls, &prog
+            &queued_active,
+            &queue_ids,
+            &queue_urls,
+            &retry_urls,
+            &prog
         ));
 
         // Queued ama ne kuyrukta ne de aktif → korunmaz.
-        let queued_orphan = json!({ "status": "Queued", "task_id": "nope", "url": "http://orphan" });
+        let queued_orphan =
+            json!({ "status": "Queued", "task_id": "nope", "url": "http://orphan" });
         assert!(!is_active_history_entry(
-            &queued_orphan, &queue_ids, &queue_urls, &retry_urls, &prog
+            &queued_orphan,
+            &queue_ids,
+            &queue_urls,
+            &retry_urls,
+            &prog
         ));
 
         // Tamamlanmış → korunmaz.
         let done = json!({ "status": "Download_OK", "task_id": "t1", "url": "http://x" });
         assert!(!is_active_history_entry(
-            &done, &queue_ids, &queue_urls, &retry_urls, &prog
+            &done,
+            &queue_ids,
+            &queue_urls,
+            &retry_urls,
+            &prog
         ));
 
         // Seeding her zaman korunur.
         let seeding = json!({ "status": "Seeding", "task_id": "x", "url": "http://y" });
         assert!(is_active_history_entry(
-            &seeding, &queue_ids, &queue_urls, &retry_urls, &prog
+            &seeding,
+            &queue_ids,
+            &queue_urls,
+            &retry_urls,
+            &prog
         ));
     }
 
@@ -2760,7 +3071,10 @@ mod tests {
             0,
         );
         let prog = state.read();
-        let entry = prog.progress.get(url).expect("queued entry in progress map");
+        let entry = prog
+            .progress
+            .get(url)
+            .expect("queued entry in progress map");
         assert_eq!(entry["status"], "Queued");
         assert_eq!(entry["progress"], 0);
         // Aynı anda kuyrukta görünür.
@@ -2770,26 +3084,38 @@ mod tests {
     #[tokio::test]
     async fn gap29_global_pause_flags_and_signals() {
         let state = AppState::empty();
-        assert!(!state.global_paused.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!state
+            .global_paused
+            .load(std::sync::atomic::Ordering::Relaxed));
         assert!(state.read().pause_signals.is_empty());
 
         // pause handler (native): global_paused=true + her aktif indirme sinyali tetiklenir.
-        let sig: std::sync::Arc<tokio::sync::Notify> = std::sync::Arc::new(tokio::sync::Notify::new());
+        let sig: std::sync::Arc<tokio::sync::Notify> =
+            std::sync::Arc::new(tokio::sync::Notify::new());
         {
             let mut d = state.write();
-            state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
-            d.pause_signals.insert("http://x/game.zip".to_string(), sig.clone());
+            state
+                .global_paused
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            d.pause_signals
+                .insert("http://x/game.zip".to_string(), sig.clone());
             sig.notify_one();
         }
-        assert!(state.global_paused.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(state
+            .global_paused
+            .load(std::sync::atomic::Ordering::Relaxed));
 
         // resume handler (native): global_paused=false + beklerenler uyandırılır.
         {
             let d = state.write();
-            state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+            state
+                .global_paused
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             d.pause_resume.notify_waiters();
         }
-        assert!(!state.global_paused.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!state
+            .global_paused
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[tokio::test]
@@ -2797,7 +3123,9 @@ mod tests {
         // native_ddl_download loop-top global pause kontrolünü taklit eder:
         // global_paused iken indirme başlamaz, resume sonrası devam eder.
         let state = AppState::empty();
-        state.global_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+            .global_paused
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let s = state.clone();
         let handle = tokio::spawn(async move {
             // loop başı: pause kontrolü
@@ -2811,7 +3139,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         {
             let d = state.write();
-            state.global_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+            state
+                .global_paused
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             d.pause_resume.notify_waiters();
         }
         handle.await.unwrap();
@@ -2873,7 +3203,8 @@ mod tests {
         let state = AppState::empty();
         {
             let mut d = state.write();
-            d.queue.push(json!({"task_id":"t1","status":"Downloading","game_name":"x","url":"u"}));
+            d.queue
+                .push(json!({"task_id":"t1","status":"Downloading","game_name":"x","url":"u"}));
         }
         let cls = classify_download_error(&DownloadError::Network("simulated".to_string()));
         assert_eq!(cls, ErrorClass::Transient);

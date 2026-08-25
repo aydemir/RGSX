@@ -30,5 +30,8 @@ export async function apiPost(path, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
   })
+  // TASK-012-gap-03 (bulgu 7): 4xx/5xx gövdesi JSON olsa bile başarı sayma —
+  // aksi halde cancel/pause/resume/remove hataları sessizce yutulur.
+  if (!r.ok) throw new Error(`${path} -> ${r.status}`)
   return r.json()
 }

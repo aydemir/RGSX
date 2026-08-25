@@ -77,15 +77,18 @@
 ## Fazlar
 
 ### Faz A — sessiz davranış hataları (en düşük risk)
-- [ ] `updateGamesList`: GET'e çevir + sahte başarı toast'u kaldır; endpoint gerçek işlev
-      kazanıncaya kadar buton dürüst davransın (hata mesajı veya gizleme). Gerçek gamelist-refresh
-      backend işi ayrı karar/görev (bulgu 2).
-- [ ] Grid seçenekleri `{3x3,3x4,4x3,4x4}` + Rust `Settings::validate` allowed-set doğrulaması
-      (bulgu 10-grid).
-- [ ] `apiPost` r.ok + cancel/pause/resume/remove hata bildirimi (toast) (bulgu 7).
-- [ ] `mode` kararı: backend'e gerçek 'now' desteği EKLE ya da UI'ı tek davranışa indir (dürüstlük);
-      karar bu görevde netleşecek (bulgu 4).
-- [ ] `seenHistory` üst sınırı + tekrar-toast politikası (bulgu 8).
+- [x] `updateGamesList`: 🔄 butonu + sahte başarı toast'u KALDIRILDI (kullanıcı kararı
+      2026-08-24: "butonu gizle"); endpoint gerçek işlev kazanana dek UI'da yok.
+      Gerçek gamelist-refresh backend işi ayrı karar/görev (bulgu 2).
+- [x] Grid seçenekleri `{3x3,3x4,4x3,4x4}` + Rust tarafında `normalize_grid` coercion
+      (Python `set_display_grid` parity: küme dışı → "3x4"); `Settings::normalized()`
+      public edildi, POST `/api/settings` kayıt yolu da normalize'dan geçer (bulgu 10-grid).
+- [x] `apiPost` r.ok kontrolü + cancel/pause/resume/remove hata toast'ları
+      (`action_failed` anahtarı 7 dile eklendi) (bulgu 7).
+- [x] `mode` kararı: UI tek davranışa indirildi (kullanıcı kararı 2026-08-24) —
+      ➕ butonu + `dlbtn.q` CSS + `dl_queue_title` i18n kaldırıldı; payload'dan `mode` düşürüldü.
+      Backend'e 'now' desteği eklenMEDİ (bulgu 4).
+- [x] `seenHistory` üst sınırı (500, FIFO düşüm) (bulgu 8).
 
 ### Faz B — TV modunu resmen emekliye ayır (SEÇENEK A, kullanıcı onaylı)
 - [ ] `rgsx-webui-spa` SKILL.md: `?mode=tv`/gamepad bölümleri kaldırılır; SPA = desktop WebUI,
@@ -125,3 +128,13 @@
   önceki dönemin emekliliği planlanmamış mirası. Kullanıcı onayıyla **Seçenek A** kilitlendi:
   `?mode=tv` resmen retire; Faz B buna göre yeniden yazıldı. (Ders: yön değişikliği kararı
   alındığı anda eski yönün aksiyonları da plana girilmeli.)
+- 2026-08-24 — **Faz A uygulandı** (karar: 🔄 butonu gizle + mode tek-davranış; bkz. Faz A
+  checklist). Rust: `manager-core/src/settings.rs` `normalize_grid` + `Settings::normalized()`,
+  `manager-http/src/api.rs` settings_post normalize yoluna bağlandı. WebUI: App.vue (🔄 butonu
+  kaldırımı, tek ⬇️, apiPost r.ok + hata toast'ları, seenHistory 500 sınırı, grid options,
+  ölü `.dlbtn.q` CSS), api.js, i18n.strings.js (3 ölü anahtar 7 dilde silindi,
+  `action_failed` 7 dile eklendi). dist/ yeniden build edildi.
+  **Bonus düzeltme:** settings testlerindeki RGSX_SETTINGS_PATH env yarışı kapatıldı
+  (ENV_LOCK; `background_theme_roundtrip_persisted` paralel koşumda düzenli kırmızıydı).
+  **Doğrulama:** `cargo test -p manager-core --lib` 73/73, `cargo test -p manager-http`
+  yeşil (28 lib + 114 contract + smoke), `webui npm run build` sıfır hata.
