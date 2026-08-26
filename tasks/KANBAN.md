@@ -24,6 +24,7 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 | 9 | `TASK-002-gap-14-game-filters.md` | game_filters saf mantık + Rust testi | 🟢 P2 test kapsamı açığı | TASK-006 (BELİRSİZ) |
 | 10 | `TASK-002-gap-15-rust-endpoint-tests.md` | Rust-only uç nokta testleri (languages/scan/es-input) + dil auto-detect | 🟢 P2 test kapsamı açığı | yok |
 | 11 | `TASK-002-gap-17-settings-schema.md` | Eksik ayar alanları (background_theme, web_service_at_boot, gamelist days, app_version, path model) | ⚪ P3 nice-to-have / round-trip veri kaybı | TASK-006 (BELİRSİZ) |
+| 12 | `TASK-014-api-404-json.md` | Statik modda `/api/*` bilinmeyen yollar JSON 404 dönsün (SPA fallback HTML 200'den ayrım; `api::fallback` zaten hazır, lib.rs bağlantısı düzeltilecek) | 🟡 P2 sessiz hata — eski istemci yanlış uca gidince HTML-200 alıp parse'ta boğuluyor | yok |
 
 ---
 
@@ -44,6 +45,7 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 - [ ] `TASK-002-gap-8` Stray temp + disk yazma izolasyonu — `tasks/gap/TASK-002-gap-8-stray-temp.md` (⚠️ 2026-08-18: `remove_dir_all` temizlik var; startup stray-temp reaper belirsiz)
 - [x] `TASK-002-gap-14` game_filters saf mantık + test — `tasks/gap/TASK-002-gap-14-game-filters.md` (✅ 2026-08-18: `api.rs:962` persist → `Settings.extra` + round-trip test)
 - [ ] `TASK-002-gap-15` Rust-only endpoint testleri + dil auto-detect — `tasks/gap/TASK-002-gap-15-rust-endpoint-tests.md` (⚠️ 2026-08-18: Rust endpoint testleri mevcut; `detect_lang`/`accept_language` = YOK)
+- [ ] `TASK-014` `/api/*` bilinmeyen yol → JSON 404 (statik mod SPA fallback ayrımı) — `tasks/gap/TASK-014-api-404-json.md` (🆕 2026-08-26: TASK-013 canlı smoke bulgusu; düzeltme küçük — lib.rs fallback bağlantısı)
 
 ### P3 — Nice-to-have
 - [ ] `TASK-002-gap-17` Settings şema parity (eksik ayar alanları) — `tasks/gap/TASK-002-gap-17-settings-schema.md` (⚠️ 2026-08-18: `web_service_at_boot`/`auto_extract` var; `background_theme`/`app_version`/`gamelist_days` = YOK)
