@@ -2,7 +2,7 @@
 
 - **id:** TASK-014
 - **title:** Router fallback birliği — statik (WebUI) modda `/api/*` istekleri SPA fallback'ine düşmesin
-- **status:** todo
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-26
 - **environment:** both
@@ -55,3 +55,11 @@ belirsiz şekilde boğulur; 404 sinyali hiç ulaşmaz.
 ## İlerleme
 
 - 2026-08-26 — Görev açıldı (TASK-013 smoke bulgusu); KANBAN'a sıra 12 olarak eklendi.
+- 2026-08-26 — Tamamlandı: `lib.rs` statik dal `.fallback(api::fallback)` bağlandı
+  (`route("/", get(index))` + `nest("/static", ...)` korundu). `is_spa_path` denetimi:
+  WebUI'de vue-router yok (tek sayfa, tab state `App.vue`) — mevcut liste Python
+  parity yollarını zaten karşılıyor, ekleme gerekmedi. Contract 105 → 109: statik modda
+  GET/POST `/api/nope` JSON 404 + `path`, `/settings` text/html, bilinmeyen non-API düz
+  404 (davranış değişikliği kilitlendi). Canlı smoke yeşil: `/api/qbittorrent/password-status`
+  404 application/json; POST `/api/qbittorrent/start` 404 JSON; `/settings` 200 text/html;
+  `/static/assets/*.js` 200; `/bogus/whatever` 404. Dosya `done/`a taşındı.

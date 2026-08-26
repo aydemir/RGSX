@@ -33,8 +33,9 @@ pub use state::{AppState, StateData};
 ///
 /// Route yolu 1:1 Python `do_GET`/`do_POST` dispatch'i; `/api/events` SSE.
 /// Statik katman (Faz 12a): `static_root` varsa `/static/*` `ServeDir` ile sunulur,
-/// `/` ve bilinmeyen SPA route'ları hydrate edilmiş `index.html` döndürür
-/// (client-side routing). `static_root` yoksa statik kapalı (404 fallback).
+/// bilinen SPA yolları hydrate edilmiş `index.html` döndürür; bilinmeyen
+/// `/api/*` yolları JSON 404 döndürür (TASK-014). `static_root` yoksa statik
+/// kapalı (aynı fallback).
 pub fn router(app: AppState) -> Router {
     let api = Router::new()
         .route("/api/platforms", get(api::platforms))
@@ -90,7 +91,7 @@ pub fn router(app: AppState) -> Router {
                     ServeDir::new(root.clone()).append_index_html_on_directories(false),
                 )),
             )
-            .fallback(api::index)
+            .fallback(api::fallback)
     } else {
         api.route("/", get(api::index)).fallback(api::fallback)
     };

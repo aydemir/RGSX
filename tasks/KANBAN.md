@@ -45,7 +45,7 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 - [ ] `TASK-002-gap-8` Stray temp + disk yazma izolasyonu — `tasks/gap/TASK-002-gap-8-stray-temp.md` (⚠️ 2026-08-18: `remove_dir_all` temizlik var; startup stray-temp reaper belirsiz)
 - [x] `TASK-002-gap-14` game_filters saf mantık + test — `tasks/gap/TASK-002-gap-14-game-filters.md` (✅ 2026-08-18: `api.rs:962` persist → `Settings.extra` + round-trip test)
 - [ ] `TASK-002-gap-15` Rust-only endpoint testleri + dil auto-detect — `tasks/gap/TASK-002-gap-15-rust-endpoint-tests.md` (⚠️ 2026-08-18: Rust endpoint testleri mevcut; `detect_lang`/`accept_language` = YOK)
-- [ ] `TASK-014` `/api/*` bilinmeyen yol → JSON 404 (statik mod SPA fallback ayrımı) — `tasks/gap/TASK-014-api-404-json.md` (🆕 2026-08-26: TASK-013 canlı smoke bulgusu; düzeltme küçük — lib.rs fallback bağlantısı)
+- [x] `TASK-014` `/api/*` bilinmeyen yol → JSON 404 (statik mod SPA fallback ayrımı) — `tasks/done/TASK-014-api-404-json.md` (✅ 2026-08-26: her iki dal `api::fallback`; contract 105→109; canlı smoke doğrulandı)
 
 ### P3 — Nice-to-have
 - [x] `TASK-002-gap-17` Settings şema parity (eksik ayar alanları) — `tasks/done/TASK-002-gap-17-settings-schema.md` (✅ 2026-08-26: dosya içi denetim — tek gerçek açık `background_theme`ydi, uygulandı; `app_version`/`gamelist_days` build sabiti, path model kasıtlı fark)

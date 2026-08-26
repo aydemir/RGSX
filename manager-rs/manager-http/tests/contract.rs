@@ -1587,6 +1587,54 @@ async fn test_spa_unknown_non_api_404() {
     let (status, _, _) = call_get(empty_app(), "/bogus/whatever").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------------------
+// TASK-014 — statik modda bilinmeyen /api/* JSON 404 döner (HTML 200 değil)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_static_api_unknown_get_404_json() {
+    let dir = static_app("api_unknown_get");
+    let (status, headers, body) = call_get(app_with_static(&dir), "/api/nope").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("application/json"));
+    assert_eq!(body["success"], json!(false));
+    assert_eq!(body["error"], json!("Route non trouvée"));
+    assert_eq!(body["path"], json!("/api/nope"));
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_api_unknown_post_404_json() {
+    let dir = static_app("api_unknown_post");
+    let (status, _, body) = call_post(app_with_static(&dir), "/api/nope", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["success"], json!(false));
+    assert_eq!(body["error"], json!("Route non trouvée"));
+    assert_eq!(body["path"], json!("/api/nope"));
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_spa_settings_html() {
+    let dir = static_app("spa_settings_html");
+    let (status, headers, _) = call_get(app_with_static(&dir), "/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(has_header(&headers, "content-type")
+        .unwrap()
+        .contains("text/html"));
+    cleanup_static_root(&dir);
+}
+
+#[tokio::test]
+async fn test_static_unknown_non_api_404() {
+    let dir = static_app("unknown_non_api");
+    let (status, _, _) = call_get(app_with_static(&dir), "/bogus/whatever").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    cleanup_static_root(&dir);
+}
 // ---------------------------------------------------------------------------
 // Faz 10c/3/2 — katalog proxy (CatalogSource)
 // ---------------------------------------------------------------------------
