@@ -5,26 +5,32 @@
 //! HTML-as-archive guard, arşiv imza reddi, kısmi kabul, cancel.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Bytes, Incoming};
-use hyper::service::service_fn;
 use hyper::header::{HeaderValue, RETRY_AFTER};
+use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use tokio::net::TcpListener;
 
 type MockBody = BoxBody<Bytes, std::convert::Infallible>;
 
-fn boxed<B: http_body::Body<Data = Bytes, Error = std::convert::Infallible> + Send + Sync + 'static>(
+fn boxed<
+    B: http_body::Body<Data = Bytes, Error = std::convert::Infallible> + Send + Sync + 'static,
+>(
     b: B,
 ) -> MockBody {
     b.boxed()
 }
 
-fn full_body(status: StatusCode, body: &'static [u8], content_type: &'static str) -> Response<MockBody> {
+fn full_body(
+    status: StatusCode,
+    body: &'static [u8],
+    content_type: &'static str,
+) -> Response<MockBody> {
     Response::builder()
         .status(status)
         .header("content-type", content_type)
@@ -83,7 +89,10 @@ fn req(url: String, dest: &std::path::Path) -> manager_download::http::DownloadR
 
 #[tokio::test]
 async fn simple_binary_download() {
-    let addr = mock_server(move |_p, _r| full_body(StatusCode::OK, b"PK\x03\x04binary-data", "application/zip")).await;
+    let addr = mock_server(move |_p, _r| {
+        full_body(StatusCode::OK, b"PK\x03\x04binary-data", "application/zip")
+    })
+    .await;
     let dir = std::env::temp_dir().join(format!("rgsx-hdl-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -112,9 +121,17 @@ async fn range_resume_uses_part() {
             // İlk istek: tam gövde, .part oluşturulur.
             full_body(StatusCode::OK, bytes, "application/octet-stream")
         } else if let Some(r) = range {
-            let off: usize = r.trim_start_matches("bytes=").trim_end_matches('-').parse().unwrap();
+            let off: usize = r
+                .trim_start_matches("bytes=")
+                .trim_end_matches('-')
+                .parse()
+                .unwrap();
             let rest = &bytes[off..];
-            let mut resp = full_body(StatusCode::PARTIAL_CONTENT, rest, "application/octet-stream");
+            let mut resp = full_body(
+                StatusCode::PARTIAL_CONTENT,
+                rest,
+                "application/octet-stream",
+            );
             resp.headers_mut().insert(
                 "content-range",
                 hyper::header::HeaderValue::from_str(&format!("bytes {off}-9/10")).unwrap(),
@@ -164,7 +181,10 @@ async fn browser_challenge_rejected() {
         .download_async(&req(format!("http://{addr}/f.zip"), &dest))
         .await
         .unwrap_err();
-    assert!(matches!(err, manager_download::http::DownloadError::BrowserChallenge));
+    assert!(matches!(
+        err,
+        manager_download::http::DownloadError::BrowserChallenge
+    ));
     assert!(!dest.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -182,7 +202,10 @@ async fn html_instead_of_archive_rejected() {
         .download_async(&req(format!("http://{addr}/f.zip"), &dest))
         .await
         .unwrap_err();
-    assert!(matches!(err, manager_download::http::DownloadError::HtmlInsteadOfPayload(_)));
+    assert!(matches!(
+        err,
+        manager_download::http::DownloadError::HtmlInsteadOfPayload(_)
+    ));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -190,7 +213,9 @@ async fn html_instead_of_archive_rejected() {
 async fn invalid_archive_signature_rejected() {
     // 200 + octet-stream ama içerik arşiv değil (ve HTML da değil) → InvalidArchive.
     let body: &'static [u8] = b"\x00\x01not a real archive payload garbage";
-    let addr = mock_server(move |_p, _r| full_body(StatusCode::OK, body, "application/octet-stream")).await;
+    let addr =
+        mock_server(move |_p, _r| full_body(StatusCode::OK, body, "application/octet-stream"))
+            .await;
     let dir = std::env::temp_dir().join(format!("rgsx-hdl-sig-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -199,7 +224,10 @@ async fn invalid_archive_signature_rejected() {
         .download_async(&req(format!("http://{addr}/f.zip"), &dest))
         .await
         .unwrap_err();
-    assert!(matches!(err, manager_download::http::DownloadError::InvalidArchive));
+    assert!(matches!(
+        err,
+        manager_download::http::DownloadError::InvalidArchive
+    ));
     assert!(!dest.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -208,7 +236,9 @@ async fn invalid_archive_signature_rejected() {
 async fn zip_archive_with_valid_signature_accepted() {
     // Tam 200 + geçerli PK imzası + uzantı .zip → kabul, guard tetiklenir.
     let body: &'static [u8] = b"PK\x03\x04zipdatawithEOCD\x50\x4b\x05\x06";
-    let addr = mock_server(move |_p, _r| full_body(StatusCode::OK, body, "application/octet-stream")).await;
+    let addr =
+        mock_server(move |_p, _r| full_body(StatusCode::OK, body, "application/octet-stream"))
+            .await;
     let dir = std::env::temp_dir().join(format!("rgsx-hdl-part-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -247,9 +277,7 @@ async fn cancel_aborts_stream() {
     let dl2 = dl.clone();
     let dest2 = dest.clone();
     let url = format!("http://{addr}/f.bin");
-    let handle = tokio::spawn(async move {
-        dl2.download_async(&req(url, &dest2)).await
-    });
+    let handle = tokio::spawn(async move { dl2.download_async(&req(url, &dest2)).await });
     // .part büyüdükçe stream'in ilerlediğini doğrula, sonra iptal et.
     let part_path = manager_download::http::stream::part_path_for(&dest);
     let mut waited = 0u32;
@@ -268,13 +296,10 @@ async fn cancel_aborts_stream() {
         }
     }
     flag.set();
-    let res = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        handle,
-    )
-    .await
-    .expect("cancel sonrası download askıda kaldı")
-    .unwrap();
+    let res = tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+        .await
+        .expect("cancel sonrası download askıda kaldı")
+        .unwrap();
     assert!(matches!(
         res,
         Err(manager_download::http::DownloadError::Canceled)
@@ -456,7 +481,11 @@ async fn lolroms_parent_warms_then_downloads() {
             full_body(StatusCode::OK, b"<html>parent</html>", "text/html")
         } else if path == "/games/nes/rom.zip" {
             assert!(n >= 1, "parent önce istenmeli");
-            full_body(StatusCode::OK, b"PK\x03\x04LOLBIN", "application/octet-stream")
+            full_body(
+                StatusCode::OK,
+                b"PK\x03\x04LOLBIN",
+                "application/octet-stream",
+            )
         } else {
             full_body(StatusCode::NOT_FOUND, b"", "text/plain")
         }
@@ -473,7 +502,10 @@ async fn lolroms_parent_warms_then_downloads() {
     let dest = dir.join("rom.zip");
     let out = manager_download::http::HttpDownloader::new()
         .with_client(client)
-        .download_async(&req("http://lolroms.com/games/nes/rom.zip".to_string(), &dest))
+        .download_async(&req(
+            "http://lolroms.com/games/nes/rom.zip".to_string(),
+            &dest,
+        ))
         .await
         .unwrap();
     assert_eq!(out, dest);

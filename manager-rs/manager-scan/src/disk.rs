@@ -32,7 +32,11 @@ pub fn disk_usage(path: &Path) -> DiskUsage {
             let used = total.saturating_sub(available);
             DiskUsage { total, used, free }
         }
-        None => DiskUsage { total: 0, used: 0, free: 0 },
+        None => DiskUsage {
+            total: 0,
+            used: 0,
+            free: 0,
+        },
     }
 }
 

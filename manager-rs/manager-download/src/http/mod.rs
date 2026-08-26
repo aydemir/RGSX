@@ -276,7 +276,8 @@ impl HttpDownloader {
         let mut effective_url = req.url.clone();
         let mut resolved_referer = req.referer.clone();
         if req.url.to_lowercase().contains("vimm.net") {
-            if let Some(info) = self::vimm::fetch_vimm_download_info(&self.client(), &req.url).await {
+            if let Some(info) = self::vimm::fetch_vimm_download_info(&self.client(), &req.url).await
+            {
                 effective_url = info.download_url.clone();
                 resolved_referer = Some(req.url.clone());
             }
@@ -333,7 +334,8 @@ impl HttpDownloader {
             );
         }
 
-        let variants = self.header_variants(req, resolved_referer.as_deref(), archive_cookie.as_deref());
+        let variants =
+            self.header_variants(req, resolved_referer.as_deref(), archive_cookie.as_deref());
 
         loop {
             attempt += 1;

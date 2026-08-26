@@ -46,7 +46,11 @@ fn draw_background<'a>(
     if stale {
         let mut pixels: Vec<u8> = Vec::with_capacity((w * h * 4) as usize);
         for y in 0..h {
-            let t = if h <= 1 { 0.0 } else { y as f32 / (h - 1) as f32 };
+            let t = if h <= 1 {
+                0.0
+            } else {
+                y as f32 / (h - 1) as f32
+            };
             pixels.push(lerp(top.0, bottom.0, t));
             pixels.push(lerp(top.1, bottom.1, t));
             pixels.push(lerp(top.2, bottom.2, t));
@@ -70,7 +74,11 @@ fn draw_background<'a>(
         None => {
             // Fallback: satır satır gradyan (eski davranış).
             for y in 0..h {
-                let t = if h <= 1 { 0.0 } else { y as f32 / (h - 1) as f32 };
+                let t = if h <= 1 {
+                    0.0
+                } else {
+                    y as f32 / (h - 1) as f32
+                };
                 canvas.set_draw_color(Color::RGB(
                     lerp(top.0, bottom.0, t),
                     lerp(top.1, bottom.1, t),
@@ -92,7 +100,12 @@ fn draw_background<'a>(
 /// Açılış loading bar'ı: SSE `catalog_update` ilerlemesini `state`'ten okur.
 /// `ready` oluncaya kadar (ya da hata varsa) ekranın ortasında çubuk çizer.
 /// Hata varsa belirgin kırmızı çerçeve çizer (metin yok — TTF erte).
-fn draw_loading(canvas: &mut Canvas<Window>, theme: &Theme, state: &SharedTvuiState, (w, h): (u32, u32)) {
+fn draw_loading(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    state: &SharedTvuiState,
+    (w, h): (u32, u32),
+) {
     let (pct, error) = {
         let s = tvui_lock(state);
         (s.pct.clamp(0, 100) as f32 / 100.0, s.error.clone())
@@ -154,19 +167,9 @@ fn draw_grid(
         let y = margin + row * (tile_h + gap);
         // Dolgu + neon çerçeve (her tile = bir gerçek platform).
         canvas.set_draw_color(to_color(theme.color("button_idle")));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(
-            x as i32,
-            y as i32,
-            tile_w,
-            tile_h,
-        ));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
         canvas.set_draw_color(to_color(theme.color("neon")));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(
-            x as i32,
-            y as i32,
-            tile_w,
-            tile_h,
-        ));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
     }
 }
 
@@ -181,7 +184,11 @@ fn draw_update_banner(
 ) {
     let (avail, stage, pct) = {
         let s = tvui_lock(state);
-        (s.update_available.clone(), s.update_stage.clone(), s.update_pct)
+        (
+            s.update_available.clone(),
+            s.update_stage.clone(),
+            s.update_pct,
+        )
     };
     let Some(ver) = avail else {
         return;
@@ -218,11 +225,7 @@ fn draw_update_banner(
 
 /// TASK-012m Faz 5 — apply sonrası "Yeniden başlatılıyor…" tam ekran overlay'i
 /// (metin yok; ttf erte — yalnız ayrı bir renk katmanı).
-fn draw_restart_screen(
-    canvas: &mut Canvas<Window>,
-    theme: &Theme,
-    (w, h): (u32, u32),
-) {
+fn draw_restart_screen(canvas: &mut Canvas<Window>, theme: &Theme, (w, h): (u32, u32)) {
     let c = to_color(theme.color("neon"));
     canvas.set_draw_color(c);
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
@@ -268,9 +271,8 @@ pub fn run_native_shell(
         .present_vsync()
         .build()
         .map_err(|e| format!("SDL2 canvas: {e}"))?;
-    let vsync = canvas.info().flags
-        & sdl2::sys::SDL_RendererFlags::SDL_RENDERER_PRESENTVSYNC as u32
-        != 0;
+    let vsync =
+        canvas.info().flags & sdl2::sys::SDL_RendererFlags::SDL_RENDERER_PRESENTVSYNC as u32 != 0;
     let texture_creator = canvas.texture_creator();
     let mut bg_cache: Option<(u32, u32, Texture)> = None;
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
@@ -290,7 +292,9 @@ pub fn run_native_shell(
                 } => break 'running,
                 // TASK-012-gap-01 Faz B (bulgu 15): kararlar SDL'siz `ui_decision`'da,
                 // HTTP arka planda (`apply_ui_action`) — event loop asla bloklanmaz.
-                Event::KeyDown { keycode: Some(kc), .. } => {
+                Event::KeyDown {
+                    keycode: Some(kc), ..
+                } => {
                     let key = match kc {
                         Keycode::R => Some(UiKey::Retry),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
@@ -315,13 +319,7 @@ pub fn run_native_shell(
             let mut s = tvui_lock(state);
             expire_stale_restart_at(&mut s, std::time::Instant::now());
         }
-        let dims = draw_background(
-            &mut canvas,
-            &texture_creator,
-            &mut bg_cache,
-            theme,
-            &preset,
-        );
+        let dims = draw_background(&mut canvas, &texture_creator, &mut bg_cache, theme, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
         // Yeniden başlatma ekranı (apply sonrası) — grid/loading yerine tam ekran.
         let restarting = tvui_lock(state).update_restarting;

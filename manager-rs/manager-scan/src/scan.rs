@@ -5,10 +5,10 @@ use walkdir::WalkDir;
 
 /// Tarama dahilindeki yaygın ROM/arşiv uzantıları.
 pub const ROM_EXTENSIONS: &[&str] = &[
-    "zip", "7z", "rar", "iso", "img", "bin", "cue", "gdi", "chd", "m3u", "rvz", "wbfs",
-    "nes", "smc", "sfc", "fig", "gb", "gbc", "gba", "nds", "n64", "z64", "v64", "ws",
-    "wsc", "pce", "sgx", "sms", "gg", "md", "gen", "smd", "a26", "a78", "col", "lnx",
-    "jag", "iso", "cso", "psx", "ps", "pbp", "32x", "sfx", "fat", "Vec", "rom",
+    "zip", "7z", "rar", "iso", "img", "bin", "cue", "gdi", "chd", "m3u", "rvz", "wbfs", "nes",
+    "smc", "sfc", "fig", "gb", "gbc", "gba", "nds", "n64", "z64", "v64", "ws", "wsc", "pce", "sgx",
+    "sms", "gg", "md", "gen", "smd", "a26", "a78", "col", "lnx", "jag", "iso", "cso", "psx", "ps",
+    "pbp", "32x", "sfx", "fat", "Vec", "rom",
 ];
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -58,7 +58,11 @@ pub fn scan_roms(root: &Path) -> ScanResult {
     }
 
     for platform_dir in std::fs::read_dir(root)
-        .map(|e| e.flatten().filter(|d| d.path().is_dir()).collect::<Vec<_>>())
+        .map(|e| {
+            e.flatten()
+                .filter(|d| d.path().is_dir())
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default()
     {
         let folder = platform_dir.file_name().to_string_lossy().to_string();

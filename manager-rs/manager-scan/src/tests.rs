@@ -52,8 +52,14 @@ mod tests {
         gamelist::write_rgsx_entry(&p, gamelist::GamelistVariant::Linux).unwrap();
         let games = gamelist::read_gamelist(&p).unwrap();
         assert_eq!(games.len(), 1);
-        assert_eq!(games[0].iter().find(|(k, _)| k == "path").unwrap().1, "./RGSX/RGSX.sh");
-        assert_eq!(games[0].iter().find(|(k, _)| k == "name").unwrap().1, "RGSX");
+        assert_eq!(
+            games[0].iter().find(|(k, _)| k == "path").unwrap().1,
+            "./RGSX/RGSX.sh"
+        );
+        assert_eq!(
+            games[0].iter().find(|(k, _)| k == "name").unwrap().1,
+            "RGSX"
+        );
     }
 
     #[test]
@@ -61,18 +67,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("gamelist.xml");
         // Önce başka bir oyun yaz (merge=False ile linux tarzı tek entry).
-        gamelist::write_gamelist(
-            &p,
-            &[("path", "./other/game.sh"), ("name", "Other")],
-            false,
-        )
-        .unwrap();
+        gamelist::write_gamelist(&p, &[("path", "./other/game.sh"), ("name", "Other")], false)
+            .unwrap();
         // Sonra windows merge ile RGSX ekle.
         gamelist::write_rgsx_entry(&p, gamelist::GamelistVariant::Windows).unwrap();
         let games = gamelist::read_gamelist(&p).unwrap();
         assert_eq!(games.len(), 2);
-        assert!(games.iter().any(|g| g.iter().any(|(k, v)| k == "name" && v == "Other")));
-        assert!(games.iter().any(|g| g.iter().any(|(k, v)| k == "path" && v == "./RGSX Retrobat.bat")));
+        assert!(games
+            .iter()
+            .any(|g| g.iter().any(|(k, v)| k == "name" && v == "Other")));
+        assert!(games.iter().any(|g| g
+            .iter()
+            .any(|(k, v)| k == "path" && v == "./RGSX Retrobat.bat")));
     }
 
     #[test]

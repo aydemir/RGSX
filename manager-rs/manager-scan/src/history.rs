@@ -30,7 +30,13 @@ pub fn match_history_local(entry: &serde_json::Value, roms_folder: &Path) -> Vec
         entry.get("platform").and_then(|v| v.as_str()),
     ) {
         if !lf.is_empty() && !plat.is_empty() {
-            candidates.push(roms_folder.join(plat).join(lf).to_string_lossy().to_string());
+            candidates.push(
+                roms_folder
+                    .join(plat)
+                    .join(lf)
+                    .to_string_lossy()
+                    .to_string(),
+            );
         }
     }
 

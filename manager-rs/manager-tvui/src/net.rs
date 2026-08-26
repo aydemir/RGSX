@@ -1,4 +1,4 @@
-﻿//! TASK-012h Faz 2c - TVUI tarafı SSE istemcisi (senkron, ureq).
+//! TASK-012h Faz 2c - TVUI tarafı SSE istemcisi (senkron, ureq).
 //!
 //! manager-http `/api/events` akisini dinler; `catalog_update` olaylarini
 //! paylasilan `TvuiState`'e yazar. SDL2 dongusu bunu okuyup loading bar'ini cizer.
@@ -110,7 +110,10 @@ fn apply_catalog_update(state: &SharedTvuiState, data: &serde_json::Value) {
     if let Some(stage) = data.get("stage").and_then(|v| v.as_str()) {
         s.stage = stage.to_string();
         if stage == "ready" {
-            let ok = data.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            let ok = data
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             s.loading = false;
             if ok {
                 // Başarı: hazır say, hata temizle.
@@ -360,7 +363,11 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
     } else {
         return;
     };
-    if obj.get("available").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if obj
+        .get("available")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         if let Some(v) = obj.get("version").and_then(|x| x.as_str()) {
             tvui_lock(state).update_available = Some(v.to_string());
         }
@@ -380,10 +387,7 @@ fn apply_manager_update(state: &SharedTvuiState, data: &serde_json::Value) {
         let mut s = tvui_lock(state);
         s.update_stage = Some(stage.to_string());
         if stage == "downloading" {
-            s.update_pct = obj
-                .get("percent")
-                .and_then(|p| p.as_u64())
-                .unwrap_or(0) as u32;
+            s.update_pct = obj.get("percent").and_then(|p| p.as_u64()).unwrap_or(0) as u32;
         }
     }
 }
@@ -474,7 +478,9 @@ fn parse_download_response(v: &serde_json::Value) -> TriggerResult {
             false,
             format!(
                 "hata: {}",
-                v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+                v.get("error")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("bilinmiyor")
             ),
         )
     }
@@ -489,7 +495,9 @@ fn parse_apply_response(v: &serde_json::Value) -> TriggerResult {
             false,
             format!(
                 "hata: {}",
-                v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+                v.get("error")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("bilinmiyor")
             ),
         )
     }
@@ -522,7 +530,9 @@ fn parse_retry_response(v: &serde_json::Value) -> TriggerResult {
             false,
             format!(
                 "hata: {}",
-                v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+                v.get("error")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("bilinmiyor")
             ),
         )
     }
@@ -643,7 +653,8 @@ mod tests {
 
     #[test]
     fn parse_sse_frame_extracts_event_and_data() {
-        let frame = "event: catalog_update\ndata: {\"stage\":\"download\",\"pct\":42,\"total\":1000}\n\n";
+        let frame =
+            "event: catalog_update\ndata: {\"stage\":\"download\",\"pct\":42,\"total\":1000}\n\n";
         let (ev, data) = parse_sse_frame(frame).expect("frame cozulmeli");
         assert_eq!(ev, "catalog_update");
         assert_eq!(data["pct"], 42);
@@ -665,10 +676,7 @@ mod tests {
             &serde_json::json!({"stage":"download","pct":10,"total":500}),
         );
         assert_eq!(state.lock().unwrap().pct, 10);
-        apply_catalog_update(
-            &state,
-            &serde_json::json!({"stage":"ready","success":true}),
-        );
+        apply_catalog_update(&state, &serde_json::json!({"stage":"ready","success":true}));
         let s = state.lock().unwrap();
         assert!(s.ready);
         assert!(!s.loading);
@@ -846,9 +854,15 @@ mod tests {
             &state,
             &serde_json::json!({"available": true, "version": "2.0.0", "url": "x", "sha256": "y"}),
         );
-        assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("2.0.0"));
+        assert_eq!(
+            state.lock().unwrap().update_available.as_deref(),
+            Some("2.0.0")
+        );
         // Faz B (bulgu 8): available:false → bayat banner temizlenir.
-        apply_manager_update(&state, &serde_json::json!({"available": false, "version": "9.9.9"}));
+        apply_manager_update(
+            &state,
+            &serde_json::json!({"available": false, "version": "9.9.9"}),
+        );
         assert_eq!(state.lock().unwrap().update_available, None);
     }
 
@@ -879,11 +893,20 @@ mod tests {
                 "manager_update": {"available": true, "version": "3.1.0", "url": "u", "sha256": "s"}
             }),
         );
-        assert_eq!(state.lock().unwrap().update_available.as_deref(), Some("3.1.0"));
+        assert_eq!(
+            state.lock().unwrap().update_available.as_deref(),
+            Some("3.1.0")
+        );
         // Stream event şekli: available kökte.
         let s2: SharedTvuiState = Arc::new(Mutex::new(TvuiState::default()));
-        apply_manager_update(&s2, &serde_json::json!({"available": true, "version": "4.0.0"}));
-        assert_eq!(s2.lock().unwrap().update_available.as_deref(), Some("4.0.0"));
+        apply_manager_update(
+            &s2,
+            &serde_json::json!({"available": true, "version": "4.0.0"}),
+        );
+        assert_eq!(
+            s2.lock().unwrap().update_available.as_deref(),
+            Some("4.0.0")
+        );
     }
 
     #[test]
@@ -924,7 +947,10 @@ mod tests {
         let mut e = base.clone();
         e.error = Some("katalog hazirlanamadi".to_string());
         assert_eq!(ui_decision(&e, UiKey::Retry), Some(UiAction::RetryCatalog));
-        assert_eq!(ui_decision(&e, UiKey::Confirm), Some(UiAction::ContinueOffline));
+        assert_eq!(
+            ui_decision(&e, UiKey::Confirm),
+            Some(UiAction::ContinueOffline)
+        );
         // Çevrimdışıya geçildikten sonra tekrar Enter nötrdür.
         let mut off = e.clone();
         off.offline = true;
@@ -932,7 +958,10 @@ mod tests {
         // Güncelleme akışı: available → download, ready → apply, restarting → nötr.
         let mut u = base.clone();
         u.update_available = Some("2.0.0".to_string());
-        assert_eq!(ui_decision(&u, UiKey::Confirm), Some(UiAction::UpdateDownload));
+        assert_eq!(
+            ui_decision(&u, UiKey::Confirm),
+            Some(UiAction::UpdateDownload)
+        );
         u.update_stage = Some("ready".to_string());
         assert_eq!(ui_decision(&u, UiKey::Confirm), Some(UiAction::UpdateApply));
         u.update_restarting = true;
@@ -940,7 +969,10 @@ mod tests {
         // İptal yalnız downloading aşamasında anlamlı.
         let mut c = base.clone();
         c.update_stage = Some("downloading".to_string());
-        assert_eq!(ui_decision(&c, UiKey::CancelUpdate), Some(UiAction::UpdateCancel));
+        assert_eq!(
+            ui_decision(&c, UiKey::CancelUpdate),
+            Some(UiAction::UpdateCancel)
+        );
     }
 
     #[test]

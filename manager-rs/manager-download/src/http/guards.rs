@@ -14,8 +14,8 @@ pub fn is_browser_challenge(status: u16, body_prefix: &[u8]) -> bool {
     if !matches!(status, 403 | 429 | 503) {
         return false;
     }
-    let head = String::from_utf8_lossy(&body_prefix[..body_prefix.len().min(4000)])
-        .to_ascii_lowercase();
+    let head =
+        String::from_utf8_lossy(&body_prefix[..body_prefix.len().min(4000)]).to_ascii_lowercase();
     let markers = [
         "just a moment",
         "cf_chl_opt",
@@ -41,11 +41,9 @@ pub fn looks_like_html_or_challenge(data: &[u8]) -> bool {
         b"cf-chl",
         b"challenge-platform",
     ];
-    markers.iter().any(|m| {
-        head
-            .windows(m.len())
-            .any(|w| w.eq_ignore_ascii_case(m))
-    })
+    markers
+        .iter()
+        .any(|m| head.windows(m.len()).any(|w| w.eq_ignore_ascii_case(m)))
 }
 
 /// Arşiv uzantıları (.7z/.zip/.rar) için dosya imza kontrolü (Python
@@ -63,10 +61,7 @@ pub fn matches_expected_archive_signature(file_path: &Path, head: &[u8]) -> bool
                 || head.starts_with(b"PK\x05\x06")
                 || head.starts_with(b"PK\x07\x08")
         }
-        "rar" => {
-            head.starts_with(b"Rar!\x1a\x07\x00")
-                || head.starts_with(b"Rar!\x1a\x07\x01\x00")
-        }
+        "rar" => head.starts_with(b"Rar!\x1a\x07\x00") || head.starts_with(b"Rar!\x1a\x07\x01\x00"),
         _ => true,
     }
 }
@@ -130,15 +125,17 @@ fn zip_validates_central_directory(file_path: &Path) -> bool {
     // Son 64KB + EOCD tarama penceresi.
     let window = size.min(65536) as usize;
     let mut tail = vec![0u8; window];
-    if reader.seek(std::io::SeekFrom::End(-(window as i64))).is_err() {
+    if reader
+        .seek(std::io::SeekFrom::End(-(window as i64)))
+        .is_err()
+    {
         return false;
     }
     if reader.read_exact(&mut tail).is_err() {
         return false;
     }
     // EOCD imzası: PK\x05\x06.
-    tail.windows(4)
-        .any(|w| w == b"PK\x05\x06")
+    tail.windows(4).any(|w| w == b"PK\x05\x06")
 }
 
 /// Content-Range başlığından toplam boyut ('bytes 0-99/1000' -> 1000). Python
@@ -171,7 +168,9 @@ mod tests {
     fn html_or_challenge_markers() {
         assert!(looks_like_html_or_challenge(b"<html><body>"));
         assert!(looks_like_html_or_challenge(b"<!DOCTYPE html>"));
-        assert!(looks_like_html_or_challenge(b"Cloudflare challenge-platform"));
+        assert!(looks_like_html_or_challenge(
+            b"Cloudflare challenge-platform"
+        ));
         assert!(!looks_like_html_or_challenge(b"PK\x03\x04binary"));
     }
 

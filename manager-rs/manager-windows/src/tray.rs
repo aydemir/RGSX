@@ -15,7 +15,9 @@ use std::sync::mpsc::TryRecvError;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, PostQuitMessage, MSG};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, PostQuitMessage, MSG,
+};
 
 use crate::autostart;
 
@@ -118,7 +120,13 @@ fn load_icon(path: &str) -> Icon {
 fn build_menu(autostart_checked: bool) -> (Menu, Option<CheckMenuItem>) {
     let open_ui = MenuItem::with_id(ID_OPEN_UI, "Open Web UI", true, None);
     let settings = MenuItem::with_id(ID_SETTINGS, "Ayarlar", true, None);
-    let autostart = CheckMenuItem::with_id(ID_AUTOSTART, "Auto-start on boot", true, autostart_checked, None);
+    let autostart = CheckMenuItem::with_id(
+        ID_AUTOSTART,
+        "Auto-start on boot",
+        true,
+        autostart_checked,
+        None,
+    );
     let downloads = MenuItem::with_id(ID_DOWNLOADS, "Downloads folder", true, None);
     let logs = MenuItem::with_id(ID_LOGS, "Logs folder", true, None);
     let quit = MenuItem::with_id(ID_QUIT, "Exit", true, None);
@@ -139,8 +147,12 @@ fn drain_menu_events(tx: &mpsc::Sender<TrayAction>, autostart_item: Option<&Chec
     // MenuEvent::receiver() globaldir; o anki MenuEvent'leri boşalt.
     while let Ok(event) = MenuEvent::receiver().try_recv() {
         match event.id().as_ref() {
-            ID_OPEN_UI => { let _ = tx.send(TrayAction::OpenUi); }
-            ID_SETTINGS => { let _ = tx.send(TrayAction::OpenSettings); }
+            ID_OPEN_UI => {
+                let _ = tx.send(TrayAction::OpenUi);
+            }
+            ID_SETTINGS => {
+                let _ = tx.send(TrayAction::OpenSettings);
+            }
             ID_AUTOSTART => {
                 // Thread içinde: registry toggle + checkbox güncelle (MenuItem burada yaşar).
                 let enabled = autostart::is_enabled();
@@ -153,12 +165,19 @@ fn drain_menu_events(tx: &mpsc::Sender<TrayAction>, autostart_item: Option<&Chec
                     item.set_checked(!enabled);
                 }
                 match result {
-                    Ok(()) => eprintln!("[tray] auto-start {}", if enabled { "kapatıldı" } else { "açıldı" }),
+                    Ok(()) => eprintln!(
+                        "[tray] auto-start {}",
+                        if enabled { "kapatıldı" } else { "açıldı" }
+                    ),
                     Err(e) => eprintln!("[tray] auto-start güncellenemedi: {e}"),
                 }
             }
-            ID_DOWNLOADS => { let _ = tx.send(TrayAction::OpenDownloads); }
-            ID_LOGS => { let _ = tx.send(TrayAction::OpenLogs); }
+            ID_DOWNLOADS => {
+                let _ = tx.send(TrayAction::OpenDownloads);
+            }
+            ID_LOGS => {
+                let _ = tx.send(TrayAction::OpenLogs);
+            }
             ID_QUIT => {
                 let _ = tx.send(TrayAction::Quit);
                 // Tray thread'i `GetMessageW` pump döngüsünde; Quit'te `WM_QUIT`
@@ -166,7 +185,9 @@ fn drain_menu_events(tx: &mpsc::Sender<TrayAction>, autostart_item: Option<&Chec
                 // "systray Exit kapatmıyor" sorununun Windows kök nedeni.
                 // `drain_menu_events` zaten bu thread'de çalıştığı için doğrudan
                 // `PostQuitMessage` güvenlidir.
-                unsafe { PostQuitMessage(0); }
+                unsafe {
+                    PostQuitMessage(0);
+                }
             }
             _ => {}
         }

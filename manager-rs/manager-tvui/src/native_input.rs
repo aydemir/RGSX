@@ -203,12 +203,12 @@ mod gilrs_impl {
     /// Böylece ES `id` (custom remap dahil) birebir eşlenir.
     fn gilrs_button_to_id(btn: Button) -> u32 {
         match btn {
-            Button::South => 0,      // a
-            Button::East => 1,       // b
-            Button::North => 3,      // y
-            Button::West => 2,       // x
-            Button::C => 8,          // select benzeri (share)
-            Button::Z => 9,          // start benzeri (guide)
+            Button::South => 0, // a
+            Button::East => 1,  // b
+            Button::North => 3, // y
+            Button::West => 2,  // x
+            Button::C => 8,     // select benzeri (share)
+            Button::Z => 9,     // start benzeri (guide)
             Button::DPadUp => 12,
             Button::DPadDown => 13,
             Button::DPadLeft => 14,

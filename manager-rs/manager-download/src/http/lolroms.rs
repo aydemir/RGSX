@@ -52,10 +52,13 @@ const LOLROMS_QUERY_SAFE: &AsciiSet = &NON_ALPHANUMERIC
 /// tam eşleşme veya `.lolroms.com` alt-etki alanı denetlenir.
 pub fn is_lolroms_url(url: &str) -> bool {
     match url::Url::parse(url) {
-        Ok(u) => u.host_str().map(|h| {
-            let h = h.to_ascii_lowercase();
-            h == "lolroms.com" || h.ends_with(".lolroms.com")
-        }).unwrap_or(false),
+        Ok(u) => u
+            .host_str()
+            .map(|h| {
+                let h = h.to_ascii_lowercase();
+                h == "lolroms.com" || h.ends_with(".lolroms.com")
+            })
+            .unwrap_or(false),
         Err(_) => false,
     }
 }
@@ -70,7 +73,9 @@ pub fn normalize_lolroms_url(url: &str) -> String {
     };
     let raw_path = u.path().to_string();
     let norm_path = percent_encode(
-        percent_decode_str(&raw_path).collect::<Vec<u8>>().as_slice(),
+        percent_decode_str(&raw_path)
+            .collect::<Vec<u8>>()
+            .as_slice(),
         LOLROMS_PATH_SAFE,
     )
     .to_string();
@@ -93,7 +98,11 @@ pub fn parent_url(url: &str) -> String {
     match url::Url::parse(&norm) {
         Ok(mut u) => {
             let path = u.path().to_string();
-            let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("").to_string();
+            let parent = path
+                .rsplit_once('/')
+                .map(|(p, _)| p)
+                .unwrap_or("")
+                .to_string();
             let parent = format!("{}/", parent.trim_end_matches('/'));
             u.set_path(&parent);
             u.set_query(None);

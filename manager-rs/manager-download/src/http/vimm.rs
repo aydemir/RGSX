@@ -41,24 +41,26 @@ fn re_form_block() -> &'static Regex {
 fn re_media_a() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r#"(?i)<input\b[^>]*\bname\s*=\s*["']mediaId["'][^>]*\bvalue\s*=\s*(["'])(.*?)["']"#)
-            .unwrap()
+        Regex::new(
+            r#"(?i)<input\b[^>]*\bname\s*=\s*["']mediaId["'][^>]*\bvalue\s*=\s*(["'])(.*?)["']"#,
+        )
+        .unwrap()
     })
 }
 
 fn re_media_b() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r#"(?i)<input\b[^>]*\bvalue\s*=\s*(["'])([0-9]+)["'][^>]*\bname\s*=\s*["']mediaId["']"#)
-            .unwrap()
+        Regex::new(
+            r#"(?i)<input\b[^>]*\bvalue\s*=\s*(["'])([0-9]+)["'][^>]*\bname\s*=\s*["']mediaId["']"#,
+        )
+        .unwrap()
     })
 }
 
 fn re_dl_size() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        Regex::new(r#"(?i)\bid\s*=\s*["']dl_size["'][^>]*>\s*([^<]+?)\s*<"#).unwrap()
-    })
+    R.get_or_init(|| Regex::new(r#"(?i)\bid\s*=\s*["']dl_size["'][^>]*>\s*([^<]+?)\s*<"#).unwrap())
 }
 
 fn re_js_media() -> &'static Regex {
@@ -73,9 +75,7 @@ fn re_js_zipped() -> &'static Regex {
 
 fn re_cd_filename() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        Regex::new(r#"(?i)filename\*?=(?:UTF-8'')?["']?([^"';]+)"#).unwrap()
-    })
+    R.get_or_init(|| Regex::new(r#"(?i)filename\*?=(?:UTF-8'')?["']?([^"';]+)"#).unwrap())
 }
 
 /// HTML varlık referanslarını çözür (Python `html.unescape` eşleniği, sınırlı).
@@ -98,10 +98,15 @@ fn html_unescape(s: &str) -> String {
                 "quot" => out.push('"'),
                 "apos" | "#39" => out.push('\''),
                 other if other.starts_with('#') => {
-                    let code = other[1..]
-                        .trim_start_matches('x')
-                        .trim_start_matches('X');
-                    if let Ok(cp) = u32::from_str_radix(code, if other.contains('x') || other.contains('X') { 16 } else { 10 }) {
+                    let code = other[1..].trim_start_matches('x').trim_start_matches('X');
+                    if let Ok(cp) = u32::from_str_radix(
+                        code,
+                        if other.contains('x') || other.contains('X') {
+                            16
+                        } else {
+                            10
+                        },
+                    ) {
                         if let Some(ch) = char::from_u32(cp) {
                             out.push(ch);
                         } else {
@@ -183,7 +188,11 @@ pub fn extract_vimm_download_info(html: &str, page_url: &str) -> Option<VimmDown
 
     let base = url::Url::parse(page_url).ok()?.join(&action).ok()?;
     let base_download_url = base.to_string();
-    let separator = if base_download_url.contains('?') { '&' } else { '?' };
+    let separator = if base_download_url.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
     let download_url = format!("{}{}mediaId={}", base_download_url, separator, media_id);
 
     Some(VimmDownloadInfo {
@@ -280,7 +289,10 @@ mod tests {
         let info = extract_vimm_download_info(html, "https://vimm.net/roms/nes/1").unwrap();
         assert_eq!(info.media_id, "12345");
         assert_eq!(info.base_download_url, "https://vimm.net/roms/download/42");
-        assert_eq!(info.download_url, "https://vimm.net/roms/download/42?mediaId=12345");
+        assert_eq!(
+            info.download_url,
+            "https://vimm.net/roms/download/42?mediaId=12345"
+        );
         assert_eq!(info.size_hint, 512 * 1024 * 1024);
     }
 
@@ -301,6 +313,8 @@ mod tests {
 
     #[test]
     fn no_form_means_none() {
-        assert!(extract_vimm_download_info("<form id='other'></form>", "https://vimm.net/p").is_none());
+        assert!(
+            extract_vimm_download_info("<form id='other'></form>", "https://vimm.net/p").is_none()
+        );
     }
 }

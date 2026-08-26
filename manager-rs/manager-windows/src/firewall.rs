@@ -38,7 +38,11 @@ fn run(args: &[&str]) -> Result<String, FirewallError> {
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     if !out.status.success() {
         let detail = if !stderr.is_empty() { stderr } else { stdout };
-        return Err(FirewallError::Io(format!("({}): {}", out.status, detail.trim())));
+        return Err(FirewallError::Io(format!(
+            "({}): {}",
+            out.status,
+            detail.trim()
+        )));
     }
     Ok(stdout)
 }

@@ -117,7 +117,10 @@ mod tests {
         ];
         let v = vimm_retry_headers(&base);
         assert_eq!(v.len(), 2);
-        assert!(v[0].headers.iter().any(|(k, val)| k == "Connection" && val == "close"));
+        assert!(v[0]
+            .headers
+            .iter()
+            .any(|(k, val)| k == "Connection" && val == "close"));
     }
 
     #[test]

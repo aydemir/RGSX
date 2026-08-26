@@ -205,6 +205,9 @@ mod tests {
     fn onefichier_not_configured_without_key() {
         std::env::remove_var("RGSX_1FICHIER_KEY");
         let r = OneFichierResolver::from_env();
-        assert!(matches!(r.resolve("https://1fichier.com/x"), Err(ResolveError::NotConfigured(_))));
+        assert!(matches!(
+            r.resolve("https://1fichier.com/x"),
+            Err(ResolveError::NotConfigured(_))
+        ));
     }
 }

@@ -72,14 +72,16 @@ pub fn normalize_archive_org_download_path(identifier: &str, rest: &str) -> Stri
         Some(idx) => {
             let archive_name_raw = &rest[..idx];
             let member_raw = &rest[idx + 1..];
-            let archive_name =
-                percent_decode_str(archive_name_raw).decode_utf8_lossy().to_string();
+            let archive_name = percent_decode_str(archive_name_raw)
+                .decode_utf8_lossy()
+                .to_string();
             let lower = archive_name.to_lowercase();
             if lower.ends_with(".zip") || lower.ends_with(".rar") || lower.ends_with(".7z") {
-                let enc_name =
-                    percent_encode(archive_name.as_bytes(), SAFE_SLASH).to_string();
+                let enc_name = percent_encode(archive_name.as_bytes(), SAFE_SLASH).to_string();
                 let enc_member = percent_encode(
-                    percent_decode_str(member_raw).decode_utf8_lossy().as_bytes(),
+                    percent_decode_str(member_raw)
+                        .decode_utf8_lossy()
+                        .as_bytes(),
                     SAFE_SLASH,
                 )
                 .to_string()
@@ -191,7 +193,12 @@ pub async fn fetch_archive_metadata(
     url: &str,
     cookie: Option<&str>,
 ) -> Option<ArchiveMeta> {
-    let identifier = url.split("/download/").nth(1)?.split('/').next()?.to_string();
+    let identifier = url
+        .split("/download/")
+        .nth(1)?
+        .split('/')
+        .next()?
+        .to_string();
     if identifier.is_empty() {
         return None;
     }
@@ -208,7 +215,10 @@ pub async fn fetch_archive_metadata(
     }
     let text = resp.text().await.ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let server = v.get("server").and_then(|s| s.as_str()).map(|s| s.to_string());
+    let server = v
+        .get("server")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
     let directory = v.get("dir").and_then(|s| s.as_str()).map(|s| s.to_string());
     let is_dark = v
         .get("metadata")
@@ -220,7 +230,11 @@ pub async fn fetch_archive_metadata(
         .and_then(|f| f.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|x| x.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                .filter_map(|x| {
+                    x.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -265,7 +279,13 @@ mod tests {
 
     #[test]
     fn view_url_shape() {
-        let u = build_view_archive_url("https", "ia800.us.archive.org", "/dir", "f.zip", "inner/a.bin");
+        let u = build_view_archive_url(
+            "https",
+            "ia800.us.archive.org",
+            "/dir",
+            "f.zip",
+            "inner/a.bin",
+        );
         assert!(u.contains("view_archive.php?archive="));
         assert!(u.contains("&file="));
         // SAFE_SLASH: '/' encode edilmez.

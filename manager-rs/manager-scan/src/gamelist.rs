@@ -100,11 +100,7 @@ pub fn read_gamelist(path: &Path) -> Result<Vec<GameFields>, String> {
 /// `gamelist.xml` yazar. `merge=true` (Windows) ise mevcut entry'ler korunur ve
 /// RGSX path'li eski entry silinip yenisi eklenir; `merge=false` (Linux) ise dosya
 /// yalnızca RGSX entry'sinden oluşur.
-pub fn write_gamelist(
-    path: &Path,
-    entry: &[(&str, &str)],
-    merge: bool,
-) -> Result<(), String> {
+pub fn write_gamelist(path: &Path, entry: &[(&str, &str)], merge: bool) -> Result<(), String> {
     let entry_path = entry
         .iter()
         .find(|(k, _)| *k == "path")
@@ -125,37 +121,37 @@ pub fn write_gamelist(
 
     let mut out = Vec::new();
     let mut w = quick_xml::Writer::new(&mut out);
-    w.write_event(quick_xml::events::Event::Start(quick_xml::events::BytesStart::new(
-        "gameList",
-    )))
+    w.write_event(quick_xml::events::Event::Start(
+        quick_xml::events::BytesStart::new("gameList"),
+    ))
     .map_err(|e| e.to_string())?;
     for game in &games {
-        w.write_event(quick_xml::events::Event::Start(quick_xml::events::BytesStart::new(
-            "game",
-        )))
+        w.write_event(quick_xml::events::Event::Start(
+            quick_xml::events::BytesStart::new("game"),
+        ))
         .map_err(|e| e.to_string())?;
         for (k, v) in game {
-            w.write_event(quick_xml::events::Event::Start(quick_xml::events::BytesStart::new(
-                k.as_str(),
-            )))
+            w.write_event(quick_xml::events::Event::Start(
+                quick_xml::events::BytesStart::new(k.as_str()),
+            ))
             .map_err(|e| e.to_string())?;
-            w.write_event(quick_xml::events::Event::Text(quick_xml::events::BytesText::new(
-                v.as_str(),
-            )))
+            w.write_event(quick_xml::events::Event::Text(
+                quick_xml::events::BytesText::new(v.as_str()),
+            ))
             .map_err(|e| e.to_string())?;
-            w.write_event(quick_xml::events::Event::End(quick_xml::events::BytesEnd::new(
-                k.as_str(),
-            )))
+            w.write_event(quick_xml::events::Event::End(
+                quick_xml::events::BytesEnd::new(k.as_str()),
+            ))
             .map_err(|e| e.to_string())?;
         }
-        w.write_event(quick_xml::events::Event::End(quick_xml::events::BytesEnd::new(
-            "game",
-        )))
+        w.write_event(quick_xml::events::Event::End(
+            quick_xml::events::BytesEnd::new("game"),
+        ))
         .map_err(|e| e.to_string())?;
     }
-    w.write_event(quick_xml::events::Event::End(quick_xml::events::BytesEnd::new(
-        "gameList",
-    )))
+    w.write_event(quick_xml::events::Event::End(
+        quick_xml::events::BytesEnd::new("gameList"),
+    ))
     .map_err(|e| e.to_string())?;
 
     if let Some(parent) = path.parent() {

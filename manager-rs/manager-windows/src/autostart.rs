@@ -125,7 +125,10 @@ mod tests {
     #[test]
     fn command_builds_quoted_minimized() {
         let c = command("C:\\Python\\pythonw.exe", r"C:\RGSX\rgsx_manager.py");
-        assert_eq!(c, "\"C:\\Python\\pythonw.exe\" \"C:\\RGSX\\rgsx_manager.py\" --minimized");
+        assert_eq!(
+            c,
+            "\"C:\\Python\\pythonw.exe\" \"C:\\RGSX\\rgsx_manager.py\" --minimized"
+        );
     }
 
     #[test]
