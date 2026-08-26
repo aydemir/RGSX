@@ -59,6 +59,7 @@ jobs:
 
       - name: Build manager-bin (Linux x86_64, release)
         shell: bash
+        working-directory: manager-rs
         run: |
           set -euo pipefail
           cargo build --release -p manager-bin
@@ -69,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p stage/RGSX/webui
-          cp target/release/manager-bin stage/RGSX/manager-bin
+          cp manager-rs/target/release/manager-bin stage/RGSX/manager-bin
           cp -r webui/dist/. stage/RGSX/webui/
           chmod +x stage/RGSX/manager-bin
 
@@ -98,6 +99,7 @@ jobs:
 
       - name: Build manager-bin.exe (Windows x86_64 MSVC, release)
         shell: pwsh
+        working-directory: manager-rs
         run: |
           cargo build --release -p manager-bin
           echo "✓ manager-bin.exe built"
@@ -106,7 +108,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rgsx-windows
-          path: target/release/manager-bin.exe
+          path: manager-rs/target/release/manager-bin.exe
           retention-days: 3
 
   create_release:
