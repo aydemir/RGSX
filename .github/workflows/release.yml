@@ -246,7 +246,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Send changelog to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "DISCORD_WEBHOOK secret tanimli degil — Discord bildirimi atlandi"
+            exit 0
+          fi
+
           CHANGELOG=$(git log -1 --format=%B "${{ github.ref_name }}")
 
           PAYLOAD=$(jq -n \
@@ -261,4 +268,4 @@ jobs:
           curl --fail-with-body -H "Content-Type: application/json" \
           -X POST \
           --data "$PAYLOAD" \
-          "${{ secrets.DISCORD_WEBHOOK }}"
+          "$DISCORD_WEBHOOK_URL"
