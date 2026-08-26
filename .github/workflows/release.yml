@@ -75,7 +75,8 @@ jobs:
           mkdir -p stage/RGSX/webui
           cp manager-rs/target/release/manager-bin stage/RGSX/manager-bin
           cp -r webui/dist/. stage/RGSX/webui/
-          chmod +x stage/RGSX/manager-bin
+          cp ports/RGSX/RGSX.sh stage/RGSX/RGSX.sh
+          chmod +x stage/RGSX/manager-bin stage/RGSX/RGSX.sh
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -134,7 +135,9 @@ jobs:
           mkdir -p dist
 
           # --- RGSX_update_latest.zip: Batocera/Knulli (/userdata/roms/ports/RGSX) ---
+          # Not: upload-artifact izinleri tasimaz; exec bitleri burada yeniden uygulanir.
           cd artifacts/rgsx-linux/RGSX
+          chmod +x manager-bin RGSX.sh
           zip -r "../../../dist/RGSX_update_latest.zip" .
           cd ../../..
 
@@ -154,6 +157,7 @@ jobs:
           cp artifacts/rgsx-windows/manager-bin.exe fullpkg/ports/RGSX/
           cp -r artifacts/rgsx-webui/. fullpkg/ports/RGSX/webui/
           cp -r windows fullpkg/windows
+          chmod +x fullpkg/ports/RGSX/manager-bin fullpkg/ports/RGSX/RGSX.sh
           cd fullpkg
           zip -r "../dist/RGSX_full_latest.zip" .
           cd ..
