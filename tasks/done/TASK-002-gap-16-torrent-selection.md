@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-16
 - **title:** Multi-file torrent file selection + priority (librqbit AddTorrentOptions)
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-15
 - **environment:** both

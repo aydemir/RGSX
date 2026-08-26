@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-1
 - **title:** Retry/backoff engine (transient sınıflandırma + zamanlanmış retry)
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-14
 - **environment:** both

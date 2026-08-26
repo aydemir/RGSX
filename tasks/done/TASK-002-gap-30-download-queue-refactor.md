@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-30
 - **title:** Download Queue refactoring — persistent worker, gated dispatch, O(1) bulk ingest
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-19
 - **environment:** both

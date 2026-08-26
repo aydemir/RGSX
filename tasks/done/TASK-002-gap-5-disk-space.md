@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-5
 - **title:** Disk alanı ön-kontrolü (InsufficientDiskSpaceError)
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-14
 - **environment:** both

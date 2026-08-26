@@ -36,7 +36,7 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 ### P1 — Kritik / Veri Kaybı
 - [x] `TASK-002-gap-10` History disk persist + clear_history aktif koruma + downloaded_games + SSE throttle — `tasks/gap/TASK-002-gap-10-history-sse.md` (2026-08-18 kapatıldı: A/B/C/D/E kodda mevcut)
 - [x] `TASK-002-gap-5` Disk alanı ön-kontrolü + permission pre-check — `tasks/gap/TASK-002-gap-5-disk-space.md` (✅ 2026-08-18: `manager-core/src/disk.rs` + `DownloadError::InsufficientDiskSpace` `http/mod.rs:245`)
-- [ ] `TASK-002-gap-12` Download orchestration (concurrency/slot/dedup/FIFO/global pause) — `tasks/gap/TASK-002-gap-12-download-orchestration.md` (⚠️ 2026-08-18: semaphore+dedup+global pause mevcut; FIFO sıralama belirsiz)
+- [x] `TASK-002-gap-12` Download orchestration (concurrency/slot/dedup/FIFO/global pause) — `tasks/done/TASK-002-gap-12-download-orchestration.md` (✅ 2026-08-26: FIFO da doğrulandı — `state.rs` `pending_set: VecDeque` (gap-30/F3); dosya done/'a taşındı)
 - [x] `TASK-002-gap-16` Torrent dosya seçimi + öncelik — `tasks/gap/TASK-002-gap-16-torrent-selection.md` (✅ 2026-08-18: `manager-torrent/src/lib.rs` `only_files`/`only_files_regex`)
 
 ### P2 — Orta
@@ -48,11 +48,17 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 - [ ] `TASK-014` `/api/*` bilinmeyen yol → JSON 404 (statik mod SPA fallback ayrımı) — `tasks/gap/TASK-014-api-404-json.md` (🆕 2026-08-26: TASK-013 canlı smoke bulgusu; düzeltme küçük — lib.rs fallback bağlantısı)
 
 ### P3 — Nice-to-have
-- [ ] `TASK-002-gap-17` Settings şema parity (eksik ayar alanları) — `tasks/gap/TASK-002-gap-17-settings-schema.md` (⚠️ 2026-08-18: `web_service_at_boot`/`auto_extract` var; `background_theme`/`app_version`/`gamelist_days` = YOK)
+- [x] `TASK-002-gap-17` Settings şema parity (eksik ayar alanları) — `tasks/done/TASK-002-gap-17-settings-schema.md` (✅ 2026-08-26: dosya içi denetim — tek gerçek açık `background_theme`ydi, uygulandı; `app_version`/`gamelist_days` build sabiti, path model kasıtlı fark)
 
 ---
 
 ## DİĞER TAMAMLANAN GÖREVLER
+
+- [x] Bayat görev temizliği (2026-08-26): 28 terminal durumdaki `TASK-002-gap-*` dosyası
+      kodla doğrulanıp `gap/`'ten `done/`a taşındı (gap-7/8/18 out-of-scope kapanışları dahil;
+      5 bayat `status: todo` header'ı düzeltildi). **`gap/`'te yalnız açık işler kaldı:**
+      gap-9 (librqbit restart resume), gap-11 (1fichier provider zinciri),
+      TASK-012-gap-02 (python temizliği), TASK-014 (/api/* JSON 404).
 
 - [x] `TASK-011` Native `load_games` Python list-of-lists games json formatını parse edemiyor — `tasks/done/TASK-011-games-parser.md` (✅ 2026-08-21: `catalog.rs:393-422` her iki formatı çözüyor + `games_list_format` contract testi; görev yanlışlıkla silinmişti, `done/`'a taşındı)
 

@@ -2,7 +2,7 @@
 
 - **id:** TASK-002-gap-6
 - **title:** Archive auto-extract / post-processing (BIOS, PS3 redump force extract)
-- **status:** todo
+- **status:** done
 - **priority:** P2
 - **created:** 2026-08-14
 - **environment:** both
