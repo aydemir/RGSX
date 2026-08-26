@@ -333,7 +333,7 @@ async fn faz5_apply_test_copy_replace_and_recover() {
         .await
         .unwrap();
     let _v = r.json::<Value>().await.unwrap();
-    wait_stage(mport, "ready", Duration::from_secs(15)).await;
+    wait_stage(mport, "ready", Duration::from_secs(180)).await;
 
     let r = c
         .post(format!("http://127.0.0.1:{mport}/api/manager-update/apply"))
@@ -409,7 +409,7 @@ async fn faz5_apply_rejected_service() {
         .await
         .unwrap();
     let _v = r.json::<Value>().await.unwrap();
-    wait_stage(mport, "ready", Duration::from_secs(15)).await;
+    wait_stage(mport, "ready", Duration::from_secs(180)).await;
 
     let r = c
         .post(format!("http://127.0.0.1:{mport}/api/manager-update/apply"))

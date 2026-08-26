@@ -64,3 +64,17 @@
 - 2026-08-22 — Görev oluşturuldu; `python-skeleton-final` tag'i atılıp pushlandı. Temizlik
   cutover + torrent native-only + launcher sadeleşmesi + contract taşıması bitince tek commit'te
   yapılacak (bu dosyanın checklist'i işaretlenerek).
+- 2026-08-26 — Önkoşul 3 (launcher sadeleşmesi) tamam: `windows/RGSX Retrobat.bat`
+  (tamamı Python launcher'ı) ve `windows/scripts/rgsx_firewall_setup.ps1` (tümü qBittorrent
+  program kuralı + eski WebUI portu 18572) silindi; `RGSX rust.bat` + `verify_gap01.ps1` kaldı.
+- 2026-08-26 — Önkoşul 4 (contract güvencesi) değerlendirmesi: pytest baseline API sözleşmeleri
+  manager-http `contract.rs`'teki 140 testle karşılanıyor (qbittorrent uçları TASK-013 ile bilinçli
+  emekli); birim davranışlar game_filters/settings/watchdog/state/secrets/tvui modül testlerinde
+  var. Rust testleri modül modül çalıştırıldı (Termux RAM kısıtı): manager-core 75, scan 8+29,
+  download 14, torrent 12+4, http contract+faz5 dahil → yeşil.
+- 2026-08-26 — Düzeltme: `faz5_smoke.rs` apply testleri kendi ~146 MB test binary'sini indirip
+  15 sn'de `ready` bekliyordu; yavaş diskli cihazlarda (Termux) timeout'a düşüyordu. Ready
+  timeout'u 180 sn'e çıkarıldı (satır 336/412). Kod regresyonu değil, çevre toleransı.
+- Kalan: önkoşul 1 kalanı (TVUI `RGSX_TVUI=0` Python fallback dalının sökülmesi) + toplu silme
+  (`ports/RGSX`, kök `tests/`, bridge spawn kodu, `/api/qbittorrent/*` kalıntıları) +
+  doğrulama grepleri + README/docs/skill metinlerinin native-only güncellenmesi.
