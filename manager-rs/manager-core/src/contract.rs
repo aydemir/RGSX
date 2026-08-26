@@ -114,24 +114,51 @@ pub fn strip_history_error_noise(text: &str) -> String {
 /// TASK-012-gap-03 (bulgu 6): metin-status'u makine-okunur koda çevirir.
 ///
 /// Backend (Rust + Python-era history.json) metin status üretir; UI'ların
-/// "Erreur"/"Ağ bekleniyor" gibi çok-dilli metinleri elle eşlemesi kırılgandı.
-/// UI artık önce `status_code`'a bakar; bilinmeyen metinlerde `None` döner ve
-/// alan YAZILMAZ (UI eski metin-map fallback'ini kullanır).
+/// "Erreur"/"Téléchargement"/"Ağ bekleniyor" gibi çok-dilli metinleri elle
+/// eşlemesi kırılgandı. UI artık önce `status_code`'a bakar; bilinmeyen
+/// metinlerde `None` döner ve alan YAZILMAZ (UI eski metin-map fallback'ini kullanır).
+///
+/// Eşleme `state::legacy_status_to_state()` kanonik tablosuna delege edilir
+/// (download_state.py parity — tek doğruluk kaynağı); canlı smoke'ta çıkan
+/// "Téléchargement" gibi üretim metinleri böylece otomatik kapanır.
 pub fn status_code(status_text: &str) -> Option<&'static str> {
-    let norm = |s: &str| s.trim().to_ascii_lowercase();
-    match norm(status_text).as_str() {
-        "download_ok" | "completed" => Some("COMPLETED"),
-        "erreur" | "error" | "failed" | "failed_permanent" => Some("FAILED"),
-        "canceled" => Some("CANCELED"),
-        "queued" => Some("QUEUED"),
-        "downloading" | "connecting" | "verifying" => Some("DOWNLOADING"),
-        "extracting" => Some("EXTRACTING"),
-        "seeding" => Some("SEEDING"),
-        "already_present" => Some("ALREADY_PRESENT"),
-        "ağ bekleniyor" => Some("NETWORK_WAIT"),
-        _ if norm(status_text).starts_with("try") => Some("DOWNLOADING"),
-        _ => None,
+    use crate::state::{legacy_status_to_state, DownloadState};
+    fn code_of(s: DownloadState) -> &'static str {
+        use DownloadState::*;
+        match s {
+            Queued => "QUEUED",
+            Downloading | Verifying | RetryScheduled | FailedTransient => "DOWNLOADING",
+            Paused => "PAUSED",
+            Extracting => "EXTRACTING",
+            Completed => "COMPLETED",
+            Canceled => "CANCELED",
+            FailedPermanent => "FAILED",
+        }
     }
+    let t = status_text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    // Retry progress metinleri ("Try 3/5") — state_from_legacy başlangıç eşlemesi.
+    if t.starts_with("Try ") {
+        return Some("DOWNLOADING");
+    }
+    // Legacy tabloda olmayan bilinen özel metinler.
+    if t.eq_ignore_ascii_case("ağ bekleniyor") {
+        return Some("NETWORK_WAIT");
+    }
+    if t.eq_ignore_ascii_case("already_present") {
+        return Some("ALREADY_PRESENT");
+    }
+    // Kanonik tablo: önce tam, sonra büyük/küçük harf duyarsız eşleşme.
+    let table = legacy_status_to_state();
+    if let Some((_, v)) = table.iter().find(|(k, _)| *k == t) {
+        return Some(code_of(*v));
+    }
+    if let Some((_, v)) = table.iter().find(|(k, _)| k.eq_ignore_ascii_case(t)) {
+        return Some(code_of(*v));
+    }
+    None
 }
 
 /// Bir history/queue öğesine `status_code` enjekte eder (metin status biliniyorsa).
@@ -199,10 +226,17 @@ mod tests {
     #[test]
     fn status_code_maps_known_texts() {
         // TASK-012-gap-03 (bulgu 6): çok-dilli metin status → makine kodu.
+        // Eşleme legacy_status_to_state kanonik tablosundan türetilir.
         assert_eq!(status_code("Download_OK"), Some("COMPLETED"));
+        assert_eq!(status_code("Completed"), Some("COMPLETED"));
         assert_eq!(status_code("Erreur"), Some("FAILED"));
-        assert_eq!(status_code("Ağ bekleniyor"), Some("NETWORK_WAIT"));
+        assert_eq!(status_code("Error"), Some("FAILED"));
+        assert_eq!(status_code("Téléchargement"), Some("DOWNLOADING"));
+        assert_eq!(status_code("Connecting"), Some("DOWNLOADING"));
         assert_eq!(status_code("Try 3/5"), Some("DOWNLOADING"));
+        assert_eq!(status_code("Annulé"), Some("CANCELED"));
+        assert_eq!(status_code("Converting"), Some("EXTRACTING"));
+        assert_eq!(status_code("Ağ bekleniyor"), Some("NETWORK_WAIT"));
         assert_eq!(status_code("Already_Present"), Some("ALREADY_PRESENT"));
         assert_eq!(status_code("bilmemne"), None);
     }
