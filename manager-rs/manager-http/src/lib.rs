@@ -77,19 +77,8 @@ pub fn router(app: AppState) -> Router {
         .route("/api/shutdown", post(api::shutdown))
         .route("/api/pause", post(api::pause))
         .route("/api/resume", post(api::resume))
-        .route(
-            "/api/qbittorrent/change-password",
-            post(api::change_password),
-        )
-        .route("/api/qbittorrent/start", post(api::qb_start))
-        .route(
-            "/api/qbittorrent/password-status",
-            get(api::qb_password_status),
-        )
-        .route(
-            "/api/qbittorrent/regenerate-password",
-            post(api::qb_regenerate_password),
-        )
+        // TASK-013: /api/qbittorrent/* uçları emekli edildi (librqbit tek torrent yolu;
+        // uçlar yalnız legacy python bridge altında anlamlıydı).
         .route("/api/events", get(sse::events));
 
     // Statik katman (Faz 12a): SPA sunumu. `static_root` yoksa statik kapalı.

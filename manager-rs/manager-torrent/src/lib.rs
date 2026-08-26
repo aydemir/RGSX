@@ -1,18 +1,19 @@
 //! librqbit embedded torrent engine — Python `qbittorrent_backend.py` ikamesi (Faz 10b).
 //!
 //! `LibrqbitEngine`, `manager_bridge::TorrentBackend` sözleşmesini implement eder;
-//! Python bridge'in `_BRIDGE_METHODS` metod isimlerini ve yanıt şekillerini birebir
-//! taklit eder, arka planda ise embedded librqbit `Session`'ı kullanır (WebUI yok).
+//! JSON-RPC `call()` isim uzayı eski Python `_BRIDGE_METHODS` simetrisini korur,
+//! arka planda embedded librqbit `Session` çalışır (WebUI yok).
 //!
-//! - `ping` → `"pong"`
-//! - `status` → `{state: "STOPPED"|"RUNNING", available: true}`
-//! - `is_available` → `true`
-//! - `ensure_running` → Python session'ı lazy spawn eder, başarı = `true`
-//! - `get_webui_url` → `""` (librqbit'te WebUI yoktur)
-//! - `get_password_status` → `{available, using_default, secured, mode, webui_url}`
-//! - `change_webui_password` → `(false, "embedded_mode")` (şifre kavramı yok)
+//! TASK-013 (qBittorrent emekliliği): qBittorrent-kavramlı metodlar (`ping`,
+//! `status`, `is_available`, `ensure_running`, `get_webui_url`,
+//! `get_password_status`, `change_webui_password`) trait default'larıyla birlikte
+//! `call()` dispatch'inden de söküldü — tek tüketicileri emekli olan
+//! `/api/qbittorrent/*` uçlarıydı; bilinmeyen metod `-32601 Method not found` döner.
+//!
 //! - `get_app_paths` → yapıcıda verilen klasör yolları
 //! - `shutdown` → session'ı durdurur
+//! - indirme ailesi: `download_torrent`, `pause_all`/`resume_all`/`pause`/
+//!   `resume`/`is_paused`, `cancel`/`cancel_all`
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
@@ -144,11 +145,6 @@ impl LibrqbitEngine {
         }
     }
 
-    /// Session zaten ayakta mı (ensure_running'in güçlü okuması).
-    pub async fn is_running(&self) -> bool {
-        self.session.read().await.is_some()
-    }
-
     /// Lazy spawn: yoksa yeni librqbit `Session` oluşturur.
     /// Embedded kullanım: DHT + ileri bağlantılar çalışır, persistans/WebUI yok.
     pub async fn ensure_running(&self) -> Result<Arc<Session>, BridgeError> {
@@ -187,8 +183,9 @@ impl LibrqbitEngine {
             })
     }
 
-    /// Üst seviye indirme akışı — Python `download_torrent_via_qbittorrent`'in
-    /// librqbit karşılığı (bridge-qup tarafı: `source` magnet veya `.torrent
+    /// Üst seviye indirme akışı — arşiv Python fonksiyonu
+    /// `download_torrent_via_qbittorrent`'in (python-skeleton-final) librqbit
+    /// karşılığı (`source` magnet veya `.torrent
     /// URI'si; session'a ekler, tamamlanıncaya kadar bekler, indirilen dosyayı
     /// `output_folder` altında çözer ve `dest_path`'e hard-link/kopya yapar).
     ///
@@ -203,7 +200,15 @@ impl LibrqbitEngine {
         extract_hint: Option<ExtractHint>,
         opts: AddTorrentOptions,
     ) -> Result<std::path::PathBuf, BridgeError> {
-        self.download_torrent_source_with_progress(source, dest_path, None, None, extract_hint, opts).await
+        self.download_torrent_source_with_progress(
+            source,
+            dest_path,
+            None,
+            None,
+            extract_hint,
+            opts,
+        )
+        .await
     }
 
     /// `download_torrent_source`'un canlı progress yayınlayan hali (TASK-002m).
@@ -233,7 +238,11 @@ impl LibrqbitEngine {
         // Gap-5 (A+B): indirme başı disk alanı + yazılabilirlik ön-kontrolü.
         // Boyutu add_torrent sonrası biliyoruz (Python H8 parity). QueryFailed → atla.
         let dest_dir = dest_path.parent().unwrap_or(dest_path);
-        let required = if selected { 0 } else { handle.stats().total_bytes };
+        let required = if selected {
+            0
+        } else {
+            handle.stats().total_bytes
+        };
         match manager_core::disk::precheck_destination(dest_dir, required) {
             Ok(()) => {}
             Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
@@ -248,7 +257,10 @@ impl LibrqbitEngine {
         }
 
         if let Some(id) = &task_id {
-            self.active_handles.write().await.insert(id.clone(), handle.clone());
+            self.active_handles
+                .write()
+                .await
+                .insert(id.clone(), handle.clone());
         }
         let mut finished = false;
         let mut last_total = 0u64;
@@ -274,7 +286,10 @@ impl LibrqbitEngine {
                         speed: if paused {
                             0.0
                         } else {
-                            s.live.as_ref().map(|l| l.download_speed.mbps).unwrap_or(0.0)
+                            s.live
+                                .as_ref()
+                                .map(|l| l.download_speed.mbps)
+                                .unwrap_or(0.0)
                         },
                         finished: false,
                         paused,
@@ -376,10 +391,14 @@ impl LibrqbitEngine {
             return Ok(false);
         };
         let session = self.ensure_running().await?;
-        session.pause(&h).await.map(|_| true).map_err(|e| BridgeError::Rpc {
-            code: -32000,
-            message: format!("pause başarısız ({task_id}): {e}"),
-        })
+        session
+            .pause(&h)
+            .await
+            .map(|_| true)
+            .map_err(|e| BridgeError::Rpc {
+                code: -32000,
+                message: format!("pause başarısız ({task_id}): {e}"),
+            })
     }
 
     /// `task_id`'li tek indirmeyi sürdürür (Gap-2).
@@ -388,10 +407,14 @@ impl LibrqbitEngine {
             return Ok(false);
         };
         let session = self.ensure_running().await?;
-        session.unpause(&h).await.map(|_| true).map_err(|e| BridgeError::Rpc {
-            code: -32000,
-            message: format!("resume başarısız ({task_id}): {e}"),
-        })
+        session
+            .unpause(&h)
+            .await
+            .map(|_| true)
+            .map_err(|e| BridgeError::Rpc {
+                code: -32000,
+                message: format!("resume başarısız ({task_id}): {e}"),
+            })
     }
 
     /// `task_id`'li indirme şu an duraklatılmış mı (Gap-2 `is_paused`).
@@ -416,10 +439,13 @@ impl LibrqbitEngine {
         };
         let session = self.ensure_running().await?;
         let id = TorrentIdOrHash::Id(handle.id());
-        session.delete(id, true).await.map_err(|e| BridgeError::Rpc {
-            code: -32000,
-            message: format!("iptal başarısız ({task_id}): {e}"),
-        })?;
+        session
+            .delete(id, true)
+            .await
+            .map_err(|e| BridgeError::Rpc {
+                code: -32000,
+                message: format!("iptal başarısız ({task_id}): {e}"),
+            })?;
         self.active_handles.write().await.remove(task_id);
         Ok(true)
     }
@@ -469,12 +495,10 @@ impl LibrqbitEngine {
                 }
             }
         }
-        largest
-            .map(|(_, p)| p)
-            .ok_or_else(|| BridgeError::Rpc {
-                code: -32000,
-                message: "indirilen dosya bulunamadı".to_string(),
-            })
+        largest.map(|(_, p)| p).ok_or_else(|| BridgeError::Rpc {
+            code: -32000,
+            message: "indirilen dosya bulunamadı".to_string(),
+        })
     }
 
     /// `root` alt ağacında en büyük (`.rqbitpart` hariç) dosyayı bulur.
@@ -641,28 +665,6 @@ impl TorrentBackend for LibrqbitEngine {
 
     async fn call(&self, method: &str, params: Value) -> Result<Value, BridgeError> {
         match method {
-            "ping" => Ok(json!("pong")),
-            "status" => Ok(json!({
-                "state": if self.is_running().await { "RUNNING" } else { "STOPPED" },
-                "available": true,
-            })),
-            "is_available" => Ok(json!(true)),
-            "ensure_running" => {
-                let _ = params.get("timeout");
-                self.ensure_running().await.map(|_| json!(true))
-            }
-            "get_webui_url" => Ok(json!("")),
-            "get_password_status" => Ok(json!({
-                "available": true,
-                "using_default": false,
-                "secured": true,
-                "mode": "embedded",
-                "webui_url": "",
-            })),
-            "change_webui_password" => {
-                let _ = params.get("password");
-                Ok(json!([false, "embedded_mode"]))
-            }
             "get_app_paths" => Ok(json!({
                 "downloads_folder": self.downloads_folder,
                 "logs_folder": self.logs_folder,
@@ -670,13 +672,22 @@ impl TorrentBackend for LibrqbitEngine {
             "download_torrent" => {
                 // JSON-RPC kontraktı (Python `_BRIDGE_METHODS` simetrisi) — trait
                 // method'una aynı parametrelerle proxy eder.
-                let source = params.get("source_url").and_then(Value::as_str).unwrap_or_default();
-                let dest = params.get("dest_path").and_then(Value::as_str).unwrap_or_default();
+                let source = params
+                    .get("source_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let dest = params
+                    .get("dest_path")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let hint = params
                     .get("extract_hint")
                     .and_then(Value::as_object)
                     .map(|o| ExtractHint {
-                        auto_extract: o.get("auto_extract").and_then(Value::as_bool).unwrap_or(false),
+                        auto_extract: o
+                            .get("auto_extract")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
                         is_zip_non_supported: o
                             .get("is_zip_non_supported")
                             .and_then(Value::as_bool)
@@ -692,7 +703,10 @@ impl TorrentBackend for LibrqbitEngine {
                             .unwrap_or_default()
                             .to_string(),
                     });
-                match self.download_torrent(source, std::path::Path::new(dest), hint).await {
+                match self
+                    .download_torrent(source, std::path::Path::new(dest), hint)
+                    .await
+                {
                     Ok(p) => Ok(json!(p.to_string_lossy().to_string())),
                     Err(e) => Err(e),
                 }
@@ -700,22 +714,37 @@ impl TorrentBackend for LibrqbitEngine {
             "pause_all" => self.pause_all().await.map(|n| json!({ "paused": n })),
             "resume_all" => self.resume_all().await.map(|n| json!({ "resumed": n })),
             "pause" => {
-                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                let id = params
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.pause_torrent(id).await.map(|_| json!(null))
             }
             "resume" => {
-                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                let id = params
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.resume_torrent(id).await.map(|_| json!(null))
             }
             "is_paused" => {
-                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                let id = params
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.is_paused(id).await.map(|b| json!(b))
             }
             "cancel" => {
-                let id = params.get("task_id").and_then(Value::as_str).unwrap_or_default();
+                let id = params
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 self.cancel_task(id).await.map(|b| json!(b))
             }
-            "cancel_all" => self.cancel_all_tasks().await.map(|n| json!({ "canceled": n })),
+            "cancel_all" => self
+                .cancel_all_tasks()
+                .await
+                .map(|n| json!({ "canceled": n })),
             "shutdown" => {
                 if let Some(session) = self.session.write().await.take() {
                     session.stop().await;
@@ -737,7 +766,7 @@ impl TorrentBackend for LibrqbitEngine {
 
     /// `download_torrent` → `source_url`'yi (magnet veya `.torrent` adresi)
     /// `AddTorrent::from_url` ile kurup senkron indirir, sonucu `dest_path`'e
-    /// link/kopyalar (Python `download_torrent_via_qbittorrent` karşılığı).
+    /// link/kopyalar (arşiv Python `download_torrent_via_qbittorrent` karşılığı).
     async fn download_torrent(
         &self,
         source_url: &str,
@@ -922,7 +951,10 @@ mod tests {
             platform: "Super Nintendo".to_string(),
         };
         let res = run_post_download_extract(&rar, &dest_dir, &hint).await;
-        assert!(res.is_ok(), "RAR desteklenmiyor ama indirme başarısız olmamalı");
+        assert!(
+            res.is_ok(),
+            "RAR desteklenmiyor ama indirme başarısız olmamalı"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

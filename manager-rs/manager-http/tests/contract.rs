@@ -1300,51 +1300,8 @@ async fn test_resume() {
     assert!(body["resumed"].is_number());
 }
 
-#[tokio::test]
-async fn test_qbittorrent_start() {
-    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/start", json!({})).await;
-    assert_eq!(status, StatusCode::OK);
-    // Python 1:1: `success` == `ready` (bridge yoksa ikisi de false).
-    assert!(body["ready"].is_boolean());
-    assert_eq!(body["success"], body["ready"]);
-    assert!(body["url"].is_string());
-}
-
-#[tokio::test]
-async fn test_qbittorrent_change_password_ok() {
-    let (status, _, body) = call_post(
-        empty_app(),
-        "/api/qbittorrent/change-password",
-        json!({"password": "nouveau-mdp-123"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["success"], json!(true));
-    assert_eq!(body["message"], json!("ok"));
-}
-
-#[tokio::test]
-async fn test_qbittorrent_change_password_failure() {
-    let (status, _, body) = call_post(
-        empty_app(),
-        "/api/qbittorrent/change-password",
-        json!({"password": "x"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["success"], json!(false));
-    assert_eq!(body["message"], json!("password_too_short"));
-}
-
-#[tokio::test]
-async fn test_qbittorrent_password_status() {
-    let (status, _, body) = call_get(empty_app(), "/api/qbittorrent/password-status").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["success"], json!(true));
-    assert!(body["available"].is_boolean());
-    assert!(body["using_default"].is_boolean());
-    assert!(body["webui_url"].is_string());
-}
+// TASK-013: /api/qbittorrent/* uçları emekli edildi (librqbit tek torrent yolu);
+// tüm qb endpoint contract testleri (test_qbittorrent_* + test_qb_*) kaldırıldı.
 
 // ---------------------------------------------------------------------------
 // SSE
@@ -1994,69 +1951,6 @@ async fn test_mgmt_placeholder_when_no_source() {
     let (status, _, body) = call_post(empty_app(), "/api/resume", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["resumed"], json!(0));
-}
-
-// ---------------------------------------------------------------------------
-// Faz 10c/3/5 — qBittorrent bridge (TorrentBackend) handler'ları
-// Not: bu handler'lar zaten `state.bridge_call` ile TorrentBackend trait'ine
-// bağlı; köprü (bridge) yoksa placeholder'a düşer (geriye uyumlu).
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_qb_change_password_short_fails() {
-    let (status, _, body) = call_post(
-        empty_app(),
-        "/api/qbittorrent/change-password",
-        json!({"password": "x"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(!body["success"].as_bool().unwrap_or(true));
-    assert_eq!(body["message"], json!("password_too_short"));
-}
-
-#[tokio::test]
-async fn test_qb_change_password_ok_placeholder() {
-    let (status, _, body) = call_post(
-        empty_app(),
-        "/api/qbittorrent/change-password",
-        json!({"password": "longenough"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["message"], json!("ok"));
-}
-
-#[tokio::test]
-async fn test_qb_start_placeholder() {
-    let (status, _, body) = call_post(empty_app(), "/api/qbittorrent/start", Value::Null).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["success"], json!(false));
-    assert_eq!(body["ready"], json!(false));
-    assert_eq!(body["url"], json!(""));
-}
-
-#[tokio::test]
-async fn test_qb_password_status_placeholder() {
-    let (status, _, body) = call_get(empty_app(), "/api/qbittorrent/password-status").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["available"], json!(false));
-    assert_eq!(body["using_default"], json!(true));
-    assert_eq!(body["webui_url"], json!(""));
-}
-
-#[tokio::test]
-async fn test_qb_regenerate_password_bridge_unavailable() {
-    // Köprü yok → 500 + birebir Python sözleşmesi (success:false, message).
-    let (status, _, body) = call_post(
-        empty_app(),
-        "/api/qbittorrent/regenerate-password",
-        Value::Null,
-    )
-    .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(body["success"], json!(false));
-    assert!(body["message"].as_str().is_some());
 }
 
 // ---------------------------------------------------------------------------

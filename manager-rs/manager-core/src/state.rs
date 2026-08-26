@@ -29,7 +29,9 @@ pub enum ManagerState {
     Crashed,
 }
 
-/// qBittorrent backend durumları (watchdog.py:22-26).
+/// Backend durumları — tarihsel köken: arşiv qBittorrent backend watchdog'u
+/// (`ports/RGSX/watchdog.py:22-26`, python-skeleton-final); TASK-013 sonrası
+/// jenerik backend durum kümesi olarak yaşar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BackendState {

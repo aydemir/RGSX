@@ -1,8 +1,9 @@
 //! Faz 10b — librqbit `LibrqbitEngine::download_torrent` canlı doğrulaması.
 //!
 //! Küçük bir public torrent (`<engine>` üzerinden) indirir, dosyayı çözer ve
-//! hedef yola link/kopyalar. Python `download_torrent_via_qbittorrent` akışının
-//! librqbit karşılığı — `output_dir` içine iner, `dest_path`'e sonuç yazılır.
+//! hedef yola link/kopyalar. Arşiv Python `download_torrent_via_qbittorrent`
+//! akışının (python-skeleton-final) librqbit karşılığı — `output_dir` içine iner,
+//! `dest_path`'e sonuç yazılır.
 //! Kullanım: `cargo run --release -p manager-torrent --example live_torrent <output_dir> <dest_path>`
 //!
 //! Bu örnek Faz 10b'nin engine-seviyesindeki fizibilite kanıtıdır.
@@ -28,11 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(2)
         .expect("ikinci argüman hedef dosya yolu olmalı");
 
-    let engine = LibrqbitEngine::new(
-        output_dir.into(),
-        String::new(),
-        String::new(),
-    );
+    let engine = LibrqbitEngine::new(output_dir.into(), String::new(), String::new());
     tracing::info!("librqbit engine kuruldu (aarch64 Linux), torrent: {TORRENT_URL}");
 
     let result = tokio::time::timeout(

@@ -23,11 +23,10 @@
 - [ ] **1. Cutover tamam** — TASK-012h→i→j→k→l: TVUI native ekranlar + klavye + erişilebilirlik +
       cutover; `RGSX_TVUI=0` Python pygame fallback dalı kaldırılır (`manager-tvui/src/lib.rs`
       başlığındaki fallback sözü dahil).
-- [ ] **2. Torrent native-only** — `manager-bridge::Bridge::spawn("qbittorrent_backend.py --bridge")`
-      Python subprocess yolu sökülür (`manager-bin/src/main.rs` resolve_engine default'u zaten
-      `librqbit`; Bridge spawn + `/api/qbittorrent/*` uçları `api.rs:1531-1605` kaldırılır).
-      `TorrentBackend` trait'inin nerede yaşayacağı o gün kararlanır (manager-bridge daralır ya da
-      manager-torrent'e taşınır).
+- [x] **2. Torrent native-only** — **TASK-013 ile yapıldı** (2026-08-26): `Bridge` subprocess
+      istemcisi + `/api/qbittorrent/*` uçları söküldü, librqbit tek yol; `TorrentBackend`
+      trait'i manager-bridge'de engine-bağımsız sözleşme olarak yaşıyor.
+      Detay: `tasks/done/TASK-013-qbittorrent-retirement.md`.
 - [ ] **3. Windows launcher sadeleşir** — `windows/RGSX Retrobat.bat` Python/qBittorrent satırları
       (:501-509 firewall bloğu dahil), `windows/scripts/rgsx_firewall_setup.ps1`'in QbittorrentPath +
       18572 bölümleri. `verify_gap01.ps1` gibi Rust araçları KALIR.

@@ -1,28 +1,22 @@
 //! manager-bin: torrent engine + HTTP+SSE sunucusu.
 //!
-//! TASK-002c (Python engine): `qbittorrent_backend.py --bridge` subprocess'i
-//! başlatılır ve `AppState`'e verilir; qbittorrent `/api/*` handler'ları gerçek
-//! Python mantığına proxy eder.
-//!
-//! TASK-002f (librqbit engine): `RGSX_TORRENT_ENGINE=librqbit` set edilirse
-//! Python bridge yerine in-process librqbit engine (`manager-torrent`) kurulur;
-//! aynı `TorrentBackend` sözleşmesini konuştuğundan handler'lar değişmez.
+//! TASK-013 (qBittorrent emekliliği): tek torrent yolu = in-process librqbit
+//! (`manager-torrent`, `TorrentBackend` sözleşmesi). Eski `RGSX_TORRENT_ENGINE=python`
+//! subprocess yolu + `/api/qbittorrent/*` uçları söküldü (Python port donuk
+//! referansta yaşamaya devam eder).
 //!
 //! TASK-002d: Windows'ta (`cfg(windows)`) sistem tepsisi + auto-start (registry)
 //! + firewall kuralı bağlanır.
 //!
-//! Varsayılan port 5010 (çakışma riski için 5000 değil — canlı manager'dan
-//! ayrı durur); `RGSX_MANAGER_BIN_PORT` env ile değiştirilebilir.
-//!
-//! Bridge script yolu: `RGSX_MANAGER_SCRIPT` env, yoksa varsayılan
-//! `../ports/RGSX/qbittorrent_backend.py` (workspace kökünden göreli).
+//! Varsayılan port 5000 (`RGSX_RUST_WEBUI=0` ile 5010); `RGSX_MANAGER_BIN_PORT`
+//! env ile değiştirilebilir.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use manager_bridge::{Bridge, BridgeConfig, TorrentBackend};
+use manager_bridge::TorrentBackend;
 use manager_core::state::ManagerState;
 use manager_http::{router, AppState, StateData};
 
@@ -42,46 +36,22 @@ fn resolve_script() -> String {
     fallback.to_string_lossy().to_string()
 }
 
-/// Torrent engine'ini `RGSX_TORRENT_ENGINE` env'ine göre kurar.
-///
-/// - `python` → legacy Python bridge subprocess (qbittorrent_backend.py; WebUI/
-///   port-fallback/şifre migration korunur). TASK-002f öncesi davranış — opt-in.
-/// - `librqbit` / boş / diğer → **varsayılan**: in-process librqbit (manager-torrent).
-///   TASK-002g ertelenmiş kararı (2026-08-12): librqbit Windows'ta da derlendiği
-///   (`cargo check --target x86_64-pc-windows-gnu`) doğrulanınca varsayılan yapıldı.
+/// Torrent engine'ini kurar — TASK-013: **librqbit tek yol**. Eski
+/// `RGSX_TORRENT_ENGINE` env'i (python/librqbit seçimi) emekli edildi;
+/// varsa yok sayılır.
 fn resolve_engine() -> Option<Arc<dyn TorrentBackend>> {
-    match std::env::var("RGSX_TORRENT_ENGINE").as_deref() {
-        Ok("python") => {
-            let script = resolve_script();
-            match Bridge::spawn(BridgeConfig {
-                script: script.clone(),
-                timeout_secs: 90,
-                ..BridgeConfig::default()
-            }) {
-                Ok(b) => {
-                    tracing::info!("torrent engine: python bridge ({script})");
-                    Some(Arc::new(b))
-                }
-                Err(e) => {
-                    tracing::warn!("bridge başlatılamadı ({script}): {e}");
-                    None
-                }
-            }
-        }
-        _ => {
-            let downloads = std::env::var("RGSX_DOWNLOADS_FOLDER")
-                .unwrap_or_else(|_| std::env::temp_dir().join("rgsx_torrents").to_string_lossy().to_string());
-            let logs = std::env::var("RGSX_LOGS_FOLDER")
-                .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
-            let engine = manager_torrent::LibrqbitEngine::new(
-                std::path::PathBuf::from(&downloads),
-                downloads,
-                logs,
-            );
-            tracing::info!("torrent engine: librqbit (embedded, varsayılan)");
-            Some(Arc::new(engine))
-        }
-    }
+    let downloads = std::env::var("RGSX_DOWNLOADS_FOLDER").unwrap_or_else(|_| {
+        std::env::temp_dir()
+            .join("rgsx_torrents")
+            .to_string_lossy()
+            .to_string()
+    });
+    let logs = std::env::var("RGSX_LOGS_FOLDER")
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
+    let engine =
+        manager_torrent::LibrqbitEngine::new(std::path::PathBuf::from(&downloads), downloads, logs);
+    tracing::info!("torrent engine: librqbit (embedded, tek yol)");
+    Some(Arc::new(engine))
 }
 
 /// İkon dosyasını bridge script'inin yanından bulur (`assets/images/favicon_rgsx.ico`).
@@ -105,7 +75,9 @@ fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray
     // Auto-start: Python davranışı — pref varsayılan AÇIK; ilk çalıştırmada kur.
     // `RGSX_NO_AUTOSTART=1` (ör. .bat launcher sidecar): Python manager aynı
     // registry anahtarını (RGSXManager) yönettiğinden sidecar kayıt yapmaz.
-    let no_autostart = std::env::var("RGSX_NO_AUTOSTART").map(|v| v == "1").unwrap_or(false);
+    let no_autostart = std::env::var("RGSX_NO_AUTOSTART")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     if !no_autostart && !autostart::is_enabled() {
         match autostart::install(&autostart::command_self()) {
             Ok(()) => tracing::info!("auto-start kuruldu (HKCU Run)"),
@@ -126,7 +98,10 @@ fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray
     // Tray: ikon yoksa placeholder ile yine de başlat.
     let icon_path = resolve_icon(script).unwrap_or_default();
     let checked = autostart::is_enabled();
-    match Tray::start(TrayConfig { icon_path, autostart_checked: checked }) {
+    match Tray::start(TrayConfig {
+        icon_path,
+        autostart_checked: checked,
+    }) {
         Ok(t) => {
             tracing::info!("tray ikonu başlatıldı");
             Some(t)
@@ -182,9 +157,7 @@ fn open_folder(path: &str) {
     if path.is_empty() {
         return;
     }
-    let _ = std::process::Command::new("explorer")
-        .arg(path)
-        .spawn();
+    let _ = std::process::Command::new("explorer").arg(path).spawn();
 }
 
 fn main() {
@@ -221,10 +194,11 @@ fn main() {
 }
 
 async fn run(paths: paths::RgsxPaths) {
-
     let port: u16 = {
         // gap-27: saf-Rust varsayılan = true (port 5000). Flag yine env ile override edilebilir.
-        let rust_webui = std::env::var("RGSX_RUST_WEBUI").map(|v| v == "1").unwrap_or(true);
+        let rust_webui = std::env::var("RGSX_RUST_WEBUI")
+            .map(|v| v == "1")
+            .unwrap_or(true);
         let default = if rust_webui { 5000 } else { 5010 };
         std::env::var("RGSX_MANAGER_BIN_PORT")
             .ok()
@@ -232,8 +206,9 @@ async fn run(paths: paths::RgsxPaths) {
             .unwrap_or(default)
     };
 
-    // Python bridge'i başlat (script yoksa None — placeholder davranışı).
+    // Tray ikonu anchor'ı (favicon, python port dizinindeki assets altında yaşar).
     let script = resolve_script();
+    // Torrent engine (TASK-013: librqbit tek yol).
     let bridge = resolve_engine();
 
     let mut data = StateData::empty();
@@ -253,7 +228,11 @@ async fn run(paths: paths::RgsxPaths) {
         });
     if let Some(ref hp) = history_path {
         data.history = manager_http::persist::load_history(hp);
-        tracing::info!("history yüklendi: {} entry ({}", data.history.len(), hp.display());
+        tracing::info!(
+            "history yüklendi: {} entry ({}",
+            data.history.len(),
+            hp.display()
+        );
     }
     data.history_path = history_path;
     // WebUI statik kökü: gap-26 — resolve_paths()'in türettinceği `webui_dir` doğrudan
@@ -283,7 +262,10 @@ async fn run(paths: paths::RgsxPaths) {
         std::env::var("RGSX_PYTHON_MANAGER_URL")
             .ok()
             .filter(|u| !u.is_empty())
-            .map(|base| Arc::new(manager_http::catalog::PythonCatalog::new(base)) as Arc<dyn manager_http::catalog::CatalogSource>)
+            .map(|base| {
+                Arc::new(manager_http::catalog::PythonCatalog::new(base))
+                    as Arc<dyn manager_http::catalog::CatalogSource>
+            })
     };
 
     // Faz 12.6a — startup'ta diskteki kurulu oyunları tara; snapshot `downloaded`
@@ -337,7 +319,8 @@ async fn run(paths: paths::RgsxPaths) {
         let boot_ev = events.clone();
         let boot_data = state.data.clone();
         tokio::spawn(async move {
-            manager_http::catalog_bootstrap::ensure_catalog_ready(Some(&boot_ev), Some(boot_data)).await;
+            manager_http::catalog_bootstrap::ensure_catalog_ready(Some(&boot_ev), Some(boot_data))
+                .await;
         });
         // TASK-012m: manager self-update arka plan kontrolü (RGSX_UPDATE_MANIFEST_URL
         // yapılandırılmışsa; aksi halde no-op). Yeniyse SSE `manager_update` + StateData.
@@ -354,7 +337,10 @@ async fn run(paths: paths::RgsxPaths) {
     // okuyup SSE `gamepad` olayı olarak yukarıdaki kanaldan yayar (webui TV
     // modu tüketir). Headless/sandbox'ta gilrs başlatılamazsa sessizce atlanır.
     #[cfg(feature = "native-input")]
-    if std::env::var("RGSX_NATIVE_INPUT").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("RGSX_NATIVE_INPUT")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         let es = manager_http::es_input::load_best();
         manager_tvui::native_input::start_native_input(events.clone(), es);
     }
@@ -363,7 +349,10 @@ async fn run(paths: paths::RgsxPaths) {
     // Ayrı thread'de (SDL event loop'u bloklar). TASK-012-gap-03 Faz B: SPA
     // `?mode=tv` yolu emekli edildi — tek TVUI = native SDL2. Headless ortamda
     // hata loglanır, sunucu etkilenmez.
-    if std::env::var("RGSX_TVUI").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("RGSX_TVUI")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         let tv_port = port;
         std::thread::spawn(move || {
             if let Err(e) = manager_tvui::launch(tv_port) {
@@ -383,7 +372,7 @@ async fn run(paths: paths::RgsxPaths) {
         Some(ip) => tracing::info!("Ağ erişimi: http://{ip}:{port}"),
         None => tracing::warn!("LAN IP belirlenemedi; yalnız 0.0.0.0:{port} görünür"),
     }
-    tracing::info!("GET /api/health, /api/queue, /api/events (SSE), qbittorrent proxy");
+    tracing::info!("GET /api/health, /api/queue, /api/events (SSE)");
 
     // Windows: tray + autostart + firewall; eylemler ana döngüde beslenir.
     let tray = setup_windows(port, &script);
@@ -408,10 +397,7 @@ async fn run(paths: paths::RgsxPaths) {
 ///
 /// Hem tray'lı (Windows) hem traysız (Linux) yolda `axum::serve().with_graceful_shutdown`
 /// için kullanılır; tek noktadan kapanış guarantee'si sağlar.
-async fn graceful_shutdown_signal(
-    shutdown: Arc<Notify>,
-    bridge: Option<Arc<dyn TorrentBackend>>,
-) {
+async fn graceful_shutdown_signal(shutdown: Arc<Notify>, bridge: Option<Arc<dyn TorrentBackend>>) {
     // OS sinyali VEYA AppState.shutdown Notify'i → kapanışı tetikle.
     #[cfg(unix)]
     {
@@ -434,7 +420,7 @@ async fn graceful_shutdown_signal(
     // Çoklu download/retry waiter'ı + (yeniden) axum graceful shutdown waiter'ı
     // uyansın. `notify_one` yalnız BİR waiter'ı uyandırırdı → yapışkan process.
     shutdown.notify_waiters();
-    // Bridge session (librqbit session.stop) + Python subprocess kill.
+    // Engine kapanışı (librqbit session.stop). TASK-013: Python subprocess yolu emekli.
     if let Some(b) = bridge {
         let _ = b.call("shutdown", serde_json::json!({})).await;
     }
@@ -484,7 +470,9 @@ async fn run_with_tray(
                                         open_folder(target);
                                     }
                                 }
-                                None => tracing::warn!("klasör yolu alınamadı (bridge): {action:?}"),
+                                None => {
+                                    tracing::warn!("klasör yolu alınamadı (bridge): {action:?}")
+                                }
                             }
                         }
                         TrayAction::Quit => {

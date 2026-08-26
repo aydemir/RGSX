@@ -30,18 +30,19 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 |---|---|---|
 | Workspace kökü | `manager-rs/Cargo.toml` | 7 member crate; workspace dep: tokio, axum, serde, serde_json, tracing, windows-rs, librqbit |
 | `manager-core` (state machine + watchdog mantığı + settings) | `manager-rs/manager-core/src/{state,watchdog,contract,settings,lib}.rs` | Bağımlı: `manager-http` (AppState.manager_state), `manager-bridge`, `manager-windows`, `manager-torrent`. `ManagerState` (state.rs:23) çağıranlar: `watchdog.rs`, `manager-http/api.rs`. `Settings` (settings.rs) — Faz 12f native ayar şeması (`rgsx_settings.py` portu): `Default` (Python `default_settings`), `load()`/`save()` (`RGSX_SETTINGS_PATH`>`RGSX_DATA_DIR/rgsx_settings.json`), `validate()`, `system_info()`. |
-| `manager-bridge` (TorrentBackend trait + Python subprocess köprüsü) | `manager-rs/manager-bridge/src/lib.rs` | Bağımlı: `manager-core`. `Bridge::spawn` (lib.rs:108) → `python <script> --bridge` (qbittorrent_backend.py). Typed metodlar (ping/status/get_app_paths/change_webui_password…) JSON-RPC'ye proxy. `TorrentBackend` trait'ini tanımlar; `LibrqbitEngine` + `Bridge` implement eder |
+| `manager-bridge` (engine-bağımsız `TorrentBackend` sözleşmesi) | `manager-rs/manager-bridge/src/lib.rs` | Bağımlı: `manager-core`. TASK-013: Python subprocess istemcisi (`Bridge`/`BridgeConfig`, `qbittorrent_backend.py --bridge`) ve qBittorrent-kavramlı default metodlar (ping/status/is_available/get_webui_url/get_password_status/change_webui_password/regenerate) söküldü. Crate yalnız sözleşmeyi taşır: `TorrentBackend` + `BridgeError` + `ProgressEvent` (+ `ExtractHint` re-export). İmplementör: `LibrqbitEngine` (manager-torrent); tüketici: manager-http `AppState.bridge_call` |
 | `manager-http` (axum /api/* + SSE) | `manager-rs/manager-http/src/{api,state,sse,lib}.rs` | Bağımlı: `manager-core` (ManagerState), `manager-bridge` (TorrentBackend). `AppState` (state.rs:86) 32 çağıran: lib.rs, sse.rs, api.rs, manager-bin/main.rs. `finalize_download_in_state` (api.rs:647) → download handler'ı arka plan task'ında çağırır |
 | `manager-torrent` (librqbit embedded engine) | `manager-rs/manager-torrent/src/lib.rs` + `examples/live_torrent.rs` | Bağımlı: `librqbit 8.1.1`, `manager-bridge` (impl `TorrentBackend`), tokio/serde/tracing. `LibrqbitEngine::download_torrent` (lib.rs) → `download_torrent_source` (AddTorrent + wait_until_completed + resolve_downloaded_file + link_or_copy). Gap-2: `active_handles` (task_id → handle) kaydı + `Session::pause/unpause` ile `pause_active`/`resume_active`/`pause_task`/`resume_task`; `call()` JSON-RPC `pause_all`/`resume_all`/`pause`/`resume`/`is_paused`. Gap-3: `cancel_task`/`cancel_all_tasks` (`Session::delete(delete_files=true)` — `.rqbitpart`/kısmi dosyaları siler), progress loop'u `active_handles`'tan düşen task'ı iptal olarak görür; `call()` JSON-RPC `cancel`/`cancel_all` |
 | `manager-scan` (HDD tarama + gamelist.xml + history) | `manager-rs/manager-scan/src/{scan,disk,gamelist,history}.rs` | Faz 12d — `ROMS_FOLDER` walkdir tarama (platform gruplu ROM listesi + boyut), `sysinfo` disk kullanımı, `quick-xml` ile `gamelist.xml` oku/yaz (Linux=yalnız RGSX entry, Windows=merge), `history_matches.py` portu. `manager-http` `/api/scan` (`RGSX_ROMS_FOLDER`) + SSE `scan` olayı. 8 test yeşil. |
 | `manager-tvui` (TVUI native shell) | `manager-rs/manager-tvui/src/{lib,main,sdl2_shell,theme,render,screens,state,menus,search,virtual_keyboard,folder_browser,accessibility}.rs` + `native_input.rs` | Faz 12b (yön B) — `rust-sdl2` ile `display/*`+`controls/*` pygame `draw_*`'larını native 10-foot render'a portlar. `theme.json` (`colors.py`+`fonts.py`+`transitions.py`+`icons.py`) `serde_json` ile yüklenir. `RGSX_TVUI=1` → SDL2 native, `RGSX_TVUI=0` → eski Python pygame fallback. Girdi: `native_input.rs` (gilrs gamepad, TASK-005). |
 | `manager-download` (DDL/debrid resolver) | `manager-rs/manager-download/src/lib.rs` | Faz 12e — `Resolver` trait + `DirectResolver` (torrent/DDL sınıflandırma) + `OneFichierResolver`/`RealDebridResolver` (kimlik gerektirir; `NotConfigured`/`NotImplemented`). `manager-http` `/api/download` DDL dalı (`RGSX_NATIVE_DOWNLOAD=1`) → `DownloadManager::resolve` → `DirectHttp` ise reqwest ile indirir, SSE/progress ile sonuçlanır. 3 test yeşil. |
 | `manager-windows` (tray/autostart/firewall, cfg(windows)) | `manager-rs/manager-windows/src/{lib,tray,firewall,autostart}.rs` | Bağımlı: `manager-core`, `windows-rs`. Yalnız Windows build'de (`manager-bin` cfg(windows) dalı) linklenir; Linux'ta stub (`manager_windows_tray` modülü) |
-| `manager-bin` (entrypoint + engine seçimi) | `manager-rs/manager-bin/src/main.rs` | Bağımlı: `manager-core`, `manager-http`, `manager-bridge`, `manager-torrent`, (cfg windows) `manager-windows`. `resolve_engine` (main.rs:46): `RGSX_TORRENT_ENGINE=librqbit` → `LibrqbitEngine`; aksi → `Bridge::spawn`. `AppState.bridge`'e yazar; `axum::serve` ile dinler (port 5010 / `RGSX_MANAGER_BIN_PORT`) |
+| `manager-bin` (entrypoint + engine seçimi) | `manager-rs/manager-bin/src/main.rs` | Bağımlı: `manager-core`, `manager-http`, `manager-bridge`, `manager-torrent`, (cfg windows) `manager-windows`. `resolve_engine`: tek yol in-process `LibrqbitEngine` — TASK-013: Python dalı söküldü, `RGSX_TORRENT_ENGINE` env'i yok sayılır. `AppState.bridge`'e yazar; `axum::serve` ile dinler (port 5010 / `RGSX_MANAGER_BIN_PORT`) |
 
-### Rust↔Python köprüsü (Faz 10b, TASK-002f/002g)
-- `manager-bin` `RGSX_TORRENT_ENGINE=librqbit` → `LibrqbitEngine` in-process (Python'sız).
-- Varsayılan → `Bridge::spawn("qbittorrent_backend.py --bridge")` stdio JSON-RPC subprocess.
+### Rust↔Python torrent köprüsü (Faz 10b, TASK-002f/002g) — TASK-013 ile emekli
+- `manager-bin` tek torrent yolu: in-process `LibrqbitEngine` (Python'sız).
+- Arşiv: eski varsayılan `Bridge::spawn("qbittorrent_backend.py --bridge")` stdio JSON-RPC
+  subprocess'ı söküldü; geri dönüş için `python-skeleton-final` tag'i.
 - Handler'lar `AppState.bridge: Option<Arc<dyn TorrentBackend>>` üzerinden统一 çalışır; contract değişmez.
 
 ### Rust sidecar süpervizörü (Faz 10c/1, TASK-002i)
@@ -89,14 +90,10 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   `CatalogSource` trait'ine `post_binary` eklendi. `/api/download/batch` route'u Rust'e eklendi.
 - `cargo test -p manager-http`: 94/94 yeşil (13 yeni proxy testi).
 
-### Rust qBittorrent bridge (Faz 10c/3/5, TASK-002k-5) — köprü trait
-- `change_password`/`qb_start`/`qb_password_status` handler'ları zaten `state.bridge_call` ile
-  `TorrentBackend` trait'ine bağlı (Python bridge veya librqbit); köprü yoksa placeholder.
-  (Kod önceden hazırdı; 4 yeni kontrat testi eklendi — 98/98 yeşil.)
-- `regenerate-password` route'u Rust'te henüz YOK (Python tarafında kalan gap).
-  **KAPATILDI:** `qb_regenerate_password` handler + `regenerate_qbittorrent_password` bridge
-  metodu eklendi; köprü yoksa 500 `{"success":false,"message":"bridge_unavailable"}`
-  (Python sözleşmesi korunur). 99/99 test yeşil.
+### Rust qBittorrent bridge (Faz 10c/3/5, TASK-002k-5) — TASK-013 ile emekli edildi
+- Arşiv: `/api/qbittorrent/*` uçları + handler'ları (`change_password`/`qb_start`/
+  `qb_password_status`/`qb_regenerate_password`) + trait default'ları söküldü — librqbit tek torrent yolu.
+- Yaşayan kısım: `state.bridge_call` → `TorrentBackend::call` (download/pause/resume/cancel ailesi).
 
 ### Rust WebUI + SSE cutover (Faz 10c/3/6, TASK-002k-6) — flag-gated
 - Rust `index`/`static_file` (static_root + hydration + traversal koruması) ve SSE `/api/events`
@@ -179,8 +176,8 @@ aynı obje kimliğiyle tutulur.
 | Dil | `tests/test_language.py` | `language.py` (Faz 11) |
 | Display paketi | `tests/test_display_{core,filters,helpers,exports,colors}.py` | `display/` paketi (pygame-stub; dev makinesinde gerçek pygame) |
 | History noise | `tests/test_history_noise.py` | `history.py` |
-| **Rust contract** | `manager-rs/manager-http/tests/contract.rs` | `manager-http` axum router (AppState, finalize_download_in_state, dest_path_for, bridge mock) — 68 test |
-| **Rust birim** | `manager-rs/manager-*/tests/`, `*-rs/manager-core/src/*` `#[cfg(test)]` | crate-içi (core 30, bridge 5, torrent 9, doctest) — workspace 114 test |
+| **Rust contract** | `manager-rs/manager-http/tests/contract.rs` | `manager-http` axum router (AppState, finalize_download_in_state, dest_path_for, bridge mock) — 105 test (TASK-013 sonrası; qbittorrent uç testleri söküldü) |
+| **Rust birim** | `manager-rs/manager-*/tests/`, `*-rs/manager-core/src/*` `#[cfg(test)]` | crate-içi + workspace entegrasyon — `cargo test --workspace` yeşil; güncel dağılım: core 75, download 29 (+14 http_integration), http lib 28, scan 8, torrent 4 (+12 engine), tvui 27, windows 6 |
 
 ---
 
@@ -205,6 +202,6 @@ ADR dizini yok; mimari/akış/roadmap ayrı klasörlerde.
 ## 6. Çapraz katman bağımlılık özeti
 
 - **Rust→Rust:** bin → {core, http, bridge, torrent, windows(cfg)}; http → {core, bridge}; torrent → {bridge, librqbit}; windows → core; bridge → core.
-- **Rust→Python köprü:** `manager-bin` `Bridge::spawn` → `qbittorrent_backend.py --bridge` (stdio JSON-RPC). `LibrqbitEngine` bu yolu atlar (in-process).
+- **Arşiv Rust→Python torrent köprüsü:** TASK-013 öncesi `manager-bin` `Bridge::spawn` → `qbittorrent_backend.py --bridge` (stdio JSON-RPC); bugün tek yol in-process `LibrqbitEngine`.
 - **Python→Python:** `network/*` paketi `config`/`qbittorrent_backend`/`history`/`display`/`utils`/`controls`/`rgsx_manager`'a bağlı; döngüler lazy import ile kırılır.
 - **Test→Hedef:** `tests/*.py` ilgili `ports/RGSX/*` modülünü; `manager-rs/.../tests/contract.rs` + crate birim testleri Rust tarafını hedefler.

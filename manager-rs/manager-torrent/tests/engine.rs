@@ -18,20 +18,6 @@ async fn engine() -> LibrqbitEngine {
 }
 
 #[tokio::test]
-async fn ping_returns_pong() {
-    let e = engine().await;
-    assert_eq!(e.ping().await.unwrap(), "pong");
-}
-
-#[tokio::test]
-async fn status_stopped_before_running() {
-    let e = engine().await;
-    let s = e.status().await.unwrap();
-    assert_eq!(s.state, "STOPPED");
-    assert!(s.available);
-}
-
-#[tokio::test]
 async fn only_listed_methods_dispatch() {
     let e = engine().await;
     // Sözleşmede olmayan metod JSON-RPC "Method not found" koduna (-32601) düşer.
@@ -41,22 +27,27 @@ async fn only_listed_methods_dispatch() {
 }
 
 #[tokio::test]
-async fn password_status_matches_python_contract() {
+async fn retired_qbittorrent_methods_dispatch_method_not_found() {
+    // TASK-013: qBittorrent-kavramlı metodlar trait'ten ve call() dispatch'inden
+    // söküldü — hepsi artık -32601 "Method not found"a düşmeli.
     let e = engine().await;
-    let v = e.get_password_status().await.unwrap();
-    assert_eq!(v["available"], true);
-    assert_eq!(v["using_default"], false);
-    assert_eq!(v["secured"], true);
-    assert_eq!(v["mode"], "embedded");
-}
-
-#[tokio::test]
-async fn change_password_reports_embedded_mode() {
-    let e = engine().await;
-    // librqbit'te şifre kavramı yok — (false, "embedded_mode") sözleşmesi.
-    let (ok, msg) = e.change_webui_password("RGSXqbt678").await.unwrap();
-    assert!(!ok);
-    assert_eq!(msg, "embedded_mode");
+    for m in [
+        "ping",
+        "status",
+        "is_available",
+        "ensure_running",
+        "get_webui_url",
+        "get_password_status",
+        "change_webui_password",
+        "regenerate_qbittorrent_password",
+    ] {
+        let err = e.call(m, json!({})).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&format!("Method not found: {m}")),
+            "{m}: {msg}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -147,7 +138,10 @@ async fn pause_resume_dispatched_via_jsonrpc_call() {
     assert_eq!(single, json!(null));
     let resumed_one = e.call("resume", json!({ "task_id": "x" })).await.unwrap();
     assert_eq!(resumed_one, json!(null));
-    let paused_check = e.call("is_paused", json!({ "task_id": "x" })).await.unwrap();
+    let paused_check = e
+        .call("is_paused", json!({ "task_id": "x" }))
+        .await
+        .unwrap();
     assert_eq!(paused_check, json!(false));
 }
 

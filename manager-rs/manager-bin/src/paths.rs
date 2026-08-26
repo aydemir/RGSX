@@ -23,7 +23,6 @@ pub struct RgsxPaths {
     pub languages_dir: PathBuf,
     pub downloads_dir: PathBuf,
     pub logs_dir: PathBuf,
-    pub manager_script: PathBuf,
     pub roms_folder: PathBuf,
 }
 
@@ -117,7 +116,10 @@ pub fn resolve_paths() -> RgsxPaths {
 
     let webui_dir = env_or(&rgsx_dir.join("webui"), "RGSX_WEBUI_DIR");
     if !webui_dir.is_dir() {
-        tracing::warn!("WebUI dizini bulunamadi; placeholder UI servisi: {}", webui_dir.display());
+        tracing::warn!(
+            "WebUI dizini bulunamadi; placeholder UI servisi: {}",
+            webui_dir.display()
+        );
     }
     let data_dir = env_or(
         &root.join("saves").join("ports").join("rgsx"),
@@ -126,7 +128,8 @@ pub fn resolve_paths() -> RgsxPaths {
     let languages_dir = env_or(&rgsx_dir.join("languages"), "RGSX_LANGUAGES_FOLDER");
     let downloads_dir = env_or(&data_dir.join("downloads"), "RGSX_DOWNLOADS_FOLDER");
     let logs_dir = env_or(&data_dir.join("logs"), "RGSX_LOGS_FOLDER");
-    let manager_script = env_or(&rgsx_dir.join("qbittorrent_backend.py"), "RGSX_MANAGER_SCRIPT");
+    // TASK-013: manager_script (qbittorrent_backend.py) çözümü emekli edildi —
+    // Python bridge subprocess yolu kalktı; RGSX_MANAGER_SCRIPT env artık set edilmez.
     // gap-29: indirme hedefi ROM klasörü. `effective_roms_folder()` (api.rs) yalnızca
     // env/settings'a bakıyordu → set EDİLMEZSE dosyalar `downloads/` staging'e düşüyordu.
     // Burada `root/roms`'u türetip uyguluyoruz (gap-26 parity: env varsa öncelikli).
@@ -138,7 +141,6 @@ pub fn resolve_paths() -> RgsxPaths {
     apply("RGSX_LANGUAGES_FOLDER", &languages_dir);
     apply("RGSX_DOWNLOADS_FOLDER", &downloads_dir);
     apply("RGSX_LOGS_FOLDER", &logs_dir);
-    apply("RGSX_MANAGER_SCRIPT", &manager_script);
     apply("RGSX_ROMS_FOLDER", &roms_folder);
 
     RgsxPaths {
@@ -149,7 +151,6 @@ pub fn resolve_paths() -> RgsxPaths {
         languages_dir,
         downloads_dir,
         logs_dir,
-        manager_script,
         roms_folder,
     }
 }
