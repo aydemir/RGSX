@@ -34,6 +34,7 @@ Bu dosya git-based markdown kanban kartıdır. Her görev tek satırlık karttı
 - [x] `TASK-002-gap-13` Support ZIP redaction (saf-Rust) — `tasks/gap/TASK-002-gap-13-support-redaction.md` (✅ 2026-08-18: `manager-core/src/secrets.rs` `redact_secrets` + `api.rs::build_support_zip` + `test_support_redacted_offline`)
 
 ### P1 — Kritik / Veri Kaybı
+- [x] `TASK-015-gap-02` Release CI gerçek koşu doğrulaması (native Rust pipeline) — `tasks/done/TASK-015-gap-02-release-ci-verify.md` (✅ 2026-08-26: fork'ta v9.9.9-test koşusu yeşil; 5 workflow hatası giderildi — working-directory, kişisel .cargo/config, cmake4 env, exec bit, discord guard; cihaz smoke'ları kullanıcıda)
 - [x] `TASK-002-gap-10` History disk persist + clear_history aktif koruma + downloaded_games + SSE throttle — `tasks/gap/TASK-002-gap-10-history-sse.md` (2026-08-18 kapatıldı: A/B/C/D/E kodda mevcut)
 - [x] `TASK-002-gap-5` Disk alanı ön-kontrolü + permission pre-check — `tasks/gap/TASK-002-gap-5-disk-space.md` (✅ 2026-08-18: `manager-core/src/disk.rs` + `DownloadError::InsufficientDiskSpace` `http/mod.rs:245`)
 - [x] `TASK-002-gap-12` Download orchestration (concurrency/slot/dedup/FIFO/global pause) — `tasks/done/TASK-002-gap-12-download-orchestration.md` (✅ 2026-08-26: FIFO da doğrulandı — `state.rs` `pending_set: VecDeque` (gap-30/F3); dosya done/'a taşındı)

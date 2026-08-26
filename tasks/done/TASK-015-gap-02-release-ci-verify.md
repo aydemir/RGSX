@@ -2,7 +2,7 @@
 
 - **id:** TASK-015-gap-02
 - **title:** `.github/workflows/release.yml` Rust pipeline'ının ilk gerçek tag koşusuyla doğrulanması
-- **status:** todo
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-26
 - **environment:** both
@@ -56,3 +56,22 @@ birleştirip 3 zip + release notes + GitHub Release + Discord webhook). Şu vars
 ## İlerleme
 
 - 2026-08-26 — Görev oluşturuldu (gap-02 bitiş notundan ayrıştırıldı).
+- 2026-08-26 — Tamamlandı. Test tag'i `v9.9.9-test` **aydemir fork**'una push edildi
+  (origin'e değil — gerçek release/Discord tetiklenmesin); 3 koşu sonucu yeşile ulaştı
+  (run 32966068702, ~7 dk). Bulunan ve giderilen tahmin hataları:
+  1. `cargo build` repo kökünde çalışıyordu → workspace `manager-rs/` altında;
+     build adımlarına `working-directory: manager-rs` + artifact yolları düzeltildi.
+  2. Repo'daki kişisel `manager-rs/.cargo/config.toml`
+     (`target-dir = C:/Users/lv/RGSX/rust-target`) Linux'ta `LD_LIBRARY_PATH` join
+     panic'ine yol açıyordu → repodan çıkarıldı + `.gitignore`'a eklendi (yerel dosya
+     duruyor; CI default `manager-rs/target` kullanıyor).
+  3. Runner CMake 4.x vs sdl2-sys `cmake_minimum_required(<3.5)` → top-level env
+     `CMAKE_POLICY_VERSION_MINIMUM: "3.5"`.
+  4. `upload-artifact@v4` exec bit taşımıyor → zip öncesi `chmod +x manager-bin RGSX.sh`
+     (create_release); `RGSX.sh` update zip'e eklendi; git'te 100644→100755.
+  5. Fork'ta `DISCORD_WEBHOOK` secret yok → adım secret yoksa atlanır (origin davranışı aynı).
+  Doğrulama: 3 zip indirildi; içerik checklist'e uygun (`update`: manager-bin+webui+RGSX.sh;
+  `windows`: ports/RGSX/manager-bin.exe+webui+windows; `full`: ports+windows);
+  `manager-bin`/`RGSX.sh` `-rwxr-xr-x`; WSL ldd: glibc bağımlılıklarının tamamı çözülüyor
+  (not found=0). Test release + tag silindi. Kalan (cihaz tarafı): Batocera'da canlı smoke +
+  RetroBat'ta `RGSX rust.bat` boot testi — kullanıcı doğrulaması.
