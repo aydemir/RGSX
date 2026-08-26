@@ -55,10 +55,9 @@ Télécharger la dernière release : [RGSX_update_latest.zip](https://github.com
 
 **Retrobat / premier lancement Windows**
 
-- Il est recommandé de lancer une première fois `RGSX Retrobat.bat` manuellement, hors interface Retrobat, pour valider l’environnement.
-- Autorisez les demandes Windows de pare-feu quand elles apparaissent, surtout pour qBittorrent au premier lancement.
+- Il est recommandé de lancer une première fois `RGSX rust.bat` manuellement, hors interface Retrobat, pour valider l'environnement.
+- Autorisez la demande de pare-feu Windows pour RGSX (`manager-bin.exe`) quand elle apparaît.
 - Retrobat masque certaines fenêtres système par défaut : un premier lancement manuel évite de manquer une invite importante.
-- Le lanceur configure ensuite une règle locale pour le binaire qBittorrent intégré et pour la WebUI TCP `18572`.
 
 **Mode clavier** : lorsqu'aucune manette n'est détectée, les contrôles s'affichent sous forme de `[Touche]` au lieu d'icônes.
 
@@ -133,19 +132,12 @@ Télécharger la dernière release : [RGSX_update_latest.zip](https://github.com
 3. **File d'attente** : appuyez sur `X` (bouton Ouest)
 4. Suivez la progression dans le menu **Historique** ou via les notifications popup
 
-## Torrent via qBittorrent intégré
+## Moteur torrent intégré (librqbit)
 
-Les téléchargements torrent passent maintenant par un binaire qBittorrent intégré dans RGSX, sur Windows comme sur Linux/Batocera.
+Les téléchargements torrent passent par un moteur torrent Rust embarqué (librqbit) dans RGSX — aucun processus qBittorrent externe, WebUI ni port séparé.
 
-- WebUI de debug LAN : `http://IP_DE_VOTRE_MACHINE:18572`
-- Identifiants par défaut : `admin` / `RGSXqbt`
-- Depuis l’interface web RGSX, un bouton `qBittorrent` ouvre directement cette WebUI.
-
-Notes utiles :
-- Cette WebUI sert au debug et au suivi avancé des torrents depuis un téléphone ou un autre PC du réseau local.
-- Si l’accès LAN à la WebUI ne fonctionne pas, vérifiez d’abord le pare-feu local Windows.
-- N’ouvrez pas directement le port `18572` sur Internet : c’est le port d’administration WebUI, pas le port BitTorrent de performance.
-- En cas de souci de connectivité torrent, préférez l’UPnP ou l’ouverture du port d’écoute BitTorrent configuré dans qBittorrent.
+- Les torrents sont gérés dans la même file/historique que les téléchargements directs.
+- En cas de souci de connectivité, préférez l'UPnP ou l'ouverture du port d'écoute BitTorrent dans les paramètres réseau.
 
 ## 🌐 Interface Web
 
@@ -173,10 +165,9 @@ RGSX inclut une interface web pour parcourir et télécharger des jeux à distan
 
 ### Activer/Désactiver le service web au démarrage, sans lancer RGSX
 
-**Sur Windows/RetroBat**, les téléchargements passent par un daemon en arrière-plan (`rgsx_manager.py`) avec icône système :
+**Sur Windows/RetroBat**, les téléchargements passent par un manager en arrière-plan (`manager-bin.exe`) avec icône système :
 - Téléchargements en arrière-plan, même si l'interface TV est fermée
-- Menu de l'icône : ouvrir l'interface web, dossiers des ROMs/génériques (logs), démarrage automatique au boot, quitter
-- Démarrage automatique Windows : `python rgsx_manager.py --auto-start-install` / `--auto-start-remove` (**activé par défaut**, désactivable depuis le menu de l'icône)
+- Menu de l'icône : ouvrir l'interface web, dossiers des ROMs/logs, démarrage automatique au boot, quitter
 
 **Depuis le menu RGSX**
 1. Ouvrez le **menu pause** (Start/ALTGr)
@@ -195,24 +186,16 @@ RGSX inclut une interface web pour parcourir et télécharger des jeux à distan
 /roms/
 ├── ports/
 │   ├── RGSX/
-│   │   ├── __main__.py                # Point d'entrée (bootstrap → tvui.main)
-│   │   ├── tvui.py                    # Boucle principale TV UI
-│   │   ├── manager_launcher.py        # Démarrage + supervision du manager
-│   │   ├── rgsx_manager.py            # Démon de téléchargement (Windows/RetroBat)
-│   │   ├── rgsx_settings.py           # Gestionnaire des paramètres
-│   │   ├── utils/                     # games, sorting, media, torrent, extract, ...
-│   │   ├── network/                   # queue, http_download, one_fichier, download_state, ...
-│   │   ├── controls/                  # input, menus, downloads, search (TVUI)
-│   │   ├── display/                   # Moteur de rendu
-│   │   ├── rgsx_web/                  # Serveur web + API REST/SSE
-│   │   ├── assets/controls/           # Profils de manettes
-│   │   ├── languages/                 # Traductions (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
-│   │   └── logs/RGSX.log              # Logs d'exécution
+│   │   ├── manager-bin              # Manager natif (Linux/Batocera) : Web UI + moteur torrent + TV UI
+│   │   ├── manager-bin.exe          # Manager natif (Windows/RetroBat)
+│   │   ├── RGSX.sh                  # Lanceur (Batocera/Knulli)
+│   │   └── webui/                   # SPA Vue (interface web)
 │   ├── gamelist.xml
 │   ├── images/
 │   └── videos/
 └── windows/
-    ├── RGSX Retrobat.bat              # Lanceur Windows uniquement (utilisable même sans RetroBat)
+    ├── RGSX rust.bat                # Lanceur Windows uniquement (utilisable même sans RetroBat)
+    ├── scripts/
     ├── gamelist.xml
     ├── images/
     └── videos/

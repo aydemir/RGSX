@@ -38,26 +38,16 @@ After installation:
 
 ### Windows (RetroBat) Installation Details
 
-The BAT file (`RGSX Retrobat.bat`) handles Python detection and installation automatically:
-
-**Python Detection Priority:**
-1. `python.exe` in system PATH (user-installed Python)
-2. `py.exe` (Python Launcher)
-3. Local bundle: `%ROOT_DIR%\system\tools\Python\python.exe`
-   - If not found → automatically downloads and installs from `python.zip`
+RGSX is a **native Rust application** — no Python or other runtime is required.
 
 **First Launch Process:**
-1. Checks for Python installation
-2. If missing → downloads `python.zip` (~53MB) from GitHub
-3. Extracts Python 3.13 embedded distribution to `system\tools\Python\`
-4. Installs required packages (pygame-ce, requests, libtorrent, etc.)
-5. Configures Windows Firewall rules
-6. Starts RGSX
+1. `RGSX rust.bat` launches `manager-bin.exe` (embedded torrent engine + Web UI + TV UI)
+2. Allow the Windows Firewall prompt for the Web UI when it appears
+3. RGSX starts serving the web interface and downloads immediately
 
 **Requirements:**
 - Windows 10/11
-- Internet connection (for first launch only)
-- No manual Python installation required (embedded Python is used automatically)
+- Internet connection
 
 ### Manual Update (if automatic update failed)
 Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameSets/RGSX/releases/latest/download/RGSX_full_latest.zip)
@@ -78,10 +68,9 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 
 **Retrobat / first Windows launch**
 
-- It is recommended to launch `RGSX Retrobat.bat` manually once, outside the Retrobat interface, to verify that everything is working.
-- Allow Windows firewall prompts when they appear, especially for qBittorrent on first launch.
+- It is recommended to launch `RGSX rust.bat` manually once, outside the Retrobat interface, to verify that everything is working.
+- Allow the Windows firewall prompt for RGSX (`manager-bin.exe`) when it appears.
 - Retrobat hides some system windows by default, so a first manual launch helps avoid missing an important prompt.
-- The launcher then configures a local rule for the embedded qBittorrent binary and for the TCP `18572` WebUI.
 
 **Keyboard Mode**: When no controller is detected, controls display as `[Key]` instead of icons.
 
@@ -165,19 +154,12 @@ Download latest release : [RGSX_update_latest.zip](https://github.com/RetroGameS
 3. **Queue Download**: Press `X` (West button)
 4. Track progress in **History** menu or via popup notifications
 
-## Embedded qBittorrent torrent backend
+## Embedded torrent engine (librqbit)
 
-Torrent downloads now run through an embedded qBittorrent binary on both Windows and Linux/Batocera.
+Torrent downloads run through an embedded Rust torrent engine (librqbit) inside RGSX — no external qBittorrent process, WebUI or separate port.
 
-- LAN debug WebUI: `http://YOUR_DEVICE_IP:18572`
-- Default credentials: `admin` / `RGSXqbt`
-- The RGSX web interface now includes a `qBittorrent` button that opens this WebUI directly.
-
-Useful notes:
-- This WebUI is intended for debugging and advanced torrent monitoring from a phone or another PC on the same local network.
-- If LAN access to the WebUI does not work, first check the local Windows firewall.
-- Do not expose port `18572` directly to the Internet: it is the WebUI admin port, not the BitTorrent performance port.
-- If torrent connectivity is poor, prefer UPnP or forwarding the actual BitTorrent listening port configured inside qBittorrent.
+- Torrents are managed from the same queue/history as direct downloads.
+- Connectivity issues: prefer UPnP or forwarding the BitTorrent listening port in the network settings.
 
 ## 🌐 Web Interface
 
@@ -218,14 +200,14 @@ RGSX includes a web interface for remote browsing and downloading games from any
 
 ## 🕹️ RGSX Download Manager (Windows / RetroBat)
 
-Since v2.6.5.2, downloads on Windows run through an independent background daemon (`rgsx_manager.py`). You can close the TV UI or the web UI without stopping your downloads.
+Downloads run through a background manager (`manager-bin.exe`) with a system tray icon. You can close the TV UI or the web UI without stopping your downloads.
 
 ### What it does
 
 - Runs downloads in the background with a **system tray** icon
 - Hosts the **web interface on port 5000** (Windows included)
 - Pushes real-time progress to the TV UI and web UI over **SSE** (`/api/events`)
-- **Auto-start on boot** (Windows Registry `Run` key) — **on by default** (toggleable from the tray menu; the preference is stored persistently)
+- **Auto-start on boot** (Windows Registry `Run` key) — toggleable from the tray menu; the preference is stored persistently
 - **Unified queue**: downloads started from the TV UI, web UI, or CLI share the same manager queue
 
 ### Tray menu
@@ -235,21 +217,16 @@ Since v2.6.5.2, downloads on Windows run through an independent background daemo
 | Open Web UI | Opens `http://localhost:5000` in your browser |
 | Downloads folder | Opens the ROMs folder |
 | Logs folder | Opens the logs folder |
-| Auto-start on boot | Toggles Windows startup (**on by default**; checkbox reflects current state) |
+| Auto-start on boot | Toggles Windows startup (checkbox reflects current state) |
 | Exit | Stops the manager (and cancels pending downloads) |
 
 ### Manual control
 
-```bash
-python rgsx_manager.py --port=5000          # run with tray icon
-python rgsx_manager.py --no-tray --port=5000
-python rgsx_manager.py --auto-start-install # enable start with Windows
-python rgsx_manager.py --auto-start-remove  # disable start with Windows
+```bat
+roms\ports\RGSX\manager-bin.exe   # manager + tray + web UI (port 5000)
 ```
 
-### Fallback mode
-
-If the manager cannot start — or you launch with `--ui-only` / set `RGSX_NO_MANAGER=1` — the TV UI and web UI fall back to an in-process queue. Downloads still work, but they stop when the app is closed.
+Set `RGSX_MANAGER_BIN_PORT` to change the port.
 
 ---
 
@@ -259,33 +236,19 @@ If the manager cannot start — or you launch with `--ui-only` / set `RGSX_NO_MA
 /roms/
 ├── ports/
 │   ├── RGSX/
-│   │   ├── __main__.py                # Entry point (bootstrap only → tvui.main)
-│   │   ├── tvui.py                    # TV UI main loop / boot
-│   │   ├── manager_launcher.py        # Manager spawn + supervisor (watchdog)
-│   │   ├── rgsx_manager.py            # Background download daemon (Windows/RetroBat)
-│   │   ├── rgsx_cli.py                # CLI tool
-│   │   ├── qbittorrent_backend.py     # qBittorrent WebUI client
-│   │   ├── rgsx_settings.py           # Settings manager
-│   │   ├── history.py                 # Download history
-│   │   ├── config.py / language.py / game_filters.py / watchdog.py / thread_safety.py
-│   │   ├── utils/                     # games, sorting, media, torrent, extract, files, ...
-│   │   ├── network/                   # queue, http_download, one_fichier, download_state, ...
-│   │   ├── controls/                  # input, menus, downloads, search (TVUI)
-│   │   ├── display/                   # Rendering engine (game list, menus, history, ...)
-│   │   ├── rgsx_web/                  # Web server + REST/SSE API (handlers, server, ...)
-│   │   ├── assets/controls/           # Controller profiles
-│   │   ├── languages/                 # Translations (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
-│   │   └── logs/RGSX.log              # Runtime logs
+│   │   ├── manager-bin              # Native manager (Linux/Batocera): Web UI + torrent engine + TV UI
+│   │   ├── manager-bin.exe          # Native manager (Windows/RetroBat)
+│   │   ├── RGSX.sh                  # Launcher (Batocera/Knulli)
+│   │   └── webui/                   # Vue SPA (web interface)
 │   ├── gamelist.xml
 │   ├── images/
 │   └── videos/
 └── windows/
-    ├── RGSX Retrobat.bat              # Launcher for Windows only (can be used without retrobat too)
+    ├── RGSX rust.bat                # Launcher for Windows only (can be used without retrobat too)
+    ├── scripts/
     ├── gamelist.xml
     ├── images/
     └── videos/
-└── deps/
-    └── python.zip                     # Portable Python 3.13 (for automatic installation)
 
 /saves/ports/rgsx/
 ├── rgsx_settings.json        # User preferences

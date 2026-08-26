@@ -1,10 +1,10 @@
 //! Faz 12b (yön B) — TVUI native shell (rust-sdl2).
 //!
-//! `ports/RGSX/tvui.py` + `display/*` + `controls/*` (pygame native) Rust'a birebir
-//! SDL2 primitives ile portlanır; temalar `theme.json` (`colors.py`+`fonts.py`+
-//! `transitions.py`+`icons.py`) ile serde_json yüklenir (ES `theme.xml` yerine).
-//! `RGSX_TVUI=1` → SDL2 native shell; `RGSX_TVUI=0` → eski Python pygame fallback
-//! (bu crate o durumda çağrılmaz).
+//! `ports/RGSX/tvui.py` + `display/*` + `controls/*` (pygame native; arşiv:
+//! python-skeleton-final tag'i) Rust'a birebir SDL2 primitives ile portlandı;
+//! temalar `theme.json` ile serde_json yüklenir (ES `theme.xml` yerine).
+//! `RGSX_TVUI=1` → SDL2 native shell — tek TVUI yolu (Python pygame fallback
+//! TASK-012-gap-02 ile söküldü).
 
 pub mod native_input;
 pub mod net;

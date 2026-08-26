@@ -575,19 +575,16 @@ fn claim_in_flight(state: &AppState, url: &str) -> bool {
 /// await handler future'ını Send yapmaz (bkz. change_password deseni).
 pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
     // TASK-002l: doğrudan çözülmüş torrent URL'i (magnet:/rgsx+torrent:/.torrent) ve
-    // bir bridge (librqbit varsayılan) mevcutsa, Python catalog'a proxy ETME — indirme
-    // engine'e yönlendirilir (canlıda catalog olsa bile). Aksi halde mevcut davranış:
-    // `catalog` varsa game_index/game_name çözümü için Python'a proxy edilir.
+    // bir bridge (librqbit varsayılan) mevcutsa, indirme engine'e yönlendirilir
+    // (canlıda catalog olsa bile).
     let direct_url = body.get("url").and_then(Value::as_str);
     let intercept_locally =
         direct_url.map(is_torrent_url).unwrap_or(false) && state.bridge.is_some();
 
-    // Faz 12e: native DDL çözümü + doğrudan HTTP indirme. Yalnız `RGSX_NATIVE_DOWNLOAD=1`
-    // ile; debrid yapılandırılmamışsa `DownloadManager` DirectResolver'a düşer ve düz
-    // HTTP kaynak doğrudan indirilir. Kapalıyken mevcut Python proxy korunur.
-    // gap-27: saf-Rust varsayılan = true (native DDL açık). Flag yine env ile override edilebilir.
-    // `native_download` her iki native DDL kesiğinde de kullanılır (aşağıdaki ikinci blok dahil)
-    // böylece flag kapalıyken istekler bridge/placeholder/proxy yoluna düşer.
+    // Faz 12e: native DDL çözümü + doğrudan HTTP indirme. Debrid yapılandırılmamışsa
+    // `DownloadManager` DirectResolver'a düşer ve düz HTTP kaynak doğrudan indirilir.
+    // gap-27: saf-Rust varsayılan = true (native DDL açık). Flag yine env ile override edilebilir
+    // (contract test izolasyonu). `native_download` her iki native DDL kesiğinde de kullanılır.
     let native_download = std::env::var("RGSX_NATIVE_DOWNLOAD")
         .map(|v| v == "1")
         .unwrap_or(true);
@@ -627,8 +624,8 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     }
 
     if !intercept_locally {
-        // Faz 10c/3/4: `catalog` varsa Python'a proxy (game_index/game_name çözümü Python'da).
-        // Placeholder'da WebUI yalnızca game_index gönderir — yerel `direct_url` yolu bridge/librqbit içindir.
+        // Katalog kaynaklı POST delegasyonu (NativeCatalog post_json hep Err döner;
+        // blok test sahteleri/FakeCatalog için genel sözleşme olarak kalır).
         if let Some(c) = &state.catalog {
             if let Ok(v) = c.post_json("/api/download", &body).await {
                 return ok(v);

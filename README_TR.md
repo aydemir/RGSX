@@ -33,26 +33,16 @@ Kurulumdan sonra:
 
 ### Windows (RetroBat) Kurulum Detayları
 
-BAT dosyası (`RGSX Retrobat.bat`) Python tespitini ve kurulumunu otomatik olarak yönetir:
-
-**Python Tespit Önceliği:**
-1. PATH'teki `python.exe` (kullanıcının kendi Python'u)
-2. `py.exe` (Python Launcher)
-3. Yerel bundle: `%ROOT_DIR%\system\tools\Python\python.exe`
-   - Yoksa → `python.zip`'ten otomatik indirilir ve kurulur
+RGSX **yerel Rust uygulamasıdır** — Python veya başka bir çalışma zamanı gerekmez.
 
 **İlk Çalıştırma Süreci:**
-1. Python kurulumu kontrol edilir
-2. Yoksa → GitHub'dan `python.zip` (~53MB) indirilir
-3. Python 3.13 embedded dağıtımı `system\tools\Python\` dizinine çıkarılır
-4. Gerekli paketler kurulur (pygame-ce, requests, libtorrent, vb.)
-5. Windows Güvenlik Duvarı kuralları yapılandırılır
-6. RGSX başlatılır
+1. `RGSX rust.bat`, `manager-bin.exe`'i başlatır (gömülü torrent motoru + Web UI + TV UI)
+2. Çıkan Windows Güvenlik Duvarı iznini onaylayın
+3. RGSX web arayüzünü sunmaya ve indirmeleri çalıştırmaya hemen başlar
 
 **Gereksinimler:**
 - Windows 10/11
-- İnternet bağlantısı (sadece ilk çalışma için)
-- Manuel Python kurulumu gerekmez (gömülü Python otomatik kullanılır)
+- İnternet bağlantısı
 
 **Kurulan yollar:**
 - `/roms/ports/RGSX` (tüm sistemler)
@@ -60,28 +50,7 @@ BAT dosyası (`RGSX Retrobat.bat`) Python tespitini ve kurulumunu otomatik olara
 
 ### Web UI Kısayolu (Masaüstü)
 
-RGSX'in web arayüzünü masaüstünden kolayca başlatabilirsiniz:
-
-**Otomatik Oluşturma:**
-```batch
-"RGSX Retrobat.bat" --create-shortcut
-```
-Bu komut masaüstüne "RGSX Web UI" kısayolu oluşturur.
-
-**Manuel Oluşturma:**
-1. `windows\create_shortcut.vbs` dosyasını çalıştırın
-2. Veya `RGSX Retrobat.bat --webui` komutunu çalıştırın
-
-**Kullanım:**
-- Masaüstündeki "RGSX Web UI" kısayoluna çift tıklayın
-- Web sunucusu otomatik başlar ve tarayıcıda açılır
-- TV UI (televizyon arayüzü) çalışmaz, sadece web arayüzü çalışır
-
-**Seçenekler:**
-- `--webui` → Sadece web sunucusunu başlatır (TV UI yok)
-- `--create-shortcut` → Masaüstü kısayolu oluşturur
-- `--display=N` → Belirli ekranda TV UI'ı başlatır
-- `--windowed` → Pencere modunda başlatır
+Web arayüzüne tarayıcıdan `http://localhost:5000` adresiyle ulaşabilirsiniz; manager-bin çalışırken web UI her zaman açıktır. TV UI için `RGSX_TVUI=1` ile `manager-bin.exe` başlatılır.
 
 ---
 
@@ -176,14 +145,14 @@ RGSX, ağınızdaki herhangi bir cihazdan uzaktan göz atma ve indirme için oto
 
 ## 🕹️ RGSX İndirme Yöneticisi (Windows / RetroBat)
 
-v2.6.5.2'den itibaren Windows'taki indirmeler bağımsız bir arka plan daemon'ı (`rgsx_manager.py`) tarafından yönetilir. TV UI'ı veya web UI'ı kapatabilirsiniz; indirmeleriniz durmaz.
+v2.6.5.2'den itibaren Windows'taki indirmeler arka plan yöneticisi (`manager-bin.exe`) tarafından yönetilir. TV UI'ı veya web UI'ı kapatabilirsiniz; indirmeleriniz durmaz.
 
 ### Ne yapar?
 
 - İndirmeleri **sistem tepsisi** ikonuyla arka planda çalıştırır
 - **5000 numaralı portta web arayüzünü** sunar (Windows dahil)
 - Gerçek zamanlı ilerlemeyi TV UI ve web UI'a **SSE** (`/api/events`) ile iletir
-- Windows'ta **otomatik başlatma** (Registry `Run` anahtarı) — **varsayılan AÇIK** (tray menüsünden kapatılabilir, tercih kalıcı olarak saklanır)
+- Windows'ta **otomatik başlatma** (Registry `Run` anahtarı) — tray menüsünden açılıp kapatılabilir, tercih kalıcı olarak saklanır
 - **Birleşik kuyruk**: TV UI, web UI ve CLI'dan başlatılan indirmeler aynı kuyruğu paylaşır
 
 ### Tepsi menüsü
@@ -193,21 +162,16 @@ v2.6.5.2'den itibaren Windows'taki indirmeler bağımsız bir arka plan daemon'�
 | Open Web UI | Tarayıcıda `http://localhost:5000` açar |
 | Downloads folder | ROMs klasörünü açar |
 | Logs folder | Günlük klasörünü açar |
-| Auto-start on boot | Windows başlangıcını açar/kapatır (**varsayılan açık**; onay işareti mevcut durumu gösterir) |
+| Auto-start on boot | Windows başlangıcını açar/kapatır (onay işareti mevcut durumu gösterir) |
 | Exit | Yöneticiyi durdurur (bekleyen indirmeleri iptal eder) |
 
 ### Manuel kontrol
 
-```bash
-python rgsx_manager.py --port=5000          # tepsi ikonlu çalıştır
-python rgsx_manager.py --no-tray --port=5000
-python rgsx_manager.py --auto-start-install # Windows ile başlatmayı etkinleştir
-python rgsx_manager.py --auto-start-remove  # Windows ile başlatmayı kaldır
+```bat
+roms\ports\RGSX\manager-bin.exe   # manager + tray + web UI (port 5000)
 ```
 
-### Yedek mod (fallback)
-
-Yönetici başlatılamazsa — veya `--ui-only` ile başlatılırsa / `RGSX_NO_MANAGER=1` ayarlanırsa — TV UI ve web UI uygulama içi kuyruğa geçer. İndirmeler yine çalışır, ancak uygulama kapatıldığında durur.
+Portu değiştirmek için `RGSX_MANAGER_BIN_PORT` ortam değişkenini kullanın.
 
 ---
 
@@ -217,28 +181,19 @@ Yönetici başlatılamazsa — veya `--ui-only` ile başlatılırsa / `RGSX_NO_M
 /roms/
 ├── ports/
 │   ├── RGSX/
-│   │   ├── __main__.py                # Giriş noktası (yalnız bootstrap → tvui.main)
-│   │   ├── tvui.py                    # TV UI ana döngü / açılış
-│   │   ├── manager_launcher.py        # Manager başlatma + supervisor (watchdog)
-│   │   ├── rgsx_manager.py            # Arka plan indirme daemon'ı (Windows/RetroBat)
-│   │   ├── rgsx_settings.py           # Ayarlar yöneticisi
-│   │   ├── utils/                     # games, sorting, media, torrent, extract, ...
-│   │   ├── network/                   # queue, http_download, one_fichier, download_state, ...
-│   │   ├── controls/                  # input, menus, downloads, search (TVUI)
-│   │   ├── display/                   # Render motoru
-│   │   ├── rgsx_web/                  # Web sunucusu + REST/SSE API
-│   │   ├── languages/                 # Çeviriler (EN/FR/DE/ES/IT/PT/JA/ZH/RU/TR)
-│   │   └── logs/RGSX.log              # Çalışma günlükleri
+│   │   ├── manager-bin              # Yerel manager (Linux/Batocera): Web UI + torrent motoru + TV UI
+│   │   ├── manager-bin.exe          # Yerel manager (Windows/RetroBat)
+│   │   ├── RGSX.sh                  # Başlatıcı (Batocera/Knulli)
+│   │   └── webui/                   # Vue SPA (web arayüzü)
 │   ├── gamelist.xml
 │   ├── images/
 │   └── videos/
 └── windows/
-    ├── RGSX Retrobat.bat              # Sadece Windows (RetroBat olmadan da kullanılabilir)
+    ├── RGSX rust.bat                # Sadece Windows (RetroBat olmadan da kullanılabilir)
+    ├── scripts/
     ├── gamelist.xml
     ├── images/
     └── videos/
-└── deps/
-    └── python.zip                     # Taşınabilir Python 3.13 (otomatik kurulum için)
 
 /saves/ports/rgsx/
 ├── rgsx_settings.json        # Kullanıcı tercihleri

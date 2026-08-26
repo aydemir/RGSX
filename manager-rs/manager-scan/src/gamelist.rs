@@ -24,9 +24,10 @@ pub const RGSX_ENTRY_LINUX: &[(&str, &str)] = &[
     ("genre", "Various / Utilities"),
 ];
 
-/// Windows RGSX gamelist entry'si (Retrobat.bat).
+/// Windows RGSX gamelist entry'si (RGSX rust.bat — gap-02: eski Retrobat.bat
+/// Python launcher'ı silindi, native launcher aynı dizinde).
 pub const RGSX_ENTRY_WINDOWS: &[(&str, &str)] = &[
-    ("path", "./RGSX Retrobat.bat"),
+    ("path", "./RGSX rust.bat"),
     ("name", "RGSX"),
     ("desc", "Retro Games Sets X - Games Downloader"),
     ("image", "./images/RGSX.png"),

@@ -76,9 +76,9 @@ mod tests {
         assert!(games
             .iter()
             .any(|g| g.iter().any(|(k, v)| k == "name" && v == "Other")));
-        assert!(games.iter().any(|g| g
+        assert!(games
             .iter()
-            .any(|(k, v)| k == "path" && v == "./RGSX Retrobat.bat")));
+            .any(|g| g.iter().any(|(k, v)| k == "path" && v == "./RGSX rust.bat")));
     }
 
     #[test]

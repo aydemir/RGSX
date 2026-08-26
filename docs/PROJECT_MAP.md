@@ -12,12 +12,13 @@
 
 - **`main` = donuk Python iskelet referansı** (`ffcfcd4`, Python dönemi; manager-rs/webui yok).
   Geliştirme YOK — yalnız portlama speği olarak okunur.
-- **`custom` = tek geliştirme hattı** (native Rust + ortak docs/tests/webui/tasks).
+- **`custom` = tek geliştirme hattı** (native Rust + ortak docs/webui/tasks).
   Yeni uzun ömürlü branch AÇILMAZ; kısa ömürlü `fix/*` serbest.
-- **Cutover tamamlanınca (TASK-012f/l):** `custom` → `main` geçilir, eski Python noktasına
-  `python-skeleton` tag'i konur; Rust resmen mainline olur.
-- Python'a acil fallback fix gerekirse: `main`'den kısa süreli fix branch'i → `main`'e merge;
-  `custom`'a akmaz (`ports/RGSX` custom'da FROZEN referans olarak durur).
+- **Cutover TAMAM (TASK-012-gap-02, 2026-08-26):** `ports/RGSX` Python uygulaması custom'dan
+  silindi — custom **native-only**. Geri dönüş/nedensellik sorguları için tek kaynak
+  `python-skeleton-final` tag'i (`main` BAYAT bir anlıktır, ona bakılmaz).
+- Python'a acil fallback fix gerekirse: `python-skeleton-final` tag'inden kısa süreli
+  branch; `custom`'a akmaz.
 
 ---
 
@@ -34,7 +35,7 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 | `manager-http` (axum /api/* + SSE) | `manager-rs/manager-http/src/{api,state,sse,lib}.rs` | Bağımlı: `manager-core` (ManagerState), `manager-bridge` (TorrentBackend). `AppState` (state.rs:86) 32 çağıran: lib.rs, sse.rs, api.rs, manager-bin/main.rs. `finalize_download_in_state` (api.rs:647) → download handler'ı arka plan task'ında çağırır |
 | `manager-torrent` (librqbit embedded engine) | `manager-rs/manager-torrent/src/lib.rs` + `examples/live_torrent.rs` | Bağımlı: `librqbit 8.1.1`, `manager-bridge` (impl `TorrentBackend`), tokio/serde/tracing. `LibrqbitEngine::download_torrent` (lib.rs) → `download_torrent_source` (AddTorrent + wait_until_completed + resolve_downloaded_file + link_or_copy). Gap-2: `active_handles` (task_id → handle) kaydı + `Session::pause/unpause` ile `pause_active`/`resume_active`/`pause_task`/`resume_task`; `call()` JSON-RPC `pause_all`/`resume_all`/`pause`/`resume`/`is_paused`. Gap-3: `cancel_task`/`cancel_all_tasks` (`Session::delete(delete_files=true)` — `.rqbitpart`/kısmi dosyaları siler), progress loop'u `active_handles`'tan düşen task'ı iptal olarak görür; `call()` JSON-RPC `cancel`/`cancel_all` |
 | `manager-scan` (HDD tarama + gamelist.xml + history) | `manager-rs/manager-scan/src/{scan,disk,gamelist,history}.rs` | Faz 12d — `ROMS_FOLDER` walkdir tarama (platform gruplu ROM listesi + boyut), `sysinfo` disk kullanımı, `quick-xml` ile `gamelist.xml` oku/yaz (Linux=yalnız RGSX entry, Windows=merge), `history_matches.py` portu. `manager-http` `/api/scan` (`RGSX_ROMS_FOLDER`) + SSE `scan` olayı. 8 test yeşil. |
-| `manager-tvui` (TVUI native shell) | `manager-rs/manager-tvui/src/{lib,main,sdl2_shell,theme,render,screens,state,menus,search,virtual_keyboard,folder_browser,accessibility}.rs` + `native_input.rs` | Faz 12b (yön B) — `rust-sdl2` ile `display/*`+`controls/*` pygame `draw_*`'larını native 10-foot render'a portlar. `theme.json` (`colors.py`+`fonts.py`+`transitions.py`+`icons.py`) `serde_json` ile yüklenir. `RGSX_TVUI=1` → SDL2 native, `RGSX_TVUI=0` → eski Python pygame fallback. Girdi: `native_input.rs` (gilrs gamepad, TASK-005). |
+| `manager-tvui` (TVUI native shell) | `manager-rs/manager-tvui/src/{lib,main,sdl2_shell,theme,render,screens,state,menus,search,virtual_keyboard,folder_browser,accessibility}.rs` + `native_input.rs` | Faz 12b (yön B) — `rust-sdl2` ile `display/*`+`controls/*` pygame `draw_*`'larının native 10-foot render portu. `theme.json` serde_json ile yüklenir. `RGSX_TVUI=1` → SDL2 native shell — tek TVUI yolu (Python fallback gap-02 ile söküldü). Girdi: `native_input.rs` (gilrs gamepad, TASK-005). |
 | `manager-download` (DDL/debrid resolver) | `manager-rs/manager-download/src/lib.rs` | Faz 12e — `Resolver` trait + `DirectResolver` (torrent/DDL sınıflandırma) + `OneFichierResolver`/`RealDebridResolver` (kimlik gerektirir; `NotConfigured`/`NotImplemented`). `manager-http` `/api/download` DDL dalı (`RGSX_NATIVE_DOWNLOAD=1`) → `DownloadManager::resolve` → `DirectHttp` ise reqwest ile indirir, SSE/progress ile sonuçlanır. 3 test yeşil. |
 | `manager-windows` (tray/autostart/firewall, cfg(windows)) | `manager-rs/manager-windows/src/{lib,tray,firewall,autostart}.rs` | Bağımlı: `manager-core`, `windows-rs`. Yalnız Windows build'de (`manager-bin` cfg(windows) dalı) linklenir; Linux'ta stub (`manager_windows_tray` modülü) |
 | `manager-bin` (entrypoint + engine seçimi) | `manager-rs/manager-bin/src/main.rs` | Bağımlı: `manager-core`, `manager-http`, `manager-bridge`, `manager-torrent`, (cfg windows) `manager-windows`. `resolve_engine`: tek yol in-process `LibrqbitEngine` — TASK-013: Python dalı söküldü, `RGSX_TORRENT_ENGINE` env'i yok sayılır. `AppState.bridge`'e yazar; `axum::serve` ile dinler (port 5010 / `RGSX_MANAGER_BIN_PORT`) |
@@ -45,26 +46,28 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   subprocess'ı söküldü; geri dönüş için `python-skeleton-final` tag'i.
 - Handler'lar `AppState.bridge: Option<Arc<dyn TorrentBackend>>` üzerinden统一 çalışır; contract değişmez.
 
-### Rust sidecar süpervizörü (Faz 10c/1, TASK-002i)
-- `ports/RGSX/rust_daemon.py` (YENİ): `rgsx_manager.main()` içinden flag-gated başlatılır. `RGSX_RUST_DAEMON=1` (ve binary mevcutsa) `manager-bin`'i subprocess sidecar olarak spawn eder (port 5010 / `RGSX_MANAGER_BIN_PORT`, engine default `librqbit`); ayrı bir daemon thread'te `/api/health` poll edip `watchdog.RestartLimiter` ile sınırlı yeniden başlatır. Durum `config.rust_daemon_available` üzerinden yansıtılır (flag kapalıysa veya binary yoksa no-op → Python-only akış korunur). Test: `tests/test_rust_daemon.py`.
+### Rust sidecar süpervizörü (Faz 10c/1, TASK-002i) — ARŞİV (gap-02)
+- `ports/RGSX/rust_daemon.py` Python portuyla silindi (python-skeleton-final tag'inde yaşar).
+  Native-only'de manager-bin tek süreçtir; supervisor'a gerek yoktur.
 
-### Rust torrent devri (Faz 10c/2, TASK-002j)
-- `RGSX_RUST_TORRENT=1` (ayrı opt-in) + `config.rust_daemon_available` (healthy) → `network/queue.py::download_rom` torrent dalı (`torrent_meta is not None`), torrent indirmeyi `http://127.0.0.1:5010/api/download`'a devreder (gövdede `dest_path` verilir → postprocess bozulmaz). İlerleme `/api/progress` poll edilip `config.download_progress`/`config.history`'ye yansıtılır; `cancel_ev` ile iptal. Hata/timeout/`RGSX_RUST_TORRENT` kapalı → mevcut `qbittorrent_backend` yoluna **fallback** (risk sıfır, varsayılan kapalı).
-- Rust tarafı: `manager-http/src/api.rs::download` artık isteğe bağlı `dest_path` kabul eder (geriye uyumlu; yoksa `dest_path_for` ile türetir). `start()` `RGSX_DOWNLOADS_FOLDER`'ı `config.ROMS_FOLDER`'a çeker.
-- Yardımcı: `rust_daemon.download_torrent(...)` + `RustDaemonError`. Test: `tests/test_rust_daemon.py` (delege bayrağı + devir/mirror/fallback/missing-source).
+### Rust torrent devri (Faz 10c/2, TASK-002j) — ARŞİV (gap-02)
+- `network/queue.py` devri ve `rust_daemon.download_torrent(...)` yardımcısı Python portuyla
+  silindi; torrent indirme yalnız in-process `LibrqbitEngine` üzerinden yürür (TASK-013).
+- Kalan Rust tarafı: `manager-http/src/api.rs::download` isteğe bağlı `dest_path` kabul eder
+  (geriye uyumlu; yoksa `dest_path_for` ile türetir). `start()` `RGSX_DOWNLOADS_FOLDER`'ı
+  ROM köküne çeker.
 
-### Rust katalog proxy (Faz 10c/3/2, TASK-002k-2) — strangler/proxy
-- `manager-http/src/catalog.rs`: `CatalogSource` trait + `PythonCatalog` (reqwest/rustls-tls; `RGSX_PYTHON_MANAGER_URL`). `AppState.catalog` alanı eklendi.
+### Rust katalog proxy (Faz 10c/3/2, TASK-002k-2) — SÜPERSEDED (gap-02)
+- `PythonCatalog` + `RGSX_PYTHON_MANAGER_URL` proxy'si TASK-012-gap-02 ile söküldü.
+  Tarihçe: `CatalogSource` trait + reqwest proxy (`AppState.catalog`) idi.
 
-### Catalog native port (Faz 12c, TASK-002o) — Python'sız catalog
+### Catalog native port (Faz 12c, TASK-002o) — tek katalog kaynağı
 - `NativeCatalog` (`catalog.rs`) `CatalogSource` implement eder: `systems_list.json` +
   `games/<platform>.json` + `languages/<lang>.json` + `images/<platform>.*` local
-  dosyalarından birebir aynı JSON şeklini üretir (offline). `RGSX_NATIVE_CATALOG=1`
-  → main.rs `NativeCatalog::from_env()` kurar (yollar `RGSX_DATA_DIR` altından;
+  dosyalarından birebir aynı JSON şeklini üretir (offline). main.rs artık
+  koşulsuz `NativeCatalog::from_env()` kurar (yollar `RGSX_DATA_DIR` altından;
   tek tek `RGSX_SOURCES_FILE`/`RGSX_GAMES_FOLDER`/`RGSX_IMAGES_FOLDER`/`RGSX_LANGUAGES_FOLDER`
-  override). Komut POST'ları (download/queue) native değildir → `NativeCatalog`
-  içindeki opsiyonel `PythonCatalog` fallback'e proxy edilir. Ayrı crate yerine
-  `manager-http` içinde (trait zaten orada; döngü yok). 5 birim test + 114 contract yeşil.
+  override; gap-02 ile `RGSX_NATIVE_CATALOG` flag'i ve Python fallback söküldü).
 
 ### Native katalog OTA bootstrap (Faz 12f, TASK-004) — veri otomatik çekme
 - `manager-http/src/catalog_bootstrap.rs`: `ensure_catalog_ready()` — `RGSX_NATIVE_CATALOG=1`
@@ -105,10 +108,8 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
   edilmiş `index.html` döndürür (client-side routing, `lib.rs` fallback = `api::index`).
   Canlı ilerleme `EventSource('/api/events')` ile (SSE, TASK-002m). `RGSX_WEBUI_DIR=webui/dist`
   + `RGSX_RUST_WEBUI=1` ile aktif. 114 contract testi yeşil.
-- `RGSX_RUST_WEBUI=1` → Rust 5000 (TV UI portu değişmez), Python SADECE `RGSX_CATALOG_PORT`
-  (vars. 5001) üzerinden catalog servis eder; Rust oraya proxy'ler. `manager-bin/main.rs`
-  port default 5000, `rgsx_manager.py` run_server portu 5001 + env'ler set edilir.
-- Varsayılan (flag kapalı) davranış birebir korunur; launcher değişikliği gerekmedi.
+- `RGSX_WEBUI_DIR=webui/dist` statik kök override; SPA her zaman Rust'tan servis edilir
+  (gap-02: Python catalog portu 5001 ve proxy'si söküldü, tek sunucu manager-bin).
 
 ### Settings native port (Faz 12f, TASK-002s) — typed `Settings` şeması
 - `manager-core/src/settings.rs`: `Settings` struct (tüm `rgsx_settings.py` `default_settings`
@@ -126,23 +127,13 @@ Workspace üyesi 7 crate + kök `Cargo.toml`. Tüm crate'lar `manager-core`'a ve
 
 ---
 
-## 2. Python network paketi — `ports/RGSX/network/`
+## 2. Python network paketi — `ports/RGSX/network/` — ARŞİV (gap-02)
 
-`queue.py` merkezi worker; diğer modüller lazy import ile döngü kırar. Modül-seviyesi
-state (`progress_queues`, `cancel_events`, `urls_in_progress` …) `network/__init__.py`'de
-aynı obje kimliğiyle tutulur.
-
-| Ne | Nerede | İlişkili/Bağımlı (codegraph-doğrulu) |
-|---|---|---|
-| `network/__init__.py` (modül-state + re-export) | `ports/RGSX/network/__init__.py` | Tüm alt modüllerin paylaştığı global state objeleri burada; `download_queue_worker`, `download_rom`, `DownloadJob` buradan çağrılır |
-| `network/queue.py` (kuyruk worker + download_rom) | `ports/RGSX/network/queue.py` | `download_queue_worker` (queue.py:91) çağıranlar: `__init__.py`, `rgsx_manager.py`. `download_rom` (queue.py:629) çağıranlar: `rgsx_cli.py`, `controls/downloads.py`, `__init__.py` +2. İçe aktarır: config, qbittorrent_backend, history, display, language, utils, network.*, download_state, helpers, http_download, lolroms, archive_org, updates. `one_fichier` LAZY import (döngü kırma) |
-| `network/helpers.py` (history/postprocess/torrent yardımcıları) | `ports/RGSX/network/helpers.py` | `_download_torrent_manifest_to_file` (helpers.py:188) → LAZY `network.http_download._build_browser_download_headers` (döngü kırma). `_should_prefer_qbittorrent_backend` → `qbittorrent_backend.is_available()`. `_postprocess_downloaded_file` → extract/handle_ps3 |
-| `network/http_download.py` (HTTP resume/vimm/browser) | `ports/RGSX/network/http_download.py` | `queue.py`/`helpers.py` tarafından kullanılır; `_stream_response_to_path` indirme çekirdeği |
-| `network/one_fichier.py` (1fichier async) | `ports/RGSX/network/one_fichier.py` | `queue.py` LAZY import eder (`is_1fichier_url`/`download_from_1fichier`); `download_state` (DownloadJob/DownloadState) kullanır |
-| `network/lolroms.py`, `network/archive_org.py` | `ports/RGSX/network/{lolroms,archive_org}.py` | `queue.py` içe aktarır (URL tipi algılama/alternatif URL) |
-| `network/upnp.py` (UPnP/aria2/seed status) | `ports/RGSX/network/upnp.py` | `_update_seeding_status` (upnp.py:274) → `config.history` günceller; `qbittorrent_backend.BackendUnavailableError`'a bağımlı (dead chain: yalnız qbittorrent_backend._update_seeding_status çağırır) |
-| `network/updates.py` | `ports/RGSX/network/updates.py` | `queue.py` → `_safe_remove_file` |
-| `network/download_state.py` (Faz 8 state machine) | `ports/RGSX/network/download_state.py` | `DownloadState` (30 satır), `DownloadEvent` (45), `DownloadJob` (260). Çağıranlar: `__init__.py`, `queue.py`, `one_fichier.py`. Test: `tests/test_download_state.py` |
+`ports/RGSX` Python uygulaması TASK-012-gap-02 ile custom'dan silindi; bu bölüm
+tarihsel referanstır. Network/queue/download-state mantığının Rust karşılıkları:
+`manager-http` (kuyruk+SSE+api), `manager-download` (DDL/debrid resolver),
+`manager-torrent` (librqbit engine). Tam akış haritası: `docs/PYTHON_WORKFLOW.md`
+(arşiv; Rust eşleme tablosu hâlâ geçerli bir indeks).
 
 ---
 
@@ -157,26 +148,15 @@ aynı obje kimliğiyle tutulur.
 
 ---
 
-## 4. Test paketi — `tests/`
+## 4. Test paketi — Rust (`manager-rs/`)
+
+Kök `tests/` pytest süiti gap-02 ile silindi (karşıladığı API sözleşmeleri
+`contract.rs`'te; birim davranışlar crate testlerinde). Arşiv: `python-skeleton-final`.
 
 | Ne | Nerede | İlişkili/Bağımlı (hedef modül) |
 |---|---|---|
-| Watchdog birim | `tests/test_watchdog.py` | `ports/RGSX/watchdog.py` (HysteresisMonitor/RestartLimiter) |
-| qBittorrent port | `tests/test_qbittorrent_port.py` | `ports/RGSX/qbittorrent_backend.py` |
-| Şifre migration | `tests/test_password_migration.py` | `ports/RGSX/qbittorrent_backend.py` (Faz 5) |
-| Support ZIP | `tests/test_support_zip.py` | `utils.generate_support_zip` (Faz 1) |
-| Oyun filtreleri | `tests/test_game_filters.py` | `controls/` filtre mantığı |
-| Thread safety | `tests/test_thread_safety.py` | `thread_safety.py` |
-| Download state | `tests/test_download_state.py` | `network/download_state.py` (Faz 8) |
-| Toplu indirme | `tests/test_download_batch.py` | `controls/downloads.py` + `rgsx_web/handlers_download.py` (Faz 9) |
-| Manager | `tests/test_rgsx_manager.py` | `rgsx_manager.py` (main/restart) |
-| Settings | `tests/test_rgsx_settings.py` | `rgsx_settings.py` |
-| qBittorrent backend | `tests/test_qbittorrent_backend.py` | `qbittorrent_backend.py` |
-| API contract | `tests/test_api_contract.py` | `rgsx_web/handlers*.py` (Python REST/SSE) |
-| Dil | `tests/test_language.py` | `language.py` (Faz 11) |
-| Display paketi | `tests/test_display_{core,filters,helpers,exports,colors}.py` | `display/` paketi (pygame-stub; dev makinesinde gerçek pygame) |
-| History noise | `tests/test_history_noise.py` | `history.py` |
 | **Rust contract** | `manager-rs/manager-http/tests/contract.rs` | `manager-http` axum router (AppState, finalize_download_in_state, dest_path_for, bridge mock) — 105 test (TASK-013 sonrası; qbittorrent uç testleri söküldü) |
+| **Rust faz5 smoke** | `manager-rs/manager-http/tests/faz5_smoke.rs` | self_update apply/rollback canlı smoke (ready timeout 180 sn) |
 | **Rust birim** | `manager-rs/manager-*/tests/`, `*-rs/manager-core/src/*` `#[cfg(test)]` | crate-içi + workspace entegrasyon — `cargo test --workspace` yeşil; güncel dağılım: core 75, download 29 (+14 http_integration), http lib 28, scan 8, torrent 4 (+12 engine), tvui 27, windows 6 |
 
 ---
@@ -191,7 +171,7 @@ ADR dizini yok; mimari/akış/roadmap ayrı klasörlerde.
 | Mimari | `docs/architecture/{NETWORK_PACKAGE,DOWNLOAD_STATE_MACHINE,WEBUI_API,CONTROLS_PACKAGE,UTILS_PACKAGE,CONCURRENCY,DOWNLOAD_MANAGER,DISPLAY_PACKAGE}.md` | Paket/katman haritaları |
 | Akışlar | `docs/flows/{DOWNLOAD_PIPELINE,FILTER_PIPELINE,STARTUP,QBITTORRENT_PASSWORD}.md` | Uçtan uca akışlar |
 | Roadmap | `docs/roadmap/{ROADMAP,ROADMAP_DOWNLOAD_MANAGER,ROADMAP_FAZ12_RUST_WEBUI_TVUI,FAZ12_PARITY_STRATEGY,FAZ10C3_CONTRACT_MAP}.md` | Faz planı; Faz 10b + librqbit opt-in; Faz 13 (Rust download gap'leri) burada; parity stratejisi Faz 12 kontrollü ayrılma rehberi |
-| İş akışı | `docs/PYTHON_WORKFLOW.md` | Python indirme akışı haritası (queue.py/one_fichier.py/qbittorrent_backend.py/rgsx_manager.py) — her karar noktası düğüm (W/D/T/H/F/R/P/Q/RD/M/OF/MW); Rust eşleme tablosu + eksik düğümler. `tasks/gap/*.md` ile çapraz bağıntılı |
+| İş akışı | `docs/PYTHON_WORKFLOW.md` (arşiv) | Python indirme akışı haritası — Rust eşleme tablosu hâlâ geçerli indeks; canlı akış manager-http/download/torrent'te |
 | Rehber | `docs/guides/{TESTING,DEVELOPMENT}.md` | Test / geliştirme kuralları |
 | Özellikler | `docs/features/FEATURES.md` | Değişiklik günlüğü (Faz 10/10b girişleri) |
 | Kullanıcı | `docs/user/{TVUI_FILTERS,WEBUI_FILTERS}.md` | UI kılavuzu |
@@ -203,5 +183,5 @@ ADR dizini yok; mimari/akış/roadmap ayrı klasörlerde.
 
 - **Rust→Rust:** bin → {core, http, bridge, torrent, windows(cfg)}; http → {core, bridge}; torrent → {bridge, librqbit}; windows → core; bridge → core.
 - **Arşiv Rust→Python torrent köprüsü:** TASK-013 öncesi `manager-bin` `Bridge::spawn` → `qbittorrent_backend.py --bridge` (stdio JSON-RPC); bugün tek yol in-process `LibrqbitEngine`.
-- **Python→Python:** `network/*` paketi `config`/`qbittorrent_backend`/`history`/`display`/`utils`/`controls`/`rgsx_manager`'a bağlı; döngüler lazy import ile kırılır.
-- **Test→Hedef:** `tests/*.py` ilgili `ports/RGSX/*` modülünü; `manager-rs/.../tests/contract.rs` + crate birim testleri Rust tarafını hedefler.
+- **Arşiv Python→Python:** `network/*` paketi `config`/`qbittorrent_backend`/`history`/`display`/`utils`/`controls`/`rgsx_manager`'a bağlıydı; döngüler lazy import ile kırılırdı (gap-02 ile silindi).
+- **Test→Hedef:** `manager-rs/.../tests/*.rs` + crate-içi `#[cfg(test)]` modülleri Rust tarafını hedefler.

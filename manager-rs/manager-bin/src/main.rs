@@ -22,20 +22,6 @@ use manager_http::{router, AppState, StateData};
 
 mod paths;
 
-fn resolve_script() -> String {
-    // gap-26: RGSX_MANAGER_SCRIPT artık resolve_paths() tarafından (exe'den türetilmiş)
-    // set edilir. Fallback: exe'yi içeren rgsx_dir'deki qbittorrent_backend.py (CWD-göreli DEĞİL).
-    if let Ok(p) = std::env::var("RGSX_MANAGER_SCRIPT") {
-        return p;
-    }
-    let dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let fallback = dir.join("qbittorrent_backend.py");
-    fallback.to_string_lossy().to_string()
-}
-
 /// Torrent engine'ini kurar — TASK-013: **librqbit tek yol**. Eski
 /// `RGSX_TORRENT_ENGINE` env'i (python/librqbit seçimi) emekli edildi;
 /// varsa yok sayılır.
@@ -54,20 +40,21 @@ fn resolve_engine() -> Option<Arc<dyn TorrentBackend>> {
     Some(Arc::new(engine))
 }
 
-/// İkon dosyasını bridge script'inin yanından bulur (`assets/images/favicon_rgsx.ico`).
+/// İkon dosyasını exe'nin yanından bulur (`assets/images/favicon_rgsx.ico`).
+/// gap-02: eski anchor Python script diziniydi; native-only'de ikon exe ile
+/// aynı dizinde beklenir (yoksa tray placeholder kullanır).
 #[cfg(windows)]
-fn resolve_icon(script: &str) -> Option<String> {
-    let p = std::path::Path::new(script)
-        .parent()?
-        .join("assets")
-        .join("images")
-        .join("favicon_rgsx.ico");
+fn resolve_icon() -> Option<String> {
+    let dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))?;
+    let p = dir.join("assets").join("images").join("favicon_rgsx.ico");
     p.is_file().then(|| p.to_string_lossy().to_string())
 }
 
 /// Windows'ta tray + autostart + firewall kurulumu (başarısızlık kritik değildir).
 #[cfg(windows)]
-fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray> {
+fn setup_windows(_port: u16) -> Option<manager_windows::tray::Tray> {
     use manager_windows::autostart;
     use manager_windows::firewall;
     use manager_windows::tray::{Tray, TrayConfig};
@@ -96,7 +83,7 @@ fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray
     }
 
     // Tray: ikon yoksa placeholder ile yine de başlat.
-    let icon_path = resolve_icon(script).unwrap_or_default();
+    let icon_path = resolve_icon().unwrap_or_default();
     let checked = autostart::is_enabled();
     match Tray::start(TrayConfig {
         icon_path,
@@ -114,7 +101,7 @@ fn setup_windows(_port: u16, script: &str) -> Option<manager_windows::tray::Tray
 }
 
 #[cfg(not(windows))]
-fn setup_windows(_port: u16, _script: &str) -> Option<manager_windows_tray::Tray> {
+fn setup_windows(_port: u16) -> Option<manager_windows_tray::Tray> {
     None
 }
 
@@ -206,8 +193,6 @@ async fn run(paths: paths::RgsxPaths) {
             .unwrap_or(default)
     };
 
-    // Tray ikonu anchor'ı (favicon, python port dizinindeki assets altında yaşar).
-    let script = resolve_script();
     // Torrent engine (TASK-013: librqbit tek yol).
     let bridge = resolve_engine();
 
@@ -240,33 +225,19 @@ async fn run(paths: paths::RgsxPaths) {
     // vermişti (placeholder "<h1>RGSX Manager" servisi). env_or() override (RGSX_WEBUI_DIR
     // set ise) paths.rs'de hâlâ geçerlidir; fakat static_root env'ye bağlanmaz.
     let static_root = Some(paths.webui_dir.clone());
-    // Faz 12c — native catalog: `RGSX_NATIVE_CATALOG=1` ise Python'sız local
-    // dosyalardan üretir (systems_list.json, games/, languages/, images/). Komut
-    // POST'ları için yine de Python'a proxy edebilir (`RGSX_PYTHON_MANAGER_URL`).
-    // Aksi halde `RGSX_PYTHON_MANAGER_URL` set ise Python proxy (Faz 10c/3/2).
-    // gap-27: saf-Rust varsayılan = true (native catalog). Flag yine env ile override edilebilir.
+    // Faz 12c — native catalog: local dosyalardan üretir (systems_list.json,
+    // games/, languages/, images/). TASK-012-gap-02: Python proxy yolu söküldü —
+    // tek katalog kaynağı NativeCatalog.
     // SSE kanalı erken kurulur ki katalog bootstrap'i (arka plan) ilerlemeyi yayabilsin.
     let events = manager_http::sse::channel();
-    let native_catalog = std::env::var("RGSX_NATIVE_CATALOG")
-        .map(|v| v == "1")
-        .unwrap_or(true);
-    let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> = if native_catalog {
-        // Faz 12f: native katalog verisi (systems_list.json + games/) eksikse OTA'dan çek.
-        // Faz 2b: bootstrap arka plana alındı; spawn manager-bin router closure içinde,
-        // `state` (StateData) hazırken yapılır ki bootstrap bitince `catalog_ready` atomiği yazılabilsin.
-        // Sunucu anında başlar, TVUI/WebUI `catalog_update` SSE'iyle loading bar'ını doldurur.
-        // İlk çalıştırmada dosyalar henüz inmediğinden NativeCatalog boş açılır (`from_env` yalnız
-        // yolu saklar, paniklemez); `load_sources()` her çağrıda diskten okuduğundan ready sonrası dolulur.
-        Some(Arc::new(manager_http::catalog::NativeCatalog::from_env()))
-    } else {
-        std::env::var("RGSX_PYTHON_MANAGER_URL")
-            .ok()
-            .filter(|u| !u.is_empty())
-            .map(|base| {
-                Arc::new(manager_http::catalog::PythonCatalog::new(base))
-                    as Arc<dyn manager_http::catalog::CatalogSource>
-            })
-    };
+    // Faz 12f: native katalog verisi (systems_list.json + games/) eksikse OTA'dan çek.
+    // Faz 2b: bootstrap arka plana alındı; spawn manager-bin router closure içinde,
+    // `state` (StateData) hazırken yapılır ki bootstrap bitince `catalog_ready` atomiği yazılabilsin.
+    // Sunucu anında başlar, TVUI/WebUI `catalog_update` SSE'iyle loading bar'ını doldurur.
+    // İlk çalıştırmada dosyalar henüz inmediğinden NativeCatalog boş açılır (`from_env` yalnız
+    // yolu saklar, paniklemez); `load_sources()` her çağrıda diskten okuduğundan ready sonrası doluluk.
+    let catalog: Option<Arc<dyn manager_http::catalog::CatalogSource>> =
+        Some(Arc::new(manager_http::catalog::NativeCatalog::from_env()));
 
     // Faz 12.6a — startup'ta diskteki kurulu oyunları tara; snapshot `downloaded`
     // (İndirilenler sekmesi) bununla dolar. `/api/game-status` ise isteğe bağlı
@@ -375,7 +346,7 @@ async fn run(paths: paths::RgsxPaths) {
     tracing::info!("GET /api/health, /api/queue, /api/events (SSE)");
 
     // Windows: tray + autostart + firewall; eylemler ana döngüde beslenir.
-    let tray = setup_windows(port, &script);
+    let tray = setup_windows(port);
 
     if let Some(tray) = tray {
         run_with_tray(tray, port, bridge, app, listener, shutdown.clone()).await;

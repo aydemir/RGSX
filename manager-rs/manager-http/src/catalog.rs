@@ -1,11 +1,9 @@
-//! Faz 10c/3/2 — katalog route'ları için `CatalogSource` trait + Python proxy.
+//! Katalog route'ları için `CatalogSource` trait + `NativeCatalog`.
 //!
-//! Strangler/atest misali: Rust `manager-http` katalog handler'ları (`platforms`,
-//! `search`, `games`, `translations`, `image`), gerçek mantığı Python'da bırakıp
-//! onu `127.0.0.1:5000` (veya `RGSX_PYTHON_MANAGER_URL`) üzerinden proxy'ler.
-//! Bu, contract'ı birebir korur (Python yanıtı aynen iletilir) ve native Rust
-//! portunu (dış ROM kaynak istemcileri) ayrı bir alt faz'a erteletir. `catalog`
-//! `None` ise handler'lar mevcut placeholder davranışına düşer (geriye uyumlu).
+//! Tarihçe (arşiv): Faz 10c'de bu route'lar önce `RGSX_PYTHON_MANAGER_URL`
+//! üzerinden Python manager proxy'siyle (`PythonCatalog`) çalıştı, Faz 12c ile
+//! yerini Python'sız local-dosya `NativeCatalog`'a bıraktı. Python kalıntısı
+//! TASK-012-gap-02 ile tamamen söküldü — tek kaynak `NativeCatalog`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -93,7 +91,7 @@ pub trait CatalogSource: Send + Sync {
 
     /// Faz 12.6a — diskte kurulu/indirilmiş oyunların taramayla bulunmuş listesi.
     /// Dönüş: `platform_name ->` o platformda diskte bulunan oyun adları.
-    /// Varsayılan (Python proxy) boş döner; `NativeCatalog` gerçek taramayı yapar.
+    /// Varsayılan boş döner; `NativeCatalog` gerçek taramayı yapar.
     fn installed_list(&self) -> HashMap<String, Vec<String>> {
         HashMap::new()
     }
@@ -105,115 +103,20 @@ pub trait CatalogSource: Send + Sync {
     }
 
     /// Faz 12.6d — batch indirme için `platform + game_name` → oyun URL'i çözümü.
-    /// NativeCatalog katalogdan bulur; Python proxy varsayılanı `None` döner.
+    /// `NativeCatalog` katalogdan bulur; varsayılan `None` döner.
     fn game_url(&self, _platform: &str, _game_name: &str) -> Option<String> {
         None
     }
 }
 
-/// Python `ManagerHandler` (HTTP port `RGSX_PYTHON_MANAGER_URL`) proxy'si.
-#[derive(Clone)]
-pub struct PythonCatalog {
-    base: String,
-    client: reqwest::Client,
-}
-
-impl PythonCatalog {
-    pub fn new(base: String) -> Self {
-        Self {
-            base,
-            client: reqwest::Client::new(),
-        }
-    }
-}
-
-fn encode(seg: &str) -> String {
-    percent_encoding::utf8_percent_encode(seg, percent_encoding::NON_ALPHANUMERIC).to_string()
-}
-
-#[async_trait]
-impl CatalogSource for PythonCatalog {
-    async fn get_json(&self, route: &str) -> Result<Value, CatalogError> {
-        let url = format!("{}{}", self.base, route);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
-        let v: Value = resp.json().await.map_err(|e| CatalogError(e.to_string()))?;
-        Ok(v)
-    }
-
-    async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
-        let url = format!("{}/api/image/{}", self.base, encode(platform));
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
-        let ct = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("image/png")
-            .to_string();
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
-        Ok((bytes.to_vec(), ct))
-    }
-
-    async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError> {
-        let url = format!("{}{}", self.base, route);
-        let resp = self
-            .client
-            .post(&url)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
-        let v: Value = resp.json().await.map_err(|e| CatalogError(e.to_string()))?;
-        Ok(v)
-    }
-
-    async fn post_binary(
-        &self,
-        route: &str,
-        body: &Value,
-    ) -> Result<(Vec<u8>, String), CatalogError> {
-        let url = format!("{}{}", self.base, route);
-        let resp = self
-            .client
-            .post(&url)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
-        let ct = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| CatalogError(e.to_string()))?;
-        Ok((bytes.to_vec(), ct))
-    }
-}
-
 // ===========================================================================
-// Faz 12c — NativeCatalog: Python'sız, local dosyalardan catalog üretimi.
+// Faz 12c — NativeCatalog: local dosyalardan catalog üretimi.
 //
 // Veri kaynağı Python `get_cached_sources()`/`load_sources()`/`load_games()`
 // ile birebir aynı dosyalardır (systems_list.json, games/<platform>.json,
-// languages/<lang>.json, images/<platform>.*); böylece çıktı şekli Python ile
-// aynı kalır ve offline çalışır. Komut POST'ları (download/queue/cancel) native
-// değildir → opsiyonel `python` fallback'e proxy edilir (Faz 12e'ye kaldı).
+// languages/<lang>.json, images/<platform>.*); böylece çıktı şekli Python
+// referansıyla aynı kalır ve offline çalışır. Komut POST'ları manager-http
+// handler'larında native işlenir (TASK-013 sonrası tek yol).
 // ===========================================================================
 
 use std::path::{Path, PathBuf};
@@ -266,8 +169,6 @@ pub struct NativeCatalog {
     roms_folder: Option<PathBuf>,
     show_unsupported: bool,
     default_language: String,
-    /// Komut POST'ları için Python fallback (download/queue/cancel...).
-    python: Option<PythonCatalog>,
 }
 
 impl NativeCatalog {
@@ -288,10 +189,6 @@ impl NativeCatalog {
             .map(|v| v == "1")
             .unwrap_or(true);
         let default_language = std::env::var("RGSX_LANGUAGE").unwrap_or_else(|_| "en".to_string());
-        let python = std::env::var("RGSX_PYTHON_MANAGER_URL")
-            .ok()
-            .filter(|u| !u.is_empty())
-            .map(PythonCatalog::new);
         Self {
             sources_file,
             games_folder,
@@ -300,7 +197,6 @@ impl NativeCatalog {
             roms_folder,
             show_unsupported,
             default_language,
-            python,
         }
     }
 
@@ -686,19 +582,12 @@ impl CatalogSource for NativeCatalog {
         if route.starts_with("/api/languages") {
             return Ok(self.list_languages());
         }
-        // Bilinmeyen GET route → Python fallback (varsa).
-        if let Some(p) = &self.python {
-            return p.get_json(route).await;
-        }
         Err(CatalogError(format!(
             "native catalog desteklemiyor: {route}"
         )))
     }
 
-    async fn post_json(&self, route: &str, body: &Value) -> Result<Value, CatalogError> {
-        if let Some(p) = &self.python {
-            return p.post_json(route, body).await;
-        }
+    async fn post_json(&self, route: &str, _body: &Value) -> Result<Value, CatalogError> {
         Err(CatalogError(format!(
             "native catalog POST desteklemiyor: {route}"
         )))
@@ -707,11 +596,8 @@ impl CatalogSource for NativeCatalog {
     async fn post_binary(
         &self,
         route: &str,
-        body: &Value,
+        _body: &Value,
     ) -> Result<(Vec<u8>, String), CatalogError> {
-        if let Some(p) = &self.python {
-            return p.post_binary(route, body).await;
-        }
         Err(CatalogError(format!(
             "native catalog POST desteklemiyor: {route}"
         )))
@@ -720,9 +606,6 @@ impl CatalogSource for NativeCatalog {
     async fn get_image(&self, platform: &str) -> Result<(Vec<u8>, String), CatalogError> {
         if let Some(img) = self.read_image(platform) {
             return Ok(img);
-        }
-        if let Some(p) = &self.python {
-            return p.get_image(platform).await;
         }
         Err(CatalogError(format!("image bulunamadı: {platform}")))
     }
@@ -889,7 +772,6 @@ mod tests {
             roms_folder: None,
             show_unsupported: true,
             default_language: "en".into(),
-            python: None,
         };
         (dir, cat)
     }
@@ -952,7 +834,6 @@ mod tests {
             roms_folder: None,
             show_unsupported: true,
             default_language: "en".into(),
-            python: None,
         };
         let v = cat.get_json("/api/games/xbox").await.unwrap();
         assert_eq!(v["count"], 2);
@@ -984,7 +865,6 @@ mod tests {
             roms_folder: None,
             show_unsupported: true,
             default_language: "en".into(),
-            python: None,
         };
         let v = cat.get_json("/api/games/xbox").await.unwrap();
         assert_eq!(v["count"], 2);
@@ -1017,7 +897,6 @@ mod tests {
             roms_folder: None,
             show_unsupported: true,
             default_language: "en".into(),
-            python: None,
         };
         // WebUI folder ("3do") ile sorgular:
         let v = cat.get_json("/api/games/3do").await.unwrap();
@@ -1049,7 +928,6 @@ mod tests {
             roms_folder: None,
             show_unsupported: true,
             default_language: "en".into(),
-            python: None,
         };
         let v = cat.get_json("/api/platforms").await.unwrap();
         assert_eq!(
@@ -1115,7 +993,6 @@ mod tests {
             roms_folder: Some(root.join("roms")),
             show_unsupported: true,
             default_language: "en".into(),
-            python: None,
         };
 
         let installed = cat.installed_list();

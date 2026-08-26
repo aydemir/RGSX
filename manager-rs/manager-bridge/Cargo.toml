@@ -3,7 +3,7 @@ name = "manager-bridge"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Python subprocess JSON-RPC/HTTP köprüsü (qbittorrent_backend.py çağrısı)"
+description = "TorrentBackend engine-bağımsız sözleşmesi (TASK-013 sonrası köprü istemcisi söküldü)"
 
 [dependencies]
 tokio.workspace = true

@@ -7,7 +7,8 @@ description = "TVUI native shell — rust-sdl2 ile 10-foot native render (Faz 12
 
 # Yön (B): `display/*`+`controls/*` (pygame native) SDL2 primitives'e birebir portlanır;
 # temalar `theme.json` (`colors.py`+`fonts.py`+`transitions.py`+`icons.py`) serde_json ile
-# yüklenir (ES `theme.xml` yerine). `RGSX_TVUI=1` → SDL2 native; `=0` → Python fallback.
+# yüklenir (ES `theme.xml` yerine). `RGSX_TVUI=1` → SDL2 native shell (tek TVUI yolu;
+# Python fallback TASK-012-gap-02 ile söküldü).
 
 [dependencies]
 manager-http = { path = "../manager-http" }
