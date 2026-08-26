@@ -34,6 +34,7 @@ pyrightconfig.json
 manager-rs/target/
 rust-target-sandbox/
 manager-rs/C:/
+manager-rs/.cargo/config.toml
 ports/RGSX/languages/__pycache__/
 ports/RGSX/display/__pycache__/
 ports/RGSX/utils/__pycache__/

@@ -21,6 +21,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # sdl2-sys bundled CMake projesi cmake_minimum_required(<3.5) istiyor;
+  # runner'lardaki CMake 4.x policy hatasini asmak icin (TASK-015).
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   build_webui_linux:
