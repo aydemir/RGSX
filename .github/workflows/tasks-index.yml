@@ -1,0 +1,61 @@
+name: tasks-index
+
+on:
+  push:
+    branches: [custom, main]
+    paths:
+      - "tasks/**/*.md"
+      - "scripts/build-tasks-index.py"
+  pull_request:
+    paths:
+      - "tasks/**/*.md"
+      - "scripts/build-tasks-index.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-index:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # push için gerekli
+          fetch-depth: 0
+      - name: Verify jq available (preinstalled on ubuntu-22.04, fallback install)
+        run: which jq && jq --version || (sudo apt-get update && sudo apt-get install -y jq)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps (PyYAML)
+        run: pip install pyyaml
+      - name: Build tasks/index.json
+        run: python3 scripts/build-tasks-index.py
+      - name: Check drift
+        run: |
+          if ! git diff --quiet -- tasks/index.json; then
+            echo "index.json stale — diff:"
+            git diff -- tasks/index.json
+            echo "::warning::tasks/index.json stale, will auto-commit on push branch"
+          else
+            echo "index.json up-to-date"
+          fi
+      - name: Auto-commit index.json (push only)
+        if: github.event_name == 'push'
+        run: |
+          if ! git diff --quiet -- tasks/index.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add tasks/index.json
+            git commit -m "chore(tasks): regenerate index.json [skip ci]"
+            git push
+          fi
+      - name: Fail PR if stale (require regen)
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff --quiet -- tasks/index.json; then
+            echo "::error::tasks/index.json stale — run 'python3 scripts/build-tasks-index.py' and commit"
+            exit 1
+          fi

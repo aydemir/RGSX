@@ -1,12 +1,16 @@
-# TASK-XXX — <Kısa Başlık>
+---
+id: TASK-XXX
+title: "<Kısa Başlık>"
+status: todo
+priority: P2
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+environment: both
+labels: [modul1, modul2]
+depends_on: []
+---
 
-- **id:** TASK-XXX
-- **title:** <kısa başlık>
-- **status:** todo | in-progress | documented-only
-- **priority:** P0 | P1 | P2
-- **created:** YYYY-MM-DD
-- **environment:** linux | windows | both
-- **tags:** modul1, modul2
+# TASK-XXX — <Kısa Başlık>
 
 ## Kaynak
 

@@ -21,6 +21,30 @@ Kullanıcı "N numaralı göreve başla" dediğinde otomatik olarak:
 4. codegraph ile mevcut kod durumunu doğrula
 5. Plan özeti sun, onay bekle, sonra implementasyona geç
 
+## Task Sorgu Protokolü — jq zorunlu (otomatlar için)
+
+Otomat `tasks/` sorgularında `grep -R tasks/` / `Grep pattern="status"` / `Glob tasks/**/*.md` ile tüm dosyaları taramak **varsayılan olarak YASAKTIR** — önce index denenir. Bu hem token israfı hem de yavaştır.
+
+**Zorunlu akış:**
+
+1. `read tasks/index.json` — yoksa `bash python3 scripts/build-tasks-index.py` ile üret (front-matter + legacy bullet her ikisini de parse eder).
+2. `bash jq '...' tasks/index.json` ile filtrele — tek dosya, tek tool call (`jq` yoksa `python3 -c "import json; ..."` eşdeğeri kullanılabilir; CI `ubuntu-22.04` imajında `jq` preinstalled, `tasks-index.yml` bunu `which jq` ile doğrular).
+3. Sadece eşleşen `id`'lerin dosyasını `read tasks/**/{ID}*.md` ile çek (gövde gerektiğinde).
+
+**Fallback (yalnız bozuk/stale durumda):** `tasks/index.json` yok, JSON parse hatası veriyor veya `scripts/build-tasks-index.py` çökerse otomat kör kalmaz — tek seferlik `Grep`/`Glob` ile doğrudan `tasks/**/*.md` okuyabilir. Bu durumda hatayı logla ve imkân varsa index'i yeniden üretmeyi dene.
+
+**jq örnekleri:**
+
+```bash
+jq '[.[] | select(.status=="in_progress")]' tasks/index.json
+jq '[.[] | select(.priority=="high" or .priority=="P0")]' tasks/index.json
+jq '[.[] | select(.labels | index("ci"))] | sort_by(.updated)' tasks/index.json
+jq '[.[] | select(.depends_on | index("TASK-039"))]' tasks/index.json
+jq -r '.[] | "\(.id) \(.status) \(.priority) \(.file)"' tasks/index.json
+```
+
+`tasks/index.json` front-matter'dan türetilmiş artefakt'tır, elle editlenmez. Stale ise `bash python3 scripts/build-tasks-index.py` ile yeniden üret. PR'da stale ise CI fail eder (bilinçli sürtünme — unutulan index'i yakalamak için); `push`'ta bot otomatik düzeltir. Legacy bullet format desteği geçiş dönemidir — tüm task'lar front-matter'a taşındıktan sonra script'ten kaldırılacak.
+
 ## Görev Dosyası Şablonu — environment zorunluluğu
 
 Görev dosyası oluşturulurken environment alanı boş bırakılamaz.

@@ -1,0 +1,1591 @@
+[
+  {
+    "id": "TASK-001",
+    "title": "Faz 7 kapsam artırma — rgsx_settings, rgsx_manager, qbittorrent_backend",
+    "status": "done",
+    "priority": "P2",
+    "environment": "linux",
+    "labels": [
+      "tests",
+      "coverage",
+      "rgsx-settings",
+      "rgsx-manager",
+      "qbittorrent-backend"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-11",
+    "file": "tasks/done/TASK-001-faz7-kapsam-artirma.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002",
+    "title": "Faz 10 — Rust kısmi refaktör (EN SON)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "windows",
+    "labels": [
+      "rust",
+      "rgsx-manager",
+      "qbittorrent-backend",
+      "network",
+      "concurrency"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-11",
+    "file": "tasks/done/TASK-002-faz10-rust-refactor.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-1",
+    "title": "Retry/backoff engine (transient sınıflandırma + zamanlanmış retry)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "download",
+      "retry",
+      "state-machine"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-1-retry-engine.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-1-nihai-teknik-spesifikasyon",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002-gap-1-nihai-teknik-spesifikasyon.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-10",
+    "title": "History & state-emitter / SSE finalization in daemon (mark_game_as_downloaded, emit, bulk status)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "history",
+      "sse",
+      "state-emitter",
+      "download"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-10-history-sse.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-11",
+    "title": "1fichier download provider zinciri (1F→AD→DL→RD→TB→FREE sıralı fallback, debrid unlock/poll, Range resume, 10x retry, provider_used history yazımı)",
+    "status": "todo",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "1fichier",
+      "alldebrid",
+      "debrid-link",
+      "realdebrid",
+      "torbox",
+      "download"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/gap/TASK-002-gap-11-1fichier-provider.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-12",
+    "title": "Download orchestration layer (max_simultaneous_downloads gate, slot acquire/release, in-progress dedup, FIFO queue, global pause for HTTP-direct)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "download",
+      "queue",
+      "concurrency",
+      "dedup"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-002-gap-12-download-orchestration.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-13",
+    "title": "/api/support secret redaction in pure-Rust (catalog-off) mode",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "security",
+      "support",
+      "redaction"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-13-support-redaction.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-14",
+    "title": "game_filters pure logic port + Rust test coverage",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "filters",
+      "test",
+      "parity"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-002-gap-14-game-filters.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-15",
+    "title": "Rust-only endpoint + language auto-detect test coverage",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "test",
+      "api",
+      "coverage"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-15-rust-endpoint-tests.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-16",
+    "title": "Multi-file torrent file selection + priority (librqbit AddTorrentOptions)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "torrent",
+      "librqbit",
+      "selection"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-16-torrent-selection.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-17",
+    "title": "Settings schema parity (background_theme, web_service_at_boot persist, gamelist update days, app_version, app/config dir model)",
+    "status": "done",
+    "priority": "P3",
+    "environment": "both",
+    "labels": [
+      "settings",
+      "config",
+      "parity"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-17-settings-schema.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-18",
+    "title": "WebUI qBittorrent bölümü (parola durum / regenerate / change / start) (hibrit mod: RGSX_TORRENT_ENGINE=python ONLY)",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "qbittorrent",
+      "settings"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-18-webui-qbittorrent.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-19",
+    "title": "WebUI Support / redaction ZIP UI (🆘 butonu)",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "support",
+      "redaction"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-19-webui-support.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-2",
+    "title": "Pause/Resume orchestration (toggle, pause_all, resume_all, pause_ev → backend)",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "pause",
+      "resume",
+      "systray",
+      "download"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-2-pause-resume.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-20",
+    "title": "WebUI canlı Downloads sekmesi (SSE progress view)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "downloads",
+      "sse"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-20-webui-live-downloads.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-21",
+    "title": "WebUI Browse-directories UI (Roms klasörü seçici)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "settings",
+      "browse"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-21-webui-browse-dirs.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-22",
+    "title": "WebUI Accessibility (a11y css + font_scale + toggle)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "accessibility",
+      "a11y"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-22-webui-accessibility.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-23",
+    "title": "WebUI Settings şema uyumu (sources.mode, symlink, display.grid, accessibility)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "settings",
+      "schema",
+      "parity"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-23-webui-settings-schema.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-24",
+    "title": "WebUI Region-priority modal (One ROM Per Game)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "filters",
+      "region"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-24-webui-region-priority.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-25",
+    "title": "WebUI Misc P2 (update-cache butonu, i18n tam entegrasyon, renk paleti hizası, SSE kontrat)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "i18n",
+      "color",
+      "sse",
+      "misc"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-25-webui-misc-p2.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-26",
+    "title": "manager-bin path-resolution (current_exe türetme + env override fallback)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "manager-bin",
+      "paths",
+      "launcher",
+      "refactor"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-26-manager-bin-path-resolution.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-27",
+    "title": "manager-bin flag defaults (saf-Rust varsayılanları + bağımsızlık korunsun)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "manager-bin",
+      "flags",
+      "launcher",
+      "refactor"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-15",
+    "file": "tasks/done/TASK-002-gap-27-flag-defaults.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-28",
+    "title": "BIOS kategorisi (ör. \"- BIOS by TMCTV -\") indirme + çıkarma hedefinin USERDATA_FOLDER'a yönlendirilmesi — Rust/Python parity",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "download",
+      "extract",
+      "bios",
+      "parity",
+      "paths"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-002-gap-28-bios-userdata-destination.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-29",
+    "title": "Global pause/resume must also halt native HTTP-direct downloads (not only the torrent engine)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "download",
+      "pause",
+      "http-direct",
+      "orchestration"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-002-gap-29-global-pause-http-direct.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-3",
+    "title": "Cancel + partial-file / torrent temp-root / seeder artifact temizliği",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "cancel",
+      "cleanup",
+      "download"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-3-cancel-cleanup.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-30",
+    "title": "Download Queue refactoring — persistent worker, gated dispatch, O(1) bulk ingest",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "manager-http",
+      "queue",
+      "state-machine",
+      "performance",
+      "sse"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-19",
+    "file": "tasks/done/TASK-002-gap-30-download-queue-refactor.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-30-F1-implementation",
+    "title": "",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002-gap-30-F1-implementation.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-32",
+    "title": "Ağ kopması dayanıklılığı — global offline'da indirme park edilir, retry bütçesi yakılmaz, bağlanınca otomatik devam eder",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "manager-http",
+      "state",
+      "webui",
+      "sse",
+      "connectivity",
+      "retry"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-20",
+    "file": "tasks/done/TASK-002-gap-32-network-down-resilience.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-4",
+    "title": "HTTP-direct download path (vimm/archive.org/lolroms/1fichier, header variantları, browser-challenge, 429 backoff, Range resume, arşiv imza kontrolleri)",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "http",
+      "download",
+      "vimm",
+      "archive.org",
+      "lolroms",
+      "1fichier"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-4-http-direct.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-5",
+    "title": "Disk alanı ön-kontrolü (InsufficientDiskSpaceError)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "disk",
+      "download",
+      "guard"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-5-disk-space.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-6",
+    "title": "Archive auto-extract / post-processing (BIOS, PS3 redump force extract)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "extract",
+      "postprocess",
+      "bios",
+      "ps3"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-6-extract.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-7",
+    "title": "Seed lifecycle (promote-to-seed, _seed_status_worker, has_active_seed, stop_seed) + qBittorrent password migration",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "seed",
+      "qbittorrent",
+      "password"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-7-seed-lifecycle.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-8",
+    "title": "Stray .rgsx_torrent temp-root cleanup (eski platform path'lerinde orphan tarama)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "cleanup",
+      "torrent",
+      "temp"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002-gap-8-stray-temp.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002-gap-9",
+    "title": "Interrupted-download resume after restart (Rust librqbit session ephemral)",
+    "status": "todo",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "resume",
+      "restart",
+      "torrent"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/gap/TASK-002-gap-9-resume-interrupted.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002a",
+    "title": "manager-core state machine tasarımı (Faz 10a ilk adım)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "windows",
+    "labels": [
+      "rust",
+      "manager-core",
+      "state-machine"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-11",
+    "file": "tasks/done/TASK-002a-manager-core-state-machine.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002b",
+    "title": "manager-http: axum `/api/*` + SSE sözleşmesi",
+    "status": "done",
+    "priority": "P2",
+    "environment": "windows",
+    "labels": [
+      "rust",
+      "axum",
+      "sse",
+      "contract",
+      "manager-http"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002b-manager-http-contract.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002c",
+    "title": "qbittorrent_backend subprocess köprüsü + binary entegrasyonu",
+    "status": "done",
+    "priority": "P2",
+    "environment": "windows",
+    "labels": [
+      "rust",
+      "bridge",
+      "subprocess",
+      "tokio",
+      "manager-bin"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002c-bridge-bin-integration.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002d",
+    "title": "Windows entegrasyonu — tray ikonu, autostart registry, firewall",
+    "status": "done",
+    "priority": "P2",
+    "environment": "windows",
+    "labels": [
+      "rust",
+      "windows-rs",
+      "tray",
+      "registry",
+      "firewall"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002d-manager-windows.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002e",
+    "title": "Rust manager WebUI statik servisi — index.html + /static/*",
+    "status": "done",
+    "priority": "P2",
+    "environment": "windows",
+    "labels": [
+      "rust",
+      "axum",
+      "static",
+      "webui"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002e-manager-http-static.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002f",
+    "title": "embedded torrent: qbittorrent_backend yerine librqbit engine (askıdaki iş)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "librqbit",
+      "torrent",
+      "manager-torrent",
+      "faz-10b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002f-faz10b-librqbit.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002g",
+    "title": "librqbit embedded engine'i canlı uçtan uca doğrula (manager-bin + HTTP /api/download)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "librqbit",
+      "manager-bin",
+      "integration",
+      "faz-10b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002g-librqbit-live-e2e.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002h",
+    "title": "librqbit embedded engine'in Windows'ta derlendiğini doğrula (ertelenmiş varsayılan karar tetikleyici)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "librqbit",
+      "cross-compile",
+      "windows",
+      "faz-10b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002h-windows-crosscheck.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002i",
+    "title": "Rust manager-bin'i uygulamanın gerçek torrent daemon'ı yap (Python rgsx_manager.py yerine/augment)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "manager-bin",
+      "daemon",
+      "faz-10c",
+      "entegrasyon"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002i-faz10c-rust-daemon.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002j",
+    "title": "Python `_api_download`/download worker, Rust daemon sağlıklıyken torrent indirmeyi `http://127.0.0.1:5010/api/download`'a devreder (SSE/poll ile izler); aksi halde mevcut Python qBittorrent yoluna fallback",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "manager-bin",
+      "daemon",
+      "faz-10c",
+      "torrent",
+      "entegrasyon"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002j-faz10c-rust-torrent.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k",
+    "title": "Faz 10c/3 — Rust `manager-http` placeholder handler'larını doldur ve Python Web UI sunucusunu Rust'e göç ettir (alt görev planı)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "webui",
+      "göç",
+      "plan"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-faz10c3-plan.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-1",
+    "title": "Rust placeholder route'larını Python karşılıklarına birebir eşle; boşluk matrisi üret",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "keşif",
+      "contract"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-1-phasifi.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-2",
+    "title": "`platforms`/`search`/`games`/`image`/`translations` handler'larını Rust'e taşı",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "katalog"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-2-katalog.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-3",
+    "title": "`settings_get`/`settings_post`/`save_filters`/`system_info`/`browse_directories`/`game_status` Rust'e",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "settings"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-3-durum-settings.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-4",
+    "title": "`support`/`queue_*`/`clear_history`/`restart`/`pause`/`resume`/`cancel`/`shutdown` Rust'e",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "queue",
+      "destek"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-4-destek-queue.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-5",
+    "title": "`change_password`/`qb_start`/`qb_password_status` → `TorrentBackend` trait metotları",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "qbittorrent",
+      "bridge"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-5-qbittorrent-bridge.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-6",
+    "title": "`index`/`static_file` gerçek asset root + SSE tek elden; Python sunucuyu flag-gated kapat",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "webui",
+      "sse",
+      "göç"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-6-webui-sse.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-7",
+    "title": "364 Python + 68 Rust contract + canlı smoke; Python Web UI köprüsünü kapat",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-10c",
+      "doğrulama",
+      "göç"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-12",
+    "file": "tasks/done/TASK-002k-7-dogrulama.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002k-8",
+    "title": "Pure-Rust modda (`catalog=None`) Python-artıfaktı dönen uçların native'i",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "manager-http",
+      "native",
+      "system-info",
+      "browse",
+      "python-free"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-002k-8-native-fallbacks.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002l",
+    "title": "manager-bin HTTP akışında librqbit `download_torrent`'in gerçek indirme yapması (proxy bypass + e2e test)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "librqbit",
+      "faz-10c",
+      "torrent",
+      "e2e"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-13",
+    "file": "tasks/done/TASK-002l-faz10c-librqbit-e2e.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002m",
+    "title": "librqbit indirme sırasında WebUI'ye canlı progress yayar (handler callback → state.progress + SSE)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "librqbit",
+      "faz-10c",
+      "progress",
+      "sse"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-13",
+    "file": "tasks/done/TASK-002m-faz10c-librqbit-progress.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002n-faz12a-webui-spa",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002n-faz12a-webui-spa.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002o-faz12c-catalog-native",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002o-faz12c-catalog-native.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002p-faz12d-hdd-scan",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002p-faz12d-hdd-scan.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002q-faz12b-tvui-webview",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002q-faz12b-tvui-webview.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002r-faz12e-download-manager",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-002r-faz12e-download-manager.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-002s",
+    "title": "Faz 12f — `rgsx_settings.py`/`config.py` ayar şemasını Rust'e taşı (typed `Settings` struct + serde + validasyon + load/save)",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "rust",
+      "faz-12",
+      "settings",
+      "göç",
+      "şema",
+      "validasyon"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-13",
+    "file": "tasks/done/TASK-002s-faz12f-settings-schema.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-003",
+    "title": "Faz 11 — İlk Açılışta Sistem Dili Otomatik Algılama",
+    "status": "done",
+    "priority": "P2",
+    "environment": "linux",
+    "labels": [
+      "language",
+      "i18n",
+      "rgsx-settings",
+      "tvui",
+      "rgsx-web"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-11",
+    "file": "tasks/done/TASK-003-faz11-language-detect.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-003-native-webui",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-003-native-webui.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-004",
+    "title": "Saf-Rust manager-bin kopyasında boş kategori — OTA veri çekme",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "manager-http",
+      "manager-bin",
+      "catalog",
+      "native-catalog",
+      "ota"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/done/TASK-004-native-catalog-ota-bootstrap.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-005",
+    "title": "EmulationStation `es_input.cfg` (ve `SDL_GAMECONTROLLERCONFIG`) map'inin RGSX UI'a uygulanması",
+    "status": "in_progress",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "gamepad",
+      "es-input",
+      "retrobat",
+      "batocera",
+      "controller-mapping",
+      "tvui"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-14",
+    "file": "tasks/todo/TASK-005-es-gamepad-mapping.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-006",
+    "title": "torrent indirmesinin hedef klasöre (<hedef_rom_klasörü>) düşmesinin kanıtlanması",
+    "status": "done",
+    "priority": "P1",
+    "environment": "linux",
+    "labels": [
+      "torrent",
+      "librqbit",
+      "verification",
+      "link_or_copy"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-006-torrent-e2e-verify.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-006-native-settings-webui",
+    "title": "",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [],
+    "depends_on": [],
+    "updated": "",
+    "file": "tasks/done/TASK-006-native-settings-webui.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-007",
+    "title": "Yeni eklenen 36 webui i18n anahtarının fr/es/de/it/pt dilinde tamamlanması (7-dil parity)",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "i18n",
+      "webui",
+      "translations",
+      "parity",
+      "localization"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-007-i18n-5lang-translate.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-008",
+    "title": "Torrent (ve diğer) indirmelerin dağıtılan binary'de Python'a düşmediğinin kanıtı",
+    "status": "done",
+    "priority": "P2",
+    "environment": "linux",
+    "labels": [
+      "rust",
+      "download",
+      "python-free",
+      "verification",
+      "librqbit"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-008-pure-rust-download-verify.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-009",
+    "title": "Dağıtılan manager-bin'in katalog yanıtlarını saf-native verip vermediğinin tespiti",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "catalog",
+      "proxy",
+      "native",
+      "python-free",
+      "detection"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-009-catalog-proxy-detect.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-010",
+    "title": "`RGSX_DATA_DIR`/`RGSX_LANGUAGES_FOLDER` eksik olduğu için native katalog veri uçlarının boş/seyrek dönmesinin düzeltilmesi",
+    "status": "done",
+    "priority": "P2",
+    "environment": "linux",
+    "labels": [
+      "catalog",
+      "native",
+      "deployment",
+      "languages",
+      "data-dir"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-010-catalog-data-deploy.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-011",
+    "title": "`catalog.rs` `load_games` list-of-lists (`[[name,url,size]]`) formatını desteklemeli",
+    "status": "done",
+    "priority": "P2",
+    "environment": "linux",
+    "labels": [
+      "catalog",
+      "games",
+      "parser",
+      "native",
+      "parity",
+      "bug"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-18",
+    "file": "tasks/done/TASK-011-games-parser.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012-gap-01",
+    "title": "Native TVUI shell'inin Python tvui.py'ye karşı kör nokta analizi ve dayanıklılık düzeltmeleri",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "manager-tvui",
+      "sdl2",
+      "sse",
+      "resilience",
+      "parity",
+      "review"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-22",
+    "file": "tasks/done/TASK-012-gap-01-tvui-shell-review.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012-gap-02",
+    "title": "Native-Rust tek-yol geçişinin fiziksel tamamlanması — ports/RGSX + bridge Python spawn + qBittorrent uyumluluk katmanı sökülümü",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "python-removal",
+      "cutover",
+      "librqbit",
+      "contract-tests",
+      "cleanup"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-22",
+    "file": "tasks/done/TASK-012-gap-02-python-cleanup.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012-gap-03",
+    "title": "WebUI parite taraması — kaybolan TV modu, kukla update-cache, ayarlar sekmesi sapması ve davranış hataları",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "webui",
+      "vue3",
+      "parity",
+      "review",
+      "sse",
+      "settings",
+      "tv-mode"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-22",
+    "file": "tasks/done/TASK-012-gap-03-webui-review.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012a",
+    "title": "TVUI SPA shell (CSS tema değişkenleri) + `RGSX_TVUI` flag hook",
+    "status": "superseded",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "theme",
+      "parity",
+      "faz12b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012a-tvui-theme-shell.md",
+    "superseded_by": "Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)"
+  },
+  {
+    "id": "TASK-012b",
+    "title": "TVUI çekirdek ekranlar — loading / platform_grid / game_list / download_progress",
+    "status": "superseded",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "screens",
+      "parity",
+      "faz12b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012b-tvui-core-screens.md",
+    "superseded_by": "Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)"
+  },
+  {
+    "id": "TASK-012c",
+    "title": "TVUI menü ekranları — pause_menu, display_menu, filter_*, global_sort_menu, global_search",
+    "status": "superseded",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "menus",
+      "parity",
+      "faz12b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012c-tvui-menus.md",
+    "superseded_by": "Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)"
+  },
+  {
+    "id": "TASK-012d",
+    "title": "TVUI sanal klavye (declarative model + gamepad cursor)",
+    "status": "superseded",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "virtual-keyboard",
+      "parity",
+      "faz12b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012d-tvui-virtual-keyboard.md",
+    "superseded_by": "Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)"
+  },
+  {
+    "id": "TASK-012e",
+    "title": "TVUI erişilebilirlik — font_scale / footer_font_scale / yüksek kontrast",
+    "status": "superseded",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "accessibility",
+      "parity",
+      "faz12b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012e-tvui-accessibility.md",
+    "superseded_by": "Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)"
+  },
+  {
+    "id": "TASK-012f",
+    "title": "TVUI cutover — `RGSX_TVUI=1` ile Python fallback kapat, divergence-notları yaz",
+    "status": "superseded",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "cutover",
+      "parity",
+      "faz12b"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012f-tvui-cutover.md",
+    "superseded_by": "Yön (B) native SDL2 + `.json` tema — bkz. TASK-012g..l (2026-08-21)"
+  },
+  {
+    "id": "TASK-012g",
+    "title": "Native TVUI shell (rust-sdl2) + `theme.json` yükleyici + `RGSX_TVUI` flag hook",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "theme",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-005"
+    ],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012g-tvui-sdl2-shell-theme.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012h",
+    "title": "SDL2 render core + `menu_state` state machine (loading/platform_grid/game_list/progress)",
+    "status": "done",
+    "priority": "P0",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "render",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-012g"
+    ],
+    "updated": "2026-08-27",
+    "file": "tasks/done/TASK-012h-tvui-render-core-screens.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012i",
+    "title": "SDL2 menüler (pause_menu / display_menu / filter_* / global_sort / global_search)",
+    "status": "in_progress",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "menu",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-012h"
+    ],
+    "updated": "2026-08-27",
+    "file": "tasks/todo/TASK-012i-tvui-menus.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012j",
+    "title": "SDL2 sanal klavye (Qwerty/Azerty/Qwertz) + folder browser + gamepad imleç",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "keyboard",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-012h"
+    ],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012j-tvui-keyboard-folder.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012k",
+    "title": "SDL2 erişilebilirlik (font_scale / footer_font_scale / yüksek kontrast)",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "accessibility",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-012h"
+    ],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012k-tvui-accessibility.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012l",
+    "title": "TVUI cutover — `RGSX_TVUI=1` varsayılan, Python pygame TVUI retire",
+    "status": "todo",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "cutover",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-012h",
+      "TASK-012i",
+      "TASK-012j",
+      "TASK-012k"
+    ],
+    "updated": "2026-08-21",
+    "file": "tasks/todo/TASK-012l-tvui-cutover.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012m",
+    "title": "Manager binary self-update (version check + download + SHA256 verify + platform-safe apply + restart)",
+    "status": "in_progress",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "update",
+      "self-update",
+      "native",
+      "faz12b",
+      "parity"
+    ],
+    "depends_on": [
+      "TASK-012h"
+    ],
+    "updated": "2026-08-22",
+    "file": "tasks/todo/TASK-012m-tvui-manager-self-update.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-013",
+    "title": "librqbit tek torrent yolu — qBittorrent uyumluluk katmanının (HTTP uçları + Python bridge istemcisi) sökülmesi",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "qbittorrent-retirement",
+      "librqbit",
+      "bridge",
+      "cleanup"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-25",
+    "file": "tasks/done/TASK-013-qbittorrent-retirement.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-014",
+    "title": "Router fallback birliği — statik (WebUI) modda `/api/*` istekleri SPA fallback'ine düşmesin",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "http-router",
+      "api-contract",
+      "spa-fallback",
+      "404"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-26",
+    "file": "tasks/done/TASK-014-api-404-json.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-015-gap-02",
+    "title": "`.github/workflows/release.yml` Rust pipeline'ının ilk gerçek tag koşusuyla doğrulanması",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "release-ci",
+      "github-actions",
+      "sdl2",
+      "packaging"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-26",
+    "file": "tasks/done/TASK-015-gap-02-release-ci-verify.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-016",
+    "title": "Native manager-bin için opsiyonel Docker imajı",
+    "status": "todo",
+    "priority": "P2",
+    "environment": "linux",
+    "labels": [
+      "docker",
+      "native-only",
+      "packaging"
+    ],
+    "depends_on": [],
+    "updated": "2026-08-26",
+    "file": "tasks/gap/TASK-016-docker-rust-image.md",
+    "superseded_by": ""
+  }
+]
