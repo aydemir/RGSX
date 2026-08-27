@@ -1,0 +1,64 @@
+# CI — kalite kapıları (TASK-007.3 / TASK-010 / TASK-011).
+# Yerelde rustup/llvm-tools yok; CI'da gerçek araçlarla doğrulanır.
+name: CI
+
+on:
+  push:
+    branches: [main, custom]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install SDL2 deps (sdl2-sys bundled build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxinerama-dev libxi-dev libgl1-mesa-dev
+      - name: cargo fmt --check
+        working-directory: manager-rs
+        run: cargo fmt --check
+      - name: cargo clippy --workspace --all-targets -- -W clippy::pedantic
+        working-directory: manager-rs
+        run: cargo clippy --workspace --all-targets -- -W clippy::pedantic
+      - name: cargo test --workspace
+        working-directory: manager-rs
+        run: cargo test --workspace -- --test-threads=1
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: cargo llvm-cov --workspace (lcov)
+        working-directory: manager-rs
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+  webui:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: webui/package-lock.json
+      - name: npm ci
+        working-directory: webui
+        run: npm ci
+      - name: eslint (0 error)
+        working-directory: webui
+        run: npm run lint
+      - name: vitest run (6/6)
+        working-directory: webui
+        run: npm run test
+      - name: vue-tsc --noEmit
+        working-directory: webui
+        run: npm run typecheck
+      - name: vite build
+        working-directory: webui
+        run: npm run build
