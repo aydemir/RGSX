@@ -44,3 +44,5 @@ etiketleri + gamepad navigasyon parity'si; filtre/sıralama davranışı aynı.
 ## İlerleme
 
 - 2026-08-21 — yön (B) kararıyla çıkarıldı (SPA TASK-012c superseded).
+- 2026-08-27 — Faz 1: `menus.rs` SDL'siz state machine (pause/display/filter/sort/search keys + i18n, 6 test, 52/52) commit `f2a63b9`.
+- 2026-08-27 — Faz 2: overlay entegrasyonu (`state.rs` overlay + `sdl2_shell.rs` draw_menu_overlay + M/Menu key + nav, 53/53) commit `5be5131`.
