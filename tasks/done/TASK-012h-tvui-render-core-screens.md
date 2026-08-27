@@ -2,7 +2,9 @@
 
 - **id:** TASK-012h
 - **title:** SDL2 render core + `menu_state` state machine (loading/platform_grid/game_list/progress)
-- **status:** in-progress
+- **status:** done
+- **updated:** 2026-08-27
+- **completed:** 2026-08-27
 - **priority:** P0
 - **created:** 2026-08-21
 - **environment:** both
@@ -103,3 +105,4 @@ Karar/test edilebilir her şey saf modülde; SDL yalnız piksel işi yapar.
 - 2026-08-27 — **Faz 3 tamam** (`manager-tvui/src/sdl2_shell.rs`, commit `5a4bd23`): TvuiScreen entegrasyonu (net→screen sync + `reduce` nav/page/confirm/back + Esc→ConfirmExit), `draw_grid` seçim vurgusu (`border_selected`), `MenuState` dispatch (Loading/Error/PlatformGrid/GameList/Progress/ConfirmExit), 41/41 yeşil.
 - 2026-08-27 — **Faz 4 tamam** (`net.rs` GameRow/fetch_games/progress SSE + `state.rs` sync + `sdl2_shell.rs` draw_game_list/progress, commit `600b07a`): GameList (fetch `/api/games/{platform}`) + Progress (SSE `progress` map + bar), DownloadGame action (`/api/download`), 41/41 yeşil.
 - 2026-08-27 — **Faz 5 tamam** (`render.rs` Transition+BoxArtCache + `state.rs:transition` + `sdl2_shell.rs` scale animasyon, commit `cc1259a`): `draw_validation_transition` parity (1000ms ease-out 1.5→2.5 + alpha 1→0.3) + LRU box-art cache (icon_path, 32), 46/46 yeşil (render 5 test).
+- 2026-08-27 — **DONE** — `cargo build --workspace` yeşil (1 uyarı `RgsxPaths` dead_code, izinli) + `cargo test -p manager-tvui` 46/46 + `cargo test --workspace` 46+... yeşil; `tasks/todo → done` taşındı, yarım iş yok (Yarım İş Bırakma Yasağı).
