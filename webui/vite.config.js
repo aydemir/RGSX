@@ -16,4 +16,9 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:5000',
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/__tests__/**/*.spec.js', 'src/__tests__/**/*.test.js'],
+  },
 })
