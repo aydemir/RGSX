@@ -98,6 +98,11 @@ impl Theme {
             serde_json::from_str(&txt).map_err(|e| format!("tema JSON parse hatası: {e}"))?;
         Ok(t)
     }
+
+    /// `fonts.pixel_ttf` dosyasının çözülmüş yolu (Faz 2: tema-relative).
+    pub fn ttf_path(&self) -> std::path::PathBuf {
+        crate::i18n::resolve_font_path(&self.fonts.pixel_ttf, std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+    }
 }
 
 fn tri(v: &[u8]) -> (u8, u8, u8) {
