@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::net::{PlatformTile, TvuiState, UiAction, UiKey};
+use crate::render::Transition;
 
 /// Menu state — `tvui.py` `config.menu_state` değerlerinin tip-güvenli karşılığı.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +46,8 @@ pub struct TvuiScreen {
     pub selected_game: usize,
     /// Faz 4: canlı progress haritası (net.progress ile senkron).
     pub progress: HashMap<String, serde_json::Value>,
+    /// Faz 5: platform seçim transition'ı (scale+alpha, theme.json ile).
+    pub transition: Option<Transition>,
     /// SSE/loading tarafı (net::TvuiState ile senkron).
     pub net: TvuiState,
     /// Son key-repeat zaman damgası (Python `process_key_repeats` parity).
@@ -61,6 +64,7 @@ impl Default for TvuiScreen {
             games: Vec::new(),
             selected_game: 0,
             progress: HashMap::new(),
+            transition: None,
             net: TvuiState::default(),
             last_key: None,
             last_at: None,
@@ -197,6 +201,8 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                 if screen.platforms.is_empty() {
                     return None;
                 }
+                // Faz 5: transition başlat (theme.json platform_select)
+                screen.transition = Some(Transition::new(now, 1000, 1.5, 2.5));
                 // Platform seç → GameList'e geç (oyunlar SSE/HTTP ile sonra dolar)
                 screen.menu = MenuState::GameList;
                 screen.selected_game = 0;

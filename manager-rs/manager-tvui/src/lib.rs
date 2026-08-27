@@ -9,6 +9,7 @@
 pub mod i18n;
 pub mod native_input;
 pub mod net;
+pub mod render;
 pub mod sdl2_shell;
 pub mod state;
 pub mod theme;

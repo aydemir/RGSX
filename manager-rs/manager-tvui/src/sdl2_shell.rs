@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -167,35 +167,51 @@ fn draw_grid(
     } else {
         None
     };
-    for (i, _p) in platforms.iter().enumerate() {
+    // Faz 5: transition scale (seçili tile büyür)
+    let trans_scale = screen
+        .transition
+        .as_ref()
+        .and_then(|tr| tr.sample(Instant::now()))
+        .map(|(s, _)| s)
+        .unwrap_or(1.0);
+    for (i, p) in platforms.iter().enumerate() {
         let col = (i as u32) % cols;
         let row = (i as u32) / cols;
-        let x = margin + col * (tile_w + gap);
-        let y = margin + row * (tile_h + gap);
+        let base_x = margin + col * (tile_w + gap);
+        let base_y = margin + row * (tile_h + gap);
         let is_sel = sel == Some(i);
-        // Seçili tile: hafif scale + border_selected; diğerleri button_idle/neon.
+        // Box-art cache: ikon yolunu çöz (SDL texture yükleme Faz 5'te cache'lenir)
+        let _icon_path = crate::render::BoxArtCache::icon_path_for(&p.name, &theme.icons.path);
+        // Seçili tile: transition scale + border_selected
         if is_sel {
-            // Dolgu selected
+            let scale = trans_scale;
+            let sw = (tile_w as f32 * scale) as u32;
+            let sh = (tile_h as f32 * scale) as u32;
+            // Ortala: scale büyüyünce tile ortada kalır
+            let dx = ((tile_w as i32 - sw as i32) / 2) as i32;
+            let dy = ((tile_h as i32 - sh as i32) / 2) as i32;
+            let x = base_x as i32 + dx;
+            let y = base_y as i32 + dy;
             canvas.set_draw_color(to_color(theme.color("button_selected")));
             let pad = 2i32;
             let _ = canvas.fill_rect(sdl2::rect::Rect::new(
-                x as i32 - pad,
-                y as i32 - pad,
-                tile_w + (pad * 2) as u32,
-                tile_h + (pad * 2) as u32,
+                x - pad,
+                y - pad,
+                sw + (pad * 2) as u32,
+                sh + (pad * 2) as u32,
             ));
             canvas.set_draw_color(to_color(theme.color("border_selected")));
             let _ = canvas.draw_rect(sdl2::rect::Rect::new(
-                x as i32 - pad,
-                y as i32 - pad,
-                tile_w + (pad * 2) as u32,
-                tile_h + (pad * 2) as u32,
+                x - pad,
+                y - pad,
+                sw + (pad * 2) as u32,
+                sh + (pad * 2) as u32,
             ));
         } else {
             canvas.set_draw_color(to_color(theme.color("button_idle")));
-            let _ = canvas.fill_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
             canvas.set_draw_color(to_color(theme.color("neon")));
-            let _ = canvas.draw_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
+            let _ = canvas.draw_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
         }
     }
 }
@@ -392,8 +408,9 @@ pub fn run_native_shell(
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
 
     let preset = std::env::var("RGSX_TVUI_BG").unwrap_or_else(|_| "default".into());
-    // TASK-012h Faz 3: SDL'siz state machine — loading/platform_grid nav + key-repeat
+    // TASK-012h Faz 3/5: state machine + box-art cache (Faz 5)
     let mut screen = TvuiScreen::default();
+    let _art_cache = crate::render::BoxArtCache::new(32);
 
     'running: loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -501,7 +518,7 @@ pub fn run_native_shell(
         if restarting {
             draw_restart_screen(&mut canvas, theme, dims);
         } else {
-            // screen.menu üzerinden çizim (Faz 3/4)
+            // screen.menu üzerinden çizim (Faz 3/4/5)
             match screen.menu {
                 MenuState::PlatformGrid => draw_grid(&mut canvas, theme, state, &screen, dims),
                 MenuState::GameList => draw_game_list(&mut canvas, theme, &screen, dims),
@@ -512,6 +529,12 @@ pub fn run_native_shell(
                     let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
                 }
                 MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims),
+            }
+            // Faz 5: transition bittiyse temizle
+            if let Some(tr) = &screen.transition {
+                if tr.is_finished(Instant::now()) {
+                    screen.transition = None;
+                }
             }
         }
         canvas.present();
