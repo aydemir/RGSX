@@ -51,6 +51,9 @@ pub struct TvuiScreen {
     pub transition: Option<Transition>,
     /// TASK-012i: menü overlay (pause/display/filter/sort/search).
     pub overlay: Option<MenuNav>,
+    /// Filter/sort state (game_list filtering parity, display/menus.py)
+    pub filters: HashMap<String, String>,
+    pub sort_mode: String,
     /// SSE/loading tarafı (net::TvuiState ile senkron).
     pub net: TvuiState,
     /// Son key-repeat zaman damgası (Python `process_key_repeats` parity).
@@ -69,6 +72,8 @@ impl Default for TvuiScreen {
             progress: HashMap::new(),
             transition: None,
             overlay: None,
+            filters: HashMap::new(),
+            sort_mode: "name_asc".to_string(),
             net: TvuiState::default(),
             last_key: None,
             last_at: None,
@@ -123,6 +128,51 @@ impl TvuiScreen {
         }
     }
 
+    /// Filtrelenmiş + sıralanmış oyun listesi (display/menus.py parity, SDL'siz).
+    /// `filters` map'indeki `filter_usa` gibi anahtarlar `exclude` ise bölge içeren oyun gizlenir.
+    /// `sort_mode` `name_asc/desc` veya `size_asc/desc` (size parse sayısal).
+    pub fn filtered_games(&self) -> Vec<GameRow> {
+        let mut list = self.games.clone();
+        // Filter: region bazlı basit (USA/Europe/Japan/Other)
+        for (k, v) in &self.filters {
+            if v == "exclude" {
+                let region = match k.as_str() {
+                    "filter_usa" => "USA",
+                    "filter_europe" => "Europe",
+                    "filter_japan" => "Japan",
+                    "filter_other" => "Other",
+                    _ => continue,
+                };
+                if region == "Other" {
+                    // Other: bölgesiz oyunlar (parantez içi bölge yok)
+                    list.retain(|g| {
+                        let has_region = g.name.contains("(USA)")
+                            || g.name.contains("(Europe)")
+                            || g.name.contains("(Japan)");
+                        !has_region
+                    });
+                } else {
+                    let pat = format!("({region})");
+                    list.retain(|g| !g.name.contains(&pat));
+                }
+            }
+        }
+        // Sort
+        fn parse_size(s: &str) -> u64 {
+            s.trim()
+                .replace(|c: char| !c.is_ascii_digit(), "")
+                .parse::<u64>()
+                .unwrap_or(0)
+        }
+        match self.sort_mode.as_str() {
+            "name_desc" => list.sort_by(|a, b| b.name.cmp(&a.name)),
+            "size_asc" => list.sort_by(|a, b| parse_size(&a.size).cmp(&parse_size(&b.size))),
+            "size_desc" => list.sort_by(|a, b| parse_size(&b.size).cmp(&parse_size(&a.size))),
+            _ => list.sort_by(|a, b| a.name.cmp(&b.name)), // name_asc default
+        }
+        list
+    }
+
     /// Key-repeat filtresi: aynı tuş 120ms içinde tekrar ederse yutulur
     /// (Python `process_key_repeats` 100ms civarı; 120ms güvenli eşik).
     fn is_repeat_throttled(&mut self, key: UiKey, now: Instant) -> bool {
@@ -158,21 +208,54 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
         screen.last_at = None;
     }
 
-    // TASK-012i: overlay açıkken nav/confirm/back overlay'i yönetir (pause/display/filter)
+    // TASK-012i: overlay açıkken nav/confirm/back overlay'i yönetir (pause/display/filter/sort)
     if screen.overlay.is_some() {
         let mut close = false;
+        let mut next_overlay: Option<MenuNav> = None;
         if let Some(ov) = screen.overlay.as_mut() {
             match key {
                 UiKey::NavUp => ov.up(),
                 UiKey::NavDown => ov.down(),
                 UiKey::Confirm => {
-                    if let Some(pa) = crate::menus::pause_action_for(ov) {
-                        match pa {
-                            crate::menus::PauseAction::Quit => close = true,
-                            _ => close = true,
+                    let key = ov.selected_key().unwrap_or("");
+                    match ov.kind {
+                        MenuKind::Pause => {
+                            if let Some(pa) = crate::menus::pause_action_for(ov) {
+                                match pa {
+                                    crate::menus::PauseAction::OpenFilter => {
+                                        let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+                                        let en = crate::i18n::load_lang("en");
+                                        next_overlay = Some(MenuNav::new(MenuKind::FilterMain, &lang, &en));
+                                        close = true;
+                                    }
+                                    crate::menus::PauseAction::OpenSort => {
+                                        let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+                                        let en = crate::i18n::load_lang("en");
+                                        next_overlay = Some(MenuNav::new(MenuKind::GlobalSort, &lang, &en));
+                                        close = true;
+                                    }
+                                    _ => close = true,
+                                }
+                            } else {
+                                close = true;
+                            }
                         }
-                    } else {
-                        close = true;
+                        MenuKind::FilterMain | MenuKind::FilterAdvanced => {
+                            crate::menus::apply_filter_key(key, &mut screen.filters);
+                            // filtrede kal, kapatma yok (çoklu toggle)
+                        }
+                        MenuKind::GlobalSort => {
+                            screen.sort_mode = match key {
+                                "sort_name_asc" => "name_asc",
+                                "sort_name_desc" => "name_desc",
+                                "sort_size_asc" => "size_asc",
+                                "sort_size_desc" => "size_desc",
+                                _ => &screen.sort_mode,
+                            }
+                            .to_string();
+                            close = true;
+                        }
+                        _ => close = true,
                     }
                 }
                 UiKey::Back | UiKey::Menu => close = true,
@@ -181,6 +264,9 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
         }
         if close {
             screen.overlay = None;
+        }
+        if let Some(nov) = next_overlay {
+            screen.overlay = Some(nov);
         }
         return None;
     }
@@ -480,5 +566,25 @@ mod tests {
         assert!(s.overlay.is_some());
         reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(800));
         assert!(s.overlay.is_none());
+    }
+
+    #[test]
+    fn filter_and_sort_games() {
+        let mut s = TvuiScreen::default();
+        s.games = vec![
+            GameRow { name: "Game A (USA)".into(), size: "100".into(), url: "a".into() },
+            GameRow { name: "Game B (Europe)".into(), size: "200".into(), url: "b".into() },
+            GameRow { name: "Game C (Japan)".into(), size: "50".into(), url: "c".into() },
+            GameRow { name: "Game D".into(), size: "300".into(), url: "d".into() },
+        ];
+        // USA exclude
+        s.filters.insert("filter_usa".into(), "exclude".into());
+        let filtered = s.filtered_games();
+        assert_eq!(filtered.len(), 3);
+        assert!(!filtered.iter().any(|g| g.name.contains("(USA)")));
+        // size_desc
+        s.sort_mode = "size_desc".into();
+        let sorted = s.filtered_games();
+        assert_eq!(sorted[0].name, "Game D");
     }
 }
