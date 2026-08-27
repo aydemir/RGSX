@@ -2,7 +2,8 @@
 
 - **id:** TASK-012i
 - **title:** SDL2 menüler (pause_menu / display_menu / filter_* / global_sort / global_search)
-- **status:** todo
+- **status:** in-progress
+- **updated:** 2026-08-27
 - **priority:** P2
 - **created:** 2026-08-21
 - **environment:** both

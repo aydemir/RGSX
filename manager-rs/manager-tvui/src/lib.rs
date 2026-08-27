@@ -7,6 +7,7 @@
 //! TASK-012-gap-02 ile söküldü).
 
 pub mod i18n;
+pub mod menus;
 pub mod native_input;
 pub mod net;
 pub mod render;
