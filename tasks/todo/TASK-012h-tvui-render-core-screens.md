@@ -99,3 +99,4 @@ Karar/test edilebilir her şey saf modülde; SDL yalnız piksel işi yapar.
   `catalog_bootstrap.rs` içine eklendi (SSE publish + byte sayacı); `ensure_catalog_ready(None)`
   ile startup davranışı değişmedi. Self-update ayrı görev: TASK-012m.
 - 2026-08-27 — **Faz 1 tamam** (`manager-tvui/src/state.rs` + `net.rs` UiKey genişletmesi, commit `c5ec3d1`): MenuState + TvuiScreen + SAF reducer (nav/page/confirm/back + key-repeat 120ms) + sync_from_net + 8 SDL'siz test (35/35 yeşil), `gamepad_event_to_key` nav/page eşlemesi.
+- 2026-08-27 — **Faz 2 tamam** (`manager-tvui/src/i18n.rs` + `theme.rs:ttf_path`, commit `24fb4b2`): `t(key)` i18n okuyucu (`webui/languages/*.json`, `RGSX_TVUI_LANG`→en fallback + `t_with_fallback`) + `resolve_font_path` (theme-relative) + 6 test (41/41 yeşil).
