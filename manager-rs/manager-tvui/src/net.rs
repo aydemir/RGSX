@@ -205,11 +205,19 @@ pub enum UiAction {
 }
 
 /// Fiziksel tuşların (`Keycode`) shell tarafından çevrildiği semantik tuşlar.
+/// TASK-012h Faz 1: grid nav/page tuşları eklendi (state.rs reducer tüketicisi).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiKey {
     Retry,
     Confirm,
     CancelUpdate,
+    NavUp,
+    NavDown,
+    NavLeft,
+    NavRight,
+    PageUp,
+    PageDown,
+    Back,
 }
 
 /// SAF karar fonksiyonu: mevcut durum + semantik tuş → yapılacak aksiyon.
@@ -244,6 +252,7 @@ pub fn ui_decision(s: &TvuiState, key: UiKey) -> Option<UiAction> {
                 None
             }
         }
+        _ => None, // Nav/Page/Back — state.rs reducer tüketicisi
     }
 }
 
@@ -339,13 +348,17 @@ pub enum GamepadIntent {
 
 /// SSE `gamepad` olayının `action` alanını niyete çevirir (sözleşme:
 /// `native_input::RgsxAction` → SSE stringleri, App.vue `applyAction` ile aynı).
-/// Yalnızca bugün tüketicisi olan aksiyonlar eşlenir: confirm → Enter,
-/// back → çıkış (shell kök ekrandır; ES'te kökte B = çıkış). Nav/page tuşları
-/// TASK-012h'taki grid navigasyonu gelene kadar None — tüketici olmadan bağlanmaz.
+/// TASK-012h Faz 1: nav/page tuşları state.rs reducer'a bağlandı (tüketici var).
 pub fn gamepad_event_to_key(data: &serde_json::Value) -> Option<GamepadIntent> {
     match data.get("action").and_then(|v| v.as_str()) {
         Some("confirm") => Some(GamepadIntent::Key(UiKey::Confirm)),
         Some("back") => Some(GamepadIntent::Exit),
+        Some("navUp") => Some(GamepadIntent::Key(UiKey::NavUp)),
+        Some("navDown") => Some(GamepadIntent::Key(UiKey::NavDown)),
+        Some("navLeft") => Some(GamepadIntent::Key(UiKey::NavLeft)),
+        Some("navRight") => Some(GamepadIntent::Key(UiKey::NavRight)),
+        Some("pageUp") => Some(GamepadIntent::Key(UiKey::PageUp)),
+        Some("pageDown") => Some(GamepadIntent::Key(UiKey::PageDown)),
         _ => None,
     }
 }
@@ -744,8 +757,7 @@ mod tests {
 
     #[test]
     fn gamepad_events_map_to_intents() {
-        // Bulgu 9: confirm → Enter eşdeğeri, back → çıkış; nav/bilinmeyen → None
-        // (tüketici olmadan bağlanmaz — TASK-012h'ta genişler).
+        // TASK-012h Faz 1: confirm/back + nav/page artık eşlenir (reducer tüketicisi).
         assert_eq!(
             gamepad_event_to_key(&serde_json::json!({"action": "confirm"})),
             Some(GamepadIntent::Key(UiKey::Confirm))
@@ -755,8 +767,16 @@ mod tests {
             Some(GamepadIntent::Exit)
         );
         assert_eq!(
-            gamepad_event_to_key(&serde_json::json!({"action": "navup"})),
-            None
+            gamepad_event_to_key(&serde_json::json!({"action": "navUp"})),
+            Some(GamepadIntent::Key(UiKey::NavUp))
+        );
+        assert_eq!(
+            gamepad_event_to_key(&serde_json::json!({"action": "navDown"})),
+            Some(GamepadIntent::Key(UiKey::NavDown))
+        );
+        assert_eq!(
+            gamepad_event_to_key(&serde_json::json!({"action": "pageUp"})),
+            Some(GamepadIntent::Key(UiKey::PageUp))
         );
         assert_eq!(gamepad_event_to_key(&serde_json::json!({})), None);
     }

@@ -9,6 +9,7 @@
 pub mod native_input;
 pub mod net;
 pub mod sdl2_shell;
+pub mod state;
 pub mod theme;
 
 use std::path::PathBuf;
