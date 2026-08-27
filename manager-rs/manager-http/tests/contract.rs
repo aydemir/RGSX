@@ -136,6 +136,32 @@ fn disable_native_download() {
 /// paralel koşumda düzenli flake (set_var → load arası başka test yolu okur).
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Env var'ı RAII ile set/geri al — panic'te bile temizler (KANBAN Known Issues
+/// `test_settings_native_roundtrip` flake: restore Drop olmadan kalırsa sonraki
+/// test kirli env görür).
+struct EnvGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+fn set_env_guard(key: &'static str, val: &std::path::Path) -> EnvGuard {
+    let prev = std::env::var(key).ok();
+    std::env::set_var(key, val);
+    EnvGuard { key, prev }
+}
+fn set_env_guard_str(key: &'static str, val: &str) -> EnvGuard {
+    let prev = std::env::var(key).ok();
+    std::env::set_var(key, val);
+    EnvGuard { key, prev }
+}
+
 // ---------------------------------------------------------------------------
 // GET / — page d'accueil
 // ---------------------------------------------------------------------------
@@ -626,16 +652,10 @@ async fn test_settings_post() {
 #[tokio::test]
 async fn test_settings_native_roundtrip() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    // Sahte (izole) ayar dosyası — diske bağımlı kalıcı yol yerine TempDir kullanılır.
-    // Paralel testlerle çakışmaması ve artık dosya bırakmaması için.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("rgsx_settings.json");
-
-    // Mevcut env değerlerini koru (paralel koşumda diğer testleri etkilememek için).
-    let prev_native = std::env::var("RGSX_NATIVE_SETTINGS").ok();
-    let prev_path = std::env::var("RGSX_SETTINGS_PATH").ok();
-    std::env::set_var("RGSX_NATIVE_SETTINGS", "1");
-    std::env::set_var("RGSX_SETTINGS_PATH", &path);
+    let _ng = set_env_guard_str("RGSX_NATIVE_SETTINGS", "1");
+    let _pg = set_env_guard("RGSX_SETTINGS_PATH", &path);
 
     let app = empty_app();
 
@@ -671,16 +691,7 @@ async fn test_settings_native_roundtrip() {
     assert!(v.get("language").is_none());
     assert_eq!(v["music_enabled"], json!(false));
     assert_eq!(v.get("api_keys"), Some(&json!({})));
-
-    // Env'i önceki haline döndür (TempDir drop'ta kendi dizinini siler).
-    match prev_native {
-        Some(v) => std::env::set_var("RGSX_NATIVE_SETTINGS", v),
-        None => std::env::remove_var("RGSX_NATIVE_SETTINGS"),
-    }
-    match prev_path {
-        Some(v) => std::env::set_var("RGSX_SETTINGS_PATH", v),
-        None => std::env::remove_var("RGSX_SETTINGS_PATH"),
-    }
+    // _ng/_pg Drop'ta env'i geri alır (panic-safe).
 }
 
 #[tokio::test]
@@ -2194,7 +2205,7 @@ async fn test_scan_sse_published_on_get() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let tmp = std::env::temp_dir().join("rgsx_contract_scan_sse");
     let _ = std::fs::create_dir_all(&tmp);
-    std::env::set_var("RGSX_ROMS_FOLDER", &tmp);
+    let _rg = set_env_guard("RGSX_ROMS_FOLDER", &tmp);
     let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
     let data = StateData::empty();
     // scan endpoint state.events üzerinden publish eder → custom channel ver

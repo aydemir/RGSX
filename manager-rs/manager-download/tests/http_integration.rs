@@ -254,16 +254,32 @@ async fn zip_archive_with_valid_signature_accepted() {
 
 #[tokio::test]
 async fn cancel_aborts_stream() {
-    // Büyük (5MB) Content-Length gövdeli sunucu. reqwest `bytes_stream` parça parça
-    // verir; indirme başlayınca kısa bekleyip cancel set ederiz → Canceled + .part sil.
-    let big: bytes::Bytes = bytes::Bytes::from(vec![0u8; 5 * 1024 * 1024]);
+    // Yavaş (5MB, 4KB chunk × 1280, 2ms/chunk ≈ 2.5s) stream — `Full` tek parça
+    // 5MB'ı anında gönderip cancel penceresini kapatıyordu (paralel suite'de
+    // download cancel'dan önce bitince flake: Ok yerine Canceled beklenir).
+    // StreamBody ile throttling → cancel deterministik (KANBAN Known Issues).
     let addr = mock_server(move |_p, _r| {
-        let body = big.clone();
+        use http_body::Frame;
+        let total_chunks = 1280usize; // 5MB / 4096
+        let total_len = total_chunks * 4096;
+        let stream = futures_util::stream::unfold(0usize, move |count| async move {
+            if count >= total_chunks {
+                return None;
+            }
+            // Her chunk arası küçük bekleme — cancel için pencere açar
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            let chunk = Bytes::from(vec![0u8; 4096]);
+            Some((
+                Ok::<Frame<Bytes>, std::convert::Infallible>(Frame::data(chunk)),
+                count + 1,
+            ))
+        });
+        let body = StreamBody::new(stream);
         Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
-            .header("content-length", body.len())
-            .body(boxed(Full::new(body)))
+            .header("content-length", total_len)
+            .body(boxed(body))
             .unwrap()
     })
     .await;
@@ -384,7 +400,7 @@ async fn archive_org_tries_header_variants_on_403() {
     std::fs::create_dir_all(&dir).unwrap();
     let dest = dir.join("f.bin");
     let url = format!("http://{addr}/archive.org/file");
-    let out = manager_download::http::HttpDownloader::new()
+    let _out = manager_download::http::HttpDownloader::new()
         .download_async(&req(url, &dest))
         .await
         .unwrap();
