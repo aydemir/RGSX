@@ -16,6 +16,7 @@ use sdl2::video::{Window, WindowContext};
 use crate::net::{
     apply_ui_action, expire_stale_restart_at, tvui_lock, ui_decision, SharedTvuiState, UiKey,
 };
+use crate::state::{MenuState, TvuiScreen};
 use crate::theme::Theme;
 
 fn to_color((r, g, b, a): (u8, u8, u8, u8)) -> Color {
@@ -134,12 +135,12 @@ fn draw_loading(
 }
 
 /// `ready` sonrası platform grid'i: `/api/platforms`'tan gelen `state.platforms`
-/// listesini tile olarak dizer (navigasyon/selection → sonraki faz). Metin etiketi
-/// SDL2_ttf link ortamı hazır olunca eklenecek; şimdilik tile'lar veri güdümlü.
+/// listesini tile olarak dizer. Faz 3: seçili tile `border_selected` + scale ile vurgulanır.
 fn draw_grid(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
     state: &SharedTvuiState,
+    screen: &TvuiScreen,
     (w, _h): (u32, u32),
 ) {
     let (platforms, offline) = {
@@ -160,16 +161,41 @@ fn draw_grid(
     let avail_w = w.saturating_sub(margin * 2);
     let tile_w = (avail_w.saturating_sub(gap * (cols - 1))) / cols;
     let tile_h = tile_w * 3 / 4;
+    let sel = if matches!(screen.menu, MenuState::PlatformGrid) {
+        Some(screen.selected_platform)
+    } else {
+        None
+    };
     for (i, _p) in platforms.iter().enumerate() {
         let col = (i as u32) % cols;
         let row = (i as u32) / cols;
         let x = margin + col * (tile_w + gap);
         let y = margin + row * (tile_h + gap);
-        // Dolgu + neon çerçeve (her tile = bir gerçek platform).
-        canvas.set_draw_color(to_color(theme.color("button_idle")));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
-        canvas.set_draw_color(to_color(theme.color("neon")));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
+        let is_sel = sel == Some(i);
+        // Seçili tile: hafif scale + border_selected; diğerleri button_idle/neon.
+        if is_sel {
+            // Dolgu selected
+            canvas.set_draw_color(to_color(theme.color("button_selected")));
+            let pad = 2i32;
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(
+                x as i32 - pad,
+                y as i32 - pad,
+                tile_w + (pad * 2) as u32,
+                tile_h + (pad * 2) as u32,
+            ));
+            canvas.set_draw_color(to_color(theme.color("border_selected")));
+            let _ = canvas.draw_rect(sdl2::rect::Rect::new(
+                x as i32 - pad,
+                y as i32 - pad,
+                tile_w + (pad * 2) as u32,
+                tile_h + (pad * 2) as u32,
+            ));
+        } else {
+            canvas.set_draw_color(to_color(theme.color("button_idle")));
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
+            canvas.set_draw_color(to_color(theme.color("neon")));
+            let _ = canvas.draw_rect(sdl2::rect::Rect::new(x as i32, y as i32, tile_w, tile_h));
+        }
     }
 }
 
@@ -278,37 +304,78 @@ pub fn run_native_shell(
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
 
     let preset = std::env::var("RGSX_TVUI_BG").unwrap_or_else(|_| "default".into());
+    // TASK-012h Faz 3: SDL'siz state machine — loading/platform_grid nav + key-repeat
+    let mut screen = TvuiScreen::default();
 
     'running: loop {
         if shutdown.load(Ordering::Relaxed) {
             break 'running; // Faz C bulgu 9: gamepad back.
         }
+        // SSE net state'ini screen'e senkronla (loading/ready/error/offline/platforms)
+        {
+            let net = tvui_lock(state).clone();
+            screen.net = net.clone();
+            if screen.platforms.is_empty() && !net.platforms.is_empty() {
+                screen.platforms = net.platforms.clone();
+            } else if !net.platforms.is_empty() && screen.platforms.len() != net.platforms.len() {
+                screen.platforms = net.platforms.clone();
+                if screen.selected_platform >= screen.platforms.len() {
+                    screen.selected_platform = 0;
+                }
+            }
+            screen.sync_from_net();
+        }
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
+                Event::Quit { .. } => break 'running,
+                Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
-                } => break 'running,
-                // TASK-012-gap-01 Faz B (bulgu 15): kararlar SDL'siz `ui_decision`'da,
-                // HTTP arka planda (`apply_ui_action`) — event loop asla bloklanmaz.
+                } => {
+                    // Faz 3: Esc → Back (ConfirmExit) reducer üzerinden
+                    let now = std::time::Instant::now();
+                    let _ = crate::state::reduce(&mut screen, UiKey::Back, now);
+                    if matches!(screen.menu, MenuState::ConfirmExit) {
+                        // İkinci Esc veya ConfirmExit'te çıkış
+                        break 'running;
+                    }
+                }
                 Event::KeyDown {
                     keycode: Some(kc), ..
                 } => {
-                    let key = match kc {
+                    let now = std::time::Instant::now();
+                    // Net UiAction'lar (Retry/Confirm/CancelUpdate) önce dene
+                    let net_key = match kc {
                         Keycode::R => Some(UiKey::Retry),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
                         Keycode::C => Some(UiKey::CancelUpdate),
                         _ => None,
                     };
-                    if let Some(key) = key {
+                    if let Some(k) = net_key {
                         let action = {
                             let s = tvui_lock(state);
-                            ui_decision(&s, key)
+                            ui_decision(&s, k)
                         };
                         if let Some(action) = action {
                             apply_ui_action(state, action);
+                            continue;
                         }
+                    }
+                    // Nav/page/Back → state reducer (Faz 3)
+                    let nav_key = match kc {
+                        Keycode::Up => Some(UiKey::NavUp),
+                        Keycode::Down => Some(UiKey::NavDown),
+                        Keycode::Left => Some(UiKey::NavLeft),
+                        Keycode::Right => Some(UiKey::NavRight),
+                        Keycode::PageUp => Some(UiKey::PageUp),
+                        Keycode::PageDown => Some(UiKey::PageDown),
+                        Keycode::Backspace => Some(UiKey::Back),
+                        Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
+                        _ => None,
+                    };
+                    if let Some(k) = nav_key {
+                        let _ = crate::state::reduce(&mut screen, k, now);
+                        // Confirm ile GameList'e geçildiyse gelecek fazda oyun yükleme tetiklenir
                     }
                 }
                 _ => {}
@@ -326,15 +393,18 @@ pub fn run_native_shell(
         if restarting {
             draw_restart_screen(&mut canvas, theme, dims);
         } else {
-            // Loading → ready/offline → platform_grid geçişi (012h omurgası).
-            let show_grid = {
-                let s = tvui_lock(state);
-                s.ready || s.offline
-            };
-            if show_grid {
-                draw_grid(&mut canvas, theme, state, dims);
-            } else {
-                draw_loading(&mut canvas, theme, state, dims);
+            // screen.menu üzerinden çizim (Faz 3: PlatformGrid nav vurgulu)
+            match screen.menu {
+                MenuState::PlatformGrid => draw_grid(&mut canvas, theme, state, &screen, dims),
+                MenuState::GameList => draw_grid(&mut canvas, theme, state, &screen, dims), // Faz 4'te game_list
+                MenuState::Loading | MenuState::Error(_) => draw_loading(&mut canvas, theme, state, dims),
+                MenuState::ConfirmExit => {
+                    // Geçici: grid üzerine yarı saydam ConfirmExit (metin TTF ile Faz 4)
+                    draw_grid(&mut canvas, theme, state, &screen, dims);
+                    canvas.set_draw_color(to_color(theme.color("warning_text")));
+                    let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
+                }
+                MenuState::Progress => draw_grid(&mut canvas, theme, state, &screen, dims),
             }
         }
         canvas.present();
