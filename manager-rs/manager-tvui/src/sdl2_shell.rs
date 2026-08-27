@@ -303,6 +303,50 @@ fn draw_progress_screen(
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
 }
 
+/// TASK-012i — pause menu overlay (Faz 1: rect + highlight, metin TTF ile sonra).
+fn draw_menu_overlay(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+) {
+    let Some(ov) = &screen.overlay else {
+        return;
+    };
+    // Yarı saydam arka plan (shadow)
+    canvas.set_draw_color(to_color(theme.color("shadow")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
+    let bw = ((w as i32) * 50 / 100).max(200) as u32;
+    let bh_each: u32 = 40;
+    let gap: u32 = 8;
+    let total_h = ov.items.len() as u32 * bh_each + (ov.items.len().saturating_sub(1) as u32 * gap) + 20;
+    let bx = ((w as i32 - bw as i32) / 2).max(0) as i32;
+    let by = ((h as i32 - total_h as i32) / 2).max(0) as i32;
+    // Panel
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, bw, total_h));
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx, by, bw, total_h));
+    for (i, _label) in ov.items.iter().enumerate() {
+        let y = by + 10 + i as i32 * (bh_each as i32 + gap as i32);
+        let is_sel = i == ov.selected;
+        let bg = if is_sel {
+            theme.color("button_selected")
+        } else {
+            theme.color("button_idle")
+        };
+        let border = if is_sel {
+            theme.color("border_selected")
+        } else {
+            theme.color("border")
+        };
+        canvas.set_draw_color(to_color(bg));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each));
+        canvas.set_draw_color(to_color(border));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each));
+    }
+}
+
 /// TASK-012m Faz 5 — self-update banner (metin yok; ttf erte). Aşamaya göre renk:
 /// `available`=warning_text (turuncu — bulgu 10 fix), `downloading`=neon (mavi,
 /// iç dolgu=percent), `ready`=success (yeşil), `failed`=error_text (kırmızı).
@@ -466,7 +510,7 @@ pub fn run_native_shell(
                             continue;
                         }
                     }
-                    // Nav/page/Back → state reducer (Faz 3+4)
+                    // Nav/page/Back/Menu → state reducer (Faz 3+4+012i)
                     let nav_key = match kc {
                         Keycode::Up => Some(UiKey::NavUp),
                         Keycode::Down => Some(UiKey::NavDown),
@@ -475,6 +519,7 @@ pub fn run_native_shell(
                         Keycode::PageUp => Some(UiKey::PageUp),
                         Keycode::PageDown => Some(UiKey::PageDown),
                         Keycode::Backspace => Some(UiKey::Back),
+                        Keycode::M => Some(UiKey::Menu),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
                         _ => None,
                     };
@@ -529,6 +574,10 @@ pub fn run_native_shell(
                     let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
                 }
                 MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims),
+            }
+            // TASK-012i: overlay varsa üstte çiz (pause/display/filter)
+            if screen.overlay.is_some() {
+                draw_menu_overlay(&mut canvas, theme, &screen, dims);
             }
             // Faz 5: transition bittiyse temizle
             if let Some(tr) = &screen.transition {

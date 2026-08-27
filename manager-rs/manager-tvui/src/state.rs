@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::menus::{MenuKind, MenuNav};
 use crate::net::{PlatformTile, TvuiState, UiAction, UiKey};
 use crate::render::Transition;
 
@@ -48,6 +49,8 @@ pub struct TvuiScreen {
     pub progress: HashMap<String, serde_json::Value>,
     /// Faz 5: platform seçim transition'ı (scale+alpha, theme.json ile).
     pub transition: Option<Transition>,
+    /// TASK-012i: menü overlay (pause/display/filter/sort/search).
+    pub overlay: Option<MenuNav>,
     /// SSE/loading tarafı (net::TvuiState ile senkron).
     pub net: TvuiState,
     /// Son key-repeat zaman damgası (Python `process_key_repeats` parity).
@@ -65,6 +68,7 @@ impl Default for TvuiScreen {
             selected_game: 0,
             progress: HashMap::new(),
             transition: None,
+            overlay: None,
             net: TvuiState::default(),
             last_key: None,
             last_at: None,
@@ -152,6 +156,39 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
     if !is_nav {
         screen.last_key = None;
         screen.last_at = None;
+    }
+
+    // TASK-012i: overlay açıkken nav/confirm/back overlay'i yönetir (pause/display/filter)
+    if screen.overlay.is_some() {
+        let mut close = false;
+        if let Some(ov) = screen.overlay.as_mut() {
+            match key {
+                UiKey::NavUp => ov.up(),
+                UiKey::NavDown => ov.down(),
+                UiKey::Confirm => {
+                    if let Some(pa) = crate::menus::pause_action_for(ov) {
+                        match pa {
+                            crate::menus::PauseAction::Quit => close = true,
+                            _ => close = true,
+                        }
+                    } else {
+                        close = true;
+                    }
+                }
+                UiKey::Back | UiKey::Menu => close = true,
+                _ => {}
+            }
+        }
+        if close {
+            screen.overlay = None;
+        }
+        return None;
+    }
+    if key == UiKey::Menu {
+        let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+        let en = crate::i18n::load_lang("en");
+        screen.overlay = Some(MenuNav::new(MenuKind::Pause, &lang, &en));
+        return None;
     }
 
     match screen.menu.clone() {
@@ -425,5 +462,23 @@ mod tests {
         assert_eq!(s.selected_platform, 9); // clamp
         reduce(&mut s, UiKey::PageUp, now() + Duration::from_millis(200));
         assert_eq!(s.selected_platform, 3);
+    }
+
+    #[test]
+    fn overlay_menu_open_and_nav() {
+        let mut s = make_grid(2);
+        s.menu = MenuState::PlatformGrid;
+        reduce(&mut s, UiKey::Menu, now());
+        assert!(s.overlay.is_some());
+        let sel0 = s.overlay.as_ref().unwrap().selected;
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(200));
+        assert_eq!(s.overlay.as_ref().unwrap().selected, (sel0 + 1) % s.overlay.as_ref().unwrap().items.len());
+        reduce(&mut s, UiKey::Back, now() + Duration::from_millis(400));
+        assert!(s.overlay.is_none());
+        // tekrar Menu aç, Confirm de kapatır
+        reduce(&mut s, UiKey::Menu, now() + Duration::from_millis(600));
+        assert!(s.overlay.is_some());
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(800));
+        assert!(s.overlay.is_none());
     }
 }

@@ -266,6 +266,7 @@ pub enum UiAction {
 
 /// Fiziksel tuşların (`Keycode`) shell tarafından çevrildiği semantik tuşlar.
 /// TASK-012h Faz 1: grid nav/page tuşları eklendi (state.rs reducer tüketicisi).
+/// TASK-012i: Menu (pause) eklendi.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiKey {
     Retry,
@@ -278,6 +279,7 @@ pub enum UiKey {
     PageUp,
     PageDown,
     Back,
+    Menu,
 }
 
 /// SAF karar fonksiyonu: mevcut durum + semantik tuş → yapılacak aksiyon.
@@ -430,6 +432,7 @@ pub fn gamepad_event_to_key(data: &serde_json::Value) -> Option<GamepadIntent> {
         Some("navRight") => Some(GamepadIntent::Key(UiKey::NavRight)),
         Some("pageUp") => Some(GamepadIntent::Key(UiKey::PageUp)),
         Some("pageDown") => Some(GamepadIntent::Key(UiKey::PageDown)),
+        Some("menu") => Some(GamepadIntent::Key(UiKey::Menu)),
         _ => None,
     }
 }
