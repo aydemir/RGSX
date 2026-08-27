@@ -2145,3 +2145,71 @@ async fn test_history_includes_retry_fields_additive() {
     assert_eq!(e["max_retries"], json!(3));
     assert_eq!(e["retry_at"], json!(0));
 }
+
+// ---------------------------------------------------------------------------
+// TASK-008 — downloaded SSE shape + scan SSE sözleşmesi
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_downloaded_snapshot_shape_is_platform_map() {
+    // Kanonik shape: {platform:[names]}. game_statuses shape'i
+    // ({name:{status,platform}}) burada DEĞİL, yalnızca /api/game-status için.
+    let mut data = StateData::empty();
+    data.downloaded = json!({ "NES": ["Rom1", "Rom2"], "SNES": ["Rom3"] });
+    data.rebuild_downloaded_index();
+    let snap = manager_http::sse::snapshot_json(&data);
+    let dl = &snap["downloaded"];
+    assert!(dl.is_object(), "downloaded snapshot'ta object olmalı");
+    assert_eq!(dl["NES"], json!(["Rom1", "Rom2"]));
+    assert_eq!(dl["SNES"], json!(["Rom3"]));
+    // downloaded_index O(1) lookup da aynı shape'ten türemeli
+    assert!(data.downloaded_index.contains(&("NES".to_string(), "Rom1".to_string())));
+    assert!(!data.downloaded_index.contains(&("NES".to_string(), "Missing".to_string())));
+}
+
+#[test]
+fn test_downloaded_sse_payload_shape() {
+    // SSE `downloaded` olayı her zaman {downloaded:{platform:[names]}} sarmalar
+    // (sse::broadcast_loop: publish "downloaded" json!({downloaded: parse_value}))
+    let mut data = StateData::empty();
+    data.downloaded = json!({ "NES": ["A"] });
+    let payload = json!({ "downloaded": data.downloaded.clone() });
+    let raw = manager_core::contract::sse_event("downloaded", &payload);
+    assert!(raw.starts_with("event: downloaded\n"));
+    let data_part = raw.split("data: ").nth(1).unwrap().trim();
+    let parsed: Value = serde_json::from_str(data_part).unwrap();
+    assert_eq!(parsed["downloaded"]["NES"], json!(["A"]));
+    // Boşken de object kalmalı (null değil)
+    let empty = json!({ "downloaded": json!({}) });
+    let raw2 = manager_core::contract::sse_event("downloaded", &empty);
+    let data_part2 = raw2.split("data: ").nth(1).unwrap().trim();
+    let parsed2: Value = serde_json::from_str(data_part2).unwrap();
+    assert_eq!(parsed2["downloaded"], json!({}));
+}
+
+#[tokio::test]
+async fn test_scan_sse_published_on_get() {
+    // GET /api/scan hem HTTP payload hem SSE `scan` olayı yayar.
+    // SSE kanalı doğrudan gözlenir (broadcast subscriber).
+    let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let tmp = std::env::temp_dir().join("rgsx_contract_scan_sse");
+    let _ = std::fs::create_dir_all(&tmp);
+    std::env::set_var("RGSX_ROMS_FOLDER", &tmp);
+    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(16);
+    let data = StateData::empty();
+    // scan endpoint state.events üzerinden publish eder → custom channel ver
+    let state = AppState::with_data(data, tx.clone());
+    let app = router(state.clone());
+    // SSE abonesi önceden hazır
+    let mut sub = tx.subscribe();
+    let (status, _, body) = call_get(app, "/api/scan").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], json!(true));
+    // SSE olayı gelmiş olmalı (timeout 1s)
+    let raw = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        .await
+        .expect("scan SSE timeout")
+        .expect("scan SSE recv");
+    assert!(raw.starts_with("event: scan\n"), "got: {raw:?}");
+    assert!(raw.contains("\"root\"") && raw.contains("\"platforms\""));
+}

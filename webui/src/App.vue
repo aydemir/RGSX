@@ -29,6 +29,7 @@ const games = ref([])
 const gameStatuses = ref({}) // stem -> { status, progress, platform }
 const catalogLoading = ref(false)
 const catalogError = ref('')
+const scanResult = ref(null)
 
 // --- Catalog bootstrap (012h) — TVUI ile birebir aynı state makinesi ---
 // ready (katalog hazır) / offline (kullanıcı çevrimdışı devam etti) / error (başarısız).
@@ -232,6 +233,13 @@ onMounted(async () => {
       lastEvent.value = 'manager_update'
       applyManagerUpdate(data)
     },
+    // TASK-008 Faz 1: /api/scan SSE olayı — backend scan() her GET'te
+    // aynı payload'u hem HTTP hem SSE ile yayar; diğer sekmeler HTTP'e
+    // gerek kalmadan canlı güncelleme alır.
+    scan: (data) => {
+      lastEvent.value = 'scan'
+      scanResult.value = data
+    },
     // 012h: katalog bootstrap ilerlemesi (download % / extract / ready).
     // TVUI net.rs apply_catalog_update ile aynı sözleşme.
     catalog_update: (data) => {
@@ -397,13 +405,25 @@ function catalogStatus(g) {
 // Yeşil göstergenin refresh'e dayanıklı olması için: sunucu `data.downloaded`'ı startup'ta
 // disk taramasıyla (installed_list) doldurur; SSE snapshot'ı bunu her bağlantıda tekrar gönderir.
 // Böylece `/api/game-status` yeniden çekilmeden de yeşil korunur.
+// TASK-008: backend `downloaded` kanonik shape'i `{platform:[names]}`; ancak eski
+// `{name:{status,platform}}` shape'i de tolere edilir (defensive, drift koruması).
 function isDownloadedInSnapshot(g) {
   const dl = snapshot.downloaded || {}
   const gstem = stem(g.name)
   const glow = String(g.name).toLowerCase()
-  for (const names of Object.values(dl)) {
-    if (Array.isArray(names) && names.some((n) => stem(n) === gstem || String(n).toLowerCase() === glow)) return true
+  for (const [plat, names] of Object.entries(dl)) {
+    if (Array.isArray(names)) {
+      if (names.some((n) => stem(n) === gstem || String(n).toLowerCase() === glow)) return true
+    } else if (names && typeof names === 'object' && names.status === 'downloaded') {
+      // Eski/yanlış shape `{name:{status,platform}}` defensive toleransı
+      const n = names.name || plat
+      if (stem(n) === gstem || String(n).toLowerCase() === glow) return true
+    }
   }
+  // dl doğrudan `{name:{status,platform}}` ise key'ler oyun adıdır
+  if (dl[g.name] && dl[g.name].status === 'downloaded') return true
+  if (dl[glow] && dl[glow].status === 'downloaded') return true
+  if (dl[gstem] && dl[gstem].status === 'downloaded') return true
   return false
 }
 
@@ -693,6 +713,9 @@ async function clearHistory() {
 // Faz A parity: aynı dosya gameStatuses'ta 2 anahtarla (stem + lowercase) ve
 // snapshot.downloaded'da gerçek adıyla düşer → 3 ayrı satır görünür. Normalize
 // anahtar (platform | stem(name).toLowerCase) ile birleştirip TEK satıra indir.
+// TASK-008: kanonik SSE `downloaded` shape'i `{platform:[names]}`; `game_statuses`
+// shape'i (`{name:{status,platform}}`) yalnız `/api/game-status` için. Frontend
+// her iki shape'i de tolere eder (defensive) — drift'e rağmen İndirilenler boş kalmaz.
 const downloadedItems = computed(() => {
   const map = {}
   const norm = (plat, name) => (plat || '') + '|' + stem(name)
@@ -704,10 +727,16 @@ const downloadedItems = computed(() => {
     }
   }
   const dl = snapshot.downloaded || {}
-  for (const [plat, names] of Object.entries(dl)) {
-    for (const n of (names || [])) {
-      const key = norm(plat, n)
-      if (!map[key]) map[key] = { name: n, platform: plat }
+  for (const [k, v] of Object.entries(dl)) {
+    if (Array.isArray(v)) {
+      for (const n of v) {
+        const key = norm(k, n)
+        if (!map[key]) map[key] = { name: n, platform: k }
+      }
+    } else if (v && typeof v === 'object' && v.status === 'downloaded') {
+      // Defensive: eski `{name:{status,platform}}` shape'i SSE'ye karışmışsa
+      const key = norm(v.platform || '', v.name || k)
+      if (!map[key]) map[key] = { name: v.name || k, platform: v.platform || '' }
     }
   }
   return Object.values(map)
