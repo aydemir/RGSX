@@ -3,6 +3,7 @@
 //! `tvui.py` `config.menu_state` dispatch'inin tip-güvenli Rust karşılığı.
 //! SDL yalnız piksel işi yapar; karar/test edilebilir her şey burada, SDL'siz.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::net::{PlatformTile, TvuiState, UiAction, UiKey};
@@ -39,9 +40,11 @@ pub struct TvuiScreen {
     /// Platform ızgarası (TvuiState.platforms ile senkron tutulur).
     pub platforms: Vec<PlatformTile>,
     pub selected_platform: usize,
-    /// Seçili platformun oyun listesi.
+    /// Seçili platformun oyun listesi (net.games ile senkron).
     pub games: Vec<GameRow>,
     pub selected_game: usize,
+    /// Faz 4: canlı progress haritası (net.progress ile senkron).
+    pub progress: HashMap<String, serde_json::Value>,
     /// SSE/loading tarafı (net::TvuiState ile senkron).
     pub net: TvuiState,
     /// Son key-repeat zaman damgası (Python `process_key_repeats` parity).
@@ -57,6 +60,7 @@ impl Default for TvuiScreen {
             selected_platform: 0,
             games: Vec::new(),
             selected_game: 0,
+            progress: HashMap::new(),
             net: TvuiState::default(),
             last_key: None,
             last_at: None,
@@ -89,6 +93,25 @@ impl TvuiScreen {
             }
         } else if self.net.loading {
             self.menu = MenuState::Loading;
+        }
+        // Faz 4: oyun listesi ve progress senkronu (net → screen)
+        if !self.net.games.is_empty() {
+            self.games = self
+                .net
+                .games
+                .iter()
+                .map(|g| GameRow {
+                    name: g.name.clone(),
+                    size: g.size.clone(),
+                    url: g.url.clone(),
+                })
+                .collect();
+            if self.selected_game >= self.games.len() {
+                self.selected_game = 0;
+            }
+        }
+        if !self.net.progress.is_empty() {
+            self.progress = self.net.progress.clone();
         }
     }
 
@@ -212,12 +235,22 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                 None
             }
             UiKey::Confirm => {
-                // Oyunu indirme tetikle — Progress'e geç (SSE progress akışı)
+                // Oyunu indirme tetikle — Progress'e geç (SSE progress akışı) + download action
                 if screen.games.is_empty() {
                     return None;
                 }
+                let g = &screen.games[screen.selected_game];
+                let plat = screen
+                    .platforms
+                    .get(screen.selected_platform)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
                 screen.menu = MenuState::Progress;
-                None
+                return Some(UiAction::DownloadGame {
+                    url: g.url.clone(),
+                    platform: plat,
+                    game_name: g.name.clone(),
+                });
             }
             UiKey::Back => {
                 screen.menu = MenuState::PlatformGrid;

@@ -4,6 +4,7 @@
 //! paylasilan `TvuiState`'e yazar. SDL2 dongusu bunu okuyup loading bar'ini cizer.
 //! Senkron olmasi bilincli: SDL2 event loop tek thread, async/tokio agirligi gereksiz.
 
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -40,6 +41,14 @@ fn api_agent() -> ureq::Agent {
         .build()
 }
 
+/// Oyun satırı (Faz 4: `/api/games/{platform}`).
+#[derive(Debug, Clone, Default)]
+pub struct GameRow {
+    pub name: String,
+    pub size: String,
+    pub url: String,
+}
+
 /// TVUI acilis durumu (loading bar kaynagi). SDL2 dongusu ile SSE thread'i
 /// arasinda `Arc<Mutex<>>` ile paylasilir.
 #[derive(Debug, Clone, Default)]
@@ -51,6 +60,10 @@ pub struct TvuiState {
     pub error: Option<String>,
     /// `ready` olunca `/api/platforms`'tan çekilen platformlar (grid kaynağı).
     pub platforms: Vec<PlatformTile>,
+    /// Faz 4: seçili platformun oyun listesi (`/api/games`).
+    pub games: Vec<GameRow>,
+    /// Faz 4: canlı ilerleme haritası (`progress` SSE: url → {progress,status}).
+    pub progress: HashMap<String, serde_json::Value>,
     /// TASK-012m — manager self-update mevcutsa versiyon (placeholder prompt için).
     pub update_available: Option<String>,
     /// TASK-012m Faz 5 — self-update akış aşaması:
@@ -192,16 +205,63 @@ fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
     }
 }
 
+/// Faz 4: `/api/games/{platform}` yanıtını (`{games:[{name,size,url}]}`) listeye çözer.
+pub fn parse_games(v: &serde_json::Value) -> Vec<GameRow> {
+    v.get("games")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|g| GameRow {
+                    name: g.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    size: g.get("size").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    url: g.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Faz 4: seçili platformun oyunlarını çeker. Hata/boş → boş liste.
+pub fn fetch_games(port: u16, platform: &str) -> Vec<GameRow> {
+    let enc: String = percent_encoding::utf8_percent_encode(platform, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let url = format!("http://127.0.0.1:{port}/api/games/{enc}");
+    match api_agent().get(&url).call() {
+        Ok(r) => r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .map(|v| parse_games(&v))
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Faz 4: `progress` SSE olayını (`{progress:{url:{progress,status}}}`) uygular.
+fn apply_progress(state: &SharedTvuiState, data: &serde_json::Value) {
+    let Some(map) = data.get("progress").and_then(|v| v.as_object()) else {
+        return;
+    };
+    let mut s = tvui_lock(state);
+    for (k, v) in map {
+        s.progress.insert(k.clone(), v.clone());
+    }
+}
+
 // ===== TASK-012-gap-01 Faz B — SDL'siz UI karar katmanı (bulgu 15) =====
 
 /// Shell'in üretebileceği yüksek seviye aksiyonlar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiAction {
     RetryCatalog,
     ContinueOffline,
     UpdateDownload,
     UpdateApply,
     UpdateCancel,
+    DownloadGame {
+        url: String,
+        platform: String,
+        game_name: String,
+    },
 }
 
 /// Fiziksel tuşların (`Keycode`) shell tarafından çevrildiği semantik tuşlar.
@@ -316,6 +376,17 @@ pub fn apply_ui_action(state: &SharedTvuiState, action: UiAction) {
                 let port = tvui_lock(&st).port;
                 let r = trigger_update_cancel(port);
                 eprintln!("TVUI güncelleme iptal: {}", r.message);
+            });
+        }
+        UiAction::DownloadGame { url, platform, game_name } => {
+            let st = Arc::clone(state);
+            let u = url.clone();
+            let p = platform.clone();
+            let g = game_name.clone();
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_game_download(port, &u, &p, &g);
+                eprintln!("TVUI game download: {}", r.message);
             });
         }
     }
@@ -469,6 +540,41 @@ pub fn trigger_update_cancel(port: u16) -> TriggerResult {
     {
         Ok(_) => TriggerResult::new(true, "indirme iptal edildi"),
         Err(e) => TriggerResult::new(false, format!("iptal hatası: {e}")),
+    }
+}
+
+/// Faz 4: seçili oyunu indirmeye alır (`/api/download`).
+pub fn trigger_game_download(port: u16, url: &str, platform: &str, game_name: &str) -> TriggerResult {
+    let api = format!("http://127.0.0.1:{port}/api/download");
+    let body = serde_json::json!({ "url": url, "platform": platform, "game_name": game_name });
+    match api_agent()
+        .post(&api)
+        .set("Content-Type", "application/json")
+        .send_string(&body.to_string())
+    {
+        Ok(r) => match r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(v) => {
+                let ok = v.get("success").and_then(|x| x.as_bool()).unwrap_or(false)
+                    || v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+                if ok {
+                    TriggerResult::new(true, "indirme kuyruğa alındı")
+                } else {
+                    TriggerResult::new(
+                        false,
+                        format!(
+                            "hata: {}",
+                            v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+                        ),
+                    )
+                }
+            }
+            None => TriggerResult::new(false, "yanıt çözülemedi"),
+        },
+        Err(e) => TriggerResult::new(false, format!("istek hatası: {e}")),
     }
 }
 
@@ -632,8 +738,11 @@ fn handle_sse_frame(acc: &str, port: u16, state: &SharedTvuiState, shutdown: &At
                 // hazır olduğunu görür ve loading bar'ını kapatır (catalog_update kaçırılsa da).
                 apply_snapshot(state, &data);
                 apply_manager_update(state, &data);
+                // Faz 4: snapshot progress'i de canlı map'e yaz (yeniden bağlanan istemci)
+                apply_progress(state, &data);
             }
             "manager_update" => apply_manager_update(state, &data),
+            "progress" => apply_progress(state, &data),
             // Faz C (bulgu 9): gilrs tabanlı native gamepad SSE üzerinden shell'e gelir.
             "gamepad" => match gamepad_event_to_key(&data) {
                 Some(GamepadIntent::Exit) => shutdown.store(true, Ordering::Relaxed),

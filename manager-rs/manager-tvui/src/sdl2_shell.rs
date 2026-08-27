@@ -5,6 +5,7 @@
 //! paletiyle arka plan gradyanını çizer (tema yüklendi kanıtı: `fond_lignes` çerçeve).
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use sdl2::event::Event;
@@ -199,6 +200,93 @@ fn draw_grid(
     }
 }
 
+/// Faz 4: oyun listesi (seçili platformun oyunları). Seçili satır `border_selected`.
+fn draw_game_list(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+) {
+    if screen.games.is_empty() {
+        // Boş liste: ortada çerçeve (veri yok)
+        let bw = ((w as i32) * 60 / 100).max(40) as u32;
+        let bh: u32 = 48;
+        let x = ((w as i32 - bw as i32) / 2).max(0) as i32;
+        let y = (h as i32 / 2).max(0) as i32;
+        canvas.set_draw_color(to_color(theme.color("button_idle")));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bw, bh));
+        return;
+    }
+    let row_h: u32 = 36;
+    let gap: u32 = 4;
+    let margin: u32 = 40;
+    let avail_h = h.saturating_sub(margin * 2 + 40);
+    let visible = (avail_h / (row_h + gap)) as usize;
+    let start = screen.selected_game.saturating_sub(visible / 2).min(screen.games.len().saturating_sub(visible));
+    let end = (start + visible).min(screen.games.len());
+    let mut y = margin as i32 + 20;
+    for (idx, g) in screen.games[start..end].iter().enumerate() {
+        let abs_idx = start + idx;
+        let is_sel = abs_idx == screen.selected_game;
+        let row_color = if is_sel {
+            theme.color("button_selected")
+        } else {
+            theme.color("button_idle")
+        };
+        let border = if is_sel {
+            theme.color("border_selected")
+        } else {
+            theme.color("border")
+        };
+        canvas.set_draw_color(to_color(row_color));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(margin as i32, y, w - margin * 2, row_h));
+        canvas.set_draw_color(to_color(border));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(margin as i32, y, w - margin * 2, row_h));
+        // Progress varsa iç dolgu (neon)
+        if let Some(p) = screen.progress.get(&g.url) {
+            if let Some(pct) = p.get("progress").and_then(|v| v.as_f64()) {
+                let fill_w = ((w - margin * 2) as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
+                if fill_w > 0 {
+                    canvas.set_draw_color(to_color(theme.color("neon")));
+                    let _ = canvas.fill_rect(sdl2::rect::Rect::new(margin as i32, y, fill_w, row_h));
+                }
+            }
+        }
+        y += (row_h + gap) as i32;
+    }
+}
+
+/// Faz 4: progress ekranı — seçili oyunun indirme ilerlemesi (SSE progress map).
+fn draw_progress_screen(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+) {
+    let bar_w = ((w as i32) * 70 / 100).max(40) as u32;
+    let bar_h: u32 = 28;
+    let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
+    let y = (h as i32 / 2).max(0) as i32;
+    // Arka plan çerçeve
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+    // Seçili oyunun progress'i
+    if let Some(g) = screen.games.get(screen.selected_game) {
+        if let Some(p) = screen.progress.get(&g.url) {
+            let pct = p.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 100.0) as f32 / 100.0;
+            let fill_w = (bar_w as f32 * pct) as u32;
+            if fill_w > 0 {
+                canvas.set_draw_color(to_color(theme.color("neon")));
+                let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w, bar_h));
+            }
+            return;
+        }
+    }
+    // Genel queue progress yoksa neon çerçeve
+    canvas.set_draw_color(to_color(theme.color("neon")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+}
+
 /// TASK-012m Faz 5 — self-update banner (metin yok; ttf erte). Aşamaya göre renk:
 /// `available`=warning_text (turuncu — bulgu 10 fix), `downloading`=neon (mavi,
 /// iç dolgu=percent), `ready`=success (yeşil), `failed`=error_text (kırmızı).
@@ -361,7 +449,7 @@ pub fn run_native_shell(
                             continue;
                         }
                     }
-                    // Nav/page/Back → state reducer (Faz 3)
+                    // Nav/page/Back → state reducer (Faz 3+4)
                     let nav_key = match kc {
                         Keycode::Up => Some(UiKey::NavUp),
                         Keycode::Down => Some(UiKey::NavDown),
@@ -374,8 +462,28 @@ pub fn run_native_shell(
                         _ => None,
                     };
                     if let Some(k) = nav_key {
-                        let _ = crate::state::reduce(&mut screen, k, now);
-                        // Confirm ile GameList'e geçildiyse gelecek fazda oyun yükleme tetiklenir
+                        let prev_menu = screen.menu.clone();
+                        if let Some(action) = crate::state::reduce(&mut screen, k, now) {
+                            apply_ui_action(state, action);
+                        }
+                        // Faz 4: PlatformGrid→GameList geçişinde oyunları çek
+                        if matches!(prev_menu, MenuState::PlatformGrid)
+                            && matches!(screen.menu, MenuState::GameList)
+                            && screen.games.is_empty()
+                        {
+                            let plat = screen
+                                .platforms
+                                .get(screen.selected_platform)
+                                .map(|p| p.name.clone())
+                                .unwrap_or_default();
+                            if !plat.is_empty() {
+                                let st = Arc::clone(state);
+                                std::thread::spawn(move || {
+                                    let games = crate::net::fetch_games(tvui_lock(&st).port, &plat);
+                                    tvui_lock(&st).games = games;
+                                });
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -393,18 +501,17 @@ pub fn run_native_shell(
         if restarting {
             draw_restart_screen(&mut canvas, theme, dims);
         } else {
-            // screen.menu üzerinden çizim (Faz 3: PlatformGrid nav vurgulu)
+            // screen.menu üzerinden çizim (Faz 3/4)
             match screen.menu {
                 MenuState::PlatformGrid => draw_grid(&mut canvas, theme, state, &screen, dims),
-                MenuState::GameList => draw_grid(&mut canvas, theme, state, &screen, dims), // Faz 4'te game_list
+                MenuState::GameList => draw_game_list(&mut canvas, theme, &screen, dims),
                 MenuState::Loading | MenuState::Error(_) => draw_loading(&mut canvas, theme, state, dims),
                 MenuState::ConfirmExit => {
-                    // Geçici: grid üzerine yarı saydam ConfirmExit (metin TTF ile Faz 4)
                     draw_grid(&mut canvas, theme, state, &screen, dims);
                     canvas.set_draw_color(to_color(theme.color("warning_text")));
                     let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
                 }
-                MenuState::Progress => draw_grid(&mut canvas, theme, state, &screen, dims),
+                MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims),
             }
         }
         canvas.present();

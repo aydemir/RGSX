@@ -16,6 +16,7 @@ manager-core = { path = "../manager-core" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
+percent-encoding = "2"
 sdl2 = { version = "0.37", default-features = false, features = ["bundled"] }
 # Faz 2c: TVUI SSE istemcisi (senkron, tokio'suz — SDL2 döngüsü bloklayıcı).
 ureq = "2"

@@ -2033,6 +2033,7 @@ dependencies = [
  "gilrs",
  "manager-core",
  "manager-http",
+ "percent-encoding",
  "sdl2",
  "serde",
  "serde_json",
