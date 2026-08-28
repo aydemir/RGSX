@@ -4,6 +4,7 @@
 //! - Faz1: Provider sıralı fallback 1F→AD→DL→RD→TB→FREE, ApiKeys, DedupCache, history fields
 //! - Faz2: 1F direkt `file/info.cgi` → `get_token.cgi` (OF5→OF9) + FREE mode pure helpers
 //!   (wait seconds, visible text, normalize, block reason, form parse, candidate extract, sanitize)
+//! - Faz3: Debrid fallback OFA→OFT (AD/DL/RD/TB) + chain orchestrator, hata haritaları, md5, refresh
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -42,6 +43,12 @@ impl Provider {
     }
     pub fn display_prefix(&self) -> String {
         if *self == Provider::Free { "".into() } else { format!("{}:", self.prefix()) }
+    }
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.prefix())
     }
 }
 
@@ -526,6 +533,478 @@ pub fn extract_free_candidates(html: &str, page_url: &str) -> Vec<String> {
     }).collect()
 }
 
+// ---------------------------------------------------------------------------
+// Faz3: Debrid fallback zinciri OFA→OFT (AD → DL → RD → TB) + chain orchestrator
+// Python one_fichier.py download_from_1fichier OFA..OFT parity.
+// ---------------------------------------------------------------------------
+
+pub const ALLDEBRID_UNLOCK_URL: &str = "https://api.alldebrid.com/v4/link/unlock";
+pub const DEBRIDLINK_ADD_URL: &str = "https://debrid-link.com/api/v2/downloader/add";
+pub const REALDEBRID_UNRESTRICT_URL: &str = "https://api.real-debrid.com/rest/1.0/unrestrict/link";
+pub const TORBOX_CHECKCACHED_URL: &str = "https://api.torbox.app/v1/api/webdl/checkcached";
+pub const TORBOX_CREATE_URL: &str = "https://api.torbox.app/v1/api/webdl/createwebdownload";
+pub const TORBOX_MYLIST_URL: &str = "https://api.torbox.app/v1/api/webdl/mylist";
+pub const TORBOX_REQUESTDL_URL: &str = "https://api.torbox.app/v1/api/webdl/requestdl";
+
+/// Debrid başarı sonucu (filename fallback game_name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebridSuccess {
+    pub provider: Provider,
+    pub filename: String,
+    pub final_url: String,
+}
+
+/// Debrid zinciri hatası (tek provider).
+#[derive(Debug, thiserror::Error)]
+pub enum DebridError {
+    #[error("{provider:?} HTTP {status}: {message}")]
+    Http { provider: Provider, status: u16, message: String, raw: Option<String> },
+    #[error("{provider:?} API: {message} (code={code})")]
+    Api { provider: Provider, code: String, message: String },
+    #[error("{provider:?} ağ hatası: {detail}")]
+    Network { provider: Provider, detail: String },
+    #[error("{provider:?} final_url yok")]
+    MissingUrl { provider: Provider },
+    #[error("{provider:?} bulunamadı: {message}")]
+    NotFound { provider: Provider, message: String },
+}
+
+// ---------- hata haritaları (pure, test edilebilir) ----------
+
+pub fn debridlink_friendly(code: &str) -> String {
+    match code {
+        "badToken" => "DL: Invalid API key".into(),
+        "notDebrid" => "DL: Host unavailable".into(),
+        "hostNotValid" => "DL: Unsupported host".into(),
+        "fileNotFound" => "DL: File not found".into(),
+        "fileNotAvailable" => "DL: File temporarily unavailable".into(),
+        "badFileUrl" => "DL: Invalid link".into(),
+        "badFilePassword" => "DL: Invalid file password".into(),
+        "notFreeHost" => "DL: Premium account only".into(),
+        "maintenanceHost" => "DL: Host in maintenance".into(),
+        "noServerHost" => "DL: No server available".into(),
+        "maxLink" => "DL: Daily link limit reached".into(),
+        "maxLinkHost" => "DL: Daily host limit reached".into(),
+        "maxData" => "DL: Daily data limit reached".into(),
+        "maxDataHost" => "DL: Daily host data limit reached".into(),
+        "disabledServerHost" => "DL: Server or VPN not allowed".into(),
+        "floodDetected" => "DL: Rate limit reached".into(),
+        other => format!("DL: {other}"),
+    }
+}
+
+pub fn realdebrid_friendly(code: i32, api_text: Option<&str>) -> String {
+    let base = match code {
+        1 => "Bad request",
+        2 => "Unsupported hoster",
+        3 => "Temporarily unavailable",
+        4 => "File not found",
+        5 => "Too many requests",
+        6 => "Access denied",
+        8 => "Not premium account",
+        9 => "No traffic left",
+        11 => "Internal error",
+        20 => "Premium account only",
+        _ => return api_text.map(|t| format!("RD: {t}")).unwrap_or_else(|| format!("RD: error {code}")),
+    };
+    // hoster_not_free → Premium account only normalizasyonu (python parity)
+    if let Some(t) = api_text {
+        if t.trim().eq_ignore_ascii_case("hoster_not_free") {
+            return "RD: Premium account only".into();
+        }
+        // api_text already mapped? we return base
+        let _ = t;
+    }
+    format!("RD: {base}")
+}
+
+pub fn torbox_friendly(code: &str, detail: Option<&str>) -> String {
+    match code {
+        "BAD_TOKEN" => "TB: Invalid API key".into(),
+        "AUTH_ERROR" => "TB: Authentication error".into(),
+        "NO_AUTH" => "TB: No credentials provided".into(),
+        "PLAN_RESTRICTED_FEATURE" => "TB: Plan upgrade required".into(),
+        "DOWNLOAD_TOO_LARGE" => "TB: Download too large for plan".into(),
+        "MONTHLY_LIMIT" => "TB: Monthly limit reached".into(),
+        "COOLDOWN_LIMIT" => "TB: Download cooldown active".into(),
+        "ACTIVE_LIMIT" => "TB: Max active downloads reached".into(),
+        "LINK_OFFLINE" => "TB: Link offline or inaccessible".into(),
+        "ITEM_NOT_FOUND" => "TB: Item not found".into(),
+        "NO_SERVERS_AVAILABLE_ERROR" => "TB: No servers available".into(),
+        "DOWNLOAD_SERVER_ERROR" => "TB: Download server error".into(),
+        other => {
+            let d = detail.unwrap_or(other);
+            if d.is_empty() { format!("TB: {other}") } else { format!("TB: {d}") }
+        }
+    }
+}
+
+pub fn md5_hex(s: &str) -> String {
+    let digest = md5::compute(s.as_bytes());
+    format!("{digest:x}")
+}
+
+// ---------- AllDebrid (OFA) ----------
+
+pub async fn alldebrid_unlock(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridSuccess, DebridError> {
+    let link = url.split("&af=").next().unwrap_or(url);
+    let resp = client
+        .get(ALLDEBRID_UNLOCK_URL)
+        .query(&[("agent", "RGSX"), ("apikey", api_key), ("link", link)])
+        .send()
+        .await
+        .map_err(|e| DebridError::Network { provider: Provider::AllDebrid, detail: e.to_string() })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| DebridError::Network { provider: Provider::AllDebrid, detail: e.to_string() })?;
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if status != 200 {
+        return Err(DebridError::Http { provider: Provider::AllDebrid, status, message: format!("AD: HTTP {status}"), raw: Some(text) });
+    }
+    if json.get("status").and_then(|v| v.as_str()) != Some("success") {
+        let raw = text.clone();
+        return Err(DebridError::Api { provider: Provider::AllDebrid, code: raw.clone(), message: format!("AD: {}", json.get("error").or_else(|| json.get("message")).and_then(|v| v.as_str()).unwrap_or(&raw)) });
+    }
+    let data = json.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let final_url = data.get("link").or_else(|| data.get("download")).or_else(|| data.get("streamingLink"))
+        .and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if final_url.is_empty() {
+        return Err(DebridError::MissingUrl { provider: Provider::AllDebrid });
+    }
+    let filename = data.get("filename").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    Ok(DebridSuccess { provider: Provider::AllDebrid, filename, final_url })
+}
+
+/// AllDebrid 503 sonrası link yenileme (OF11a `_refresh_alldebrid_final_url` parity) — unlock'u tekrar çağırır.
+pub async fn refresh_alldebrid_url(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Option<(String, String)> {
+    match alldebrid_unlock(client, api_key, url).await {
+        Ok(s) => Some((s.final_url, s.filename)),
+        Err(_) => None,
+    }
+}
+
+// ---------- Debrid-Link (OFD) ----------
+
+pub async fn debridlink_add(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridSuccess, DebridError> {
+    let link = url.split("&af=").next().unwrap_or(url);
+    let payload = serde_json::json!({ "url": link });
+    let resp = client
+        .post(DEBRIDLINK_ADD_URL)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| DebridError::Network { provider: Provider::DebridLink, detail: e.to_string() })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| DebridError::Network { provider: Provider::DebridLink, detail: e.to_string() })?;
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if json.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        let value = json.get("value").cloned().unwrap_or(serde_json::Value::Null);
+        let final_url = value.get("downloadUrl").or_else(|| value.get("downloadURL")).or_else(|| value.get("link")).or_else(|| value.get("url"))
+            .and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if final_url.is_empty() {
+            return Err(DebridError::MissingUrl { provider: Provider::DebridLink });
+        }
+        let filename = value.get("name").or_else(|| value.get("filename")).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        return Ok(DebridSuccess { provider: Provider::DebridLink, filename, final_url });
+    }
+    // hata yolu
+    let code = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
+    if !code.is_empty() {
+        return Err(DebridError::Api { provider: Provider::DebridLink, code: code.to_string(), message: debridlink_friendly(code) });
+    }
+    if status == 401 {
+        return Err(DebridError::Http { provider: Provider::DebridLink, status, message: "DL: Unauthorized (401)".into(), raw: Some(text) });
+    }
+    if status == 429 {
+        return Err(DebridError::Http { provider: Provider::DebridLink, status, message: "DL: Rate limited (429)".into(), raw: Some(text) });
+    }
+    if status >= 500 {
+        return Err(DebridError::Http { provider: Provider::DebridLink, status, message: format!("DL: Server error ({status})"), raw: Some(text) });
+    }
+    Err(DebridError::Http { provider: Provider::DebridLink, status, message: format!("DL: Unexpected status ({status})"), raw: Some(text) })
+}
+
+// ---------- RealDebrid (OFR) ----------
+
+pub async fn realdebrid_unrestrict(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridSuccess, DebridError> {
+    let link = url.split("&af=").next().unwrap_or(url);
+    let resp = client
+        .post(REALDEBRID_UNRESTRICT_URL)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .form(&[("link", link)])
+        .send()
+        .await
+        .map_err(|e| DebridError::Network { provider: Provider::RealDebrid, detail: e.to_string() })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| DebridError::Network { provider: Provider::RealDebrid, detail: e.to_string() })?;
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if status == 200 {
+        if let Some(dl) = json.get("download").and_then(|v| v.as_str()) {
+            let final_url = dl.trim().to_string();
+            if !final_url.is_empty() {
+                let filename = json.get("filename").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                return Ok(DebridSuccess { provider: Provider::RealDebrid, filename, final_url });
+            }
+        }
+    }
+    // hata parse
+    let mut code_i: Option<i32> = None;
+    let mut api_text: Option<String> = None;
+    if let Some(v) = json.get("error_code") {
+        if let Some(n) = v.as_i64() { code_i = Some(n as i32); }
+        else if let Some(s) = v.as_str() { if let Ok(n) = s.parse::<i32>() { code_i = Some(n); } }
+    }
+    if let Some(s) = json.get("error").and_then(|v| v.as_str()) {
+        // python: error int ise code, string ise message
+        if code_i.is_none() {
+            if let Ok(n) = s.parse::<i32>() { code_i = Some(n); } else { api_text = Some(s.to_string()); }
+        } else {
+            api_text = Some(s.to_string());
+        }
+        if json.get("error_code").is_none() && s.eq_ignore_ascii_case("hoster_not_free") {
+            api_text = Some(s.to_string());
+            if code_i.is_none() { code_i = Some(20); }
+        }
+    }
+    if let Some(c) = code_i {
+        let msg = realdebrid_friendly(c, api_text.as_deref());
+        return Err(DebridError::Api { provider: Provider::RealDebrid, code: c.to_string(), message: msg });
+    }
+    if status == 503 {
+        return Err(DebridError::Http { provider: Provider::RealDebrid, status, message: "RD: service unavailable (503)".into(), raw: Some(text) });
+    }
+    if status >= 500 {
+        return Err(DebridError::Http { provider: Provider::RealDebrid, status, message: format!("RD: server error ({status})"), raw: Some(text) });
+    }
+    if status == 429 {
+        return Err(DebridError::Http { provider: Provider::RealDebrid, status, message: "RD: rate limited (429)".into(), raw: Some(text) });
+    }
+    Err(DebridError::Http { provider: Provider::RealDebrid, status, message: format!("RD: unexpected status ({status})"), raw: Some(text) })
+}
+
+// ---------- TorBox (OFT) ----------
+
+/// TorBox webdl zinciri: checkcached (best-effort) → createwebdownload → poll mylist ≤120s → requestdl.
+pub async fn torbox_webdl(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<DebridSuccess, DebridError> {
+    let link = url.split("&af=").next().unwrap_or(url);
+    let link_hash = md5_hex(link);
+    // Step0 best-effort checkcached (başarısızlık non-fatal)
+    let _ = client
+        .get(TORBOX_CHECKCACHED_URL)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .query(&[("hash", link_hash.as_str()), ("format", "list")])
+        .send()
+        .await;
+
+    // Step1 create
+    let resp = client
+        .post(TORBOX_CREATE_URL)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .form(&[("link", link)])
+        .send()
+        .await
+        .map_err(|e| DebridError::Network { provider: Provider::TorBox, detail: e.to_string() })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| DebridError::Network { provider: Provider::TorBox, detail: e.to_string() })?;
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+
+    let mut webdl_id: Option<i64> = None;
+    let mut err_code: Option<String> = None;
+    let mut err_detail: Option<String> = None;
+
+    if json.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        if let Some(data) = json.get("data") {
+            webdl_id = data.get("webdl_id").or_else(|| data.get("id")).and_then(|v| v.as_i64());
+        }
+    } else if json.get("error").and_then(|v| v.as_str()) == Some("DUPLICATE_ITEM") {
+        if let Some(data) = json.get("data") {
+            webdl_id = data.get("webdl_id").or_else(|| data.get("id")).and_then(|v| v.as_i64());
+        }
+        if webdl_id.is_none() {
+            // mylist'te hash'e göre ara
+            if let Ok(list_resp) = client.get(TORBOX_MYLIST_URL).header("Authorization", format!("Bearer {api_key}")).send().await {
+                if let Ok(t) = list_resp.text().await {
+                    if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t) {
+                        if j.get("success").and_then(|v| v.as_bool()) == Some(true) {
+                            if let Some(arr) = j.get("data").and_then(|v| v.as_array()) {
+                                for item in arr {
+                                    let h = item.get("hash").and_then(|v| v.as_str()).unwrap_or("");
+                                    let orig = item.get("original_url").and_then(|v| v.as_str()).unwrap_or("");
+                                    if h == link_hash || orig == link {
+                                        webdl_id = item.get("id").and_then(|v| v.as_i64());
+                                        if webdl_id.is_some() { break; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if webdl_id.is_none() {
+            err_code = Some("DUPLICATE_ITEM".into());
+        }
+    } else {
+        err_code = json.get("error").and_then(|v| v.as_str()).map(|s| s.to_string());
+        err_detail = json.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string());
+        if err_code.is_none() && status != 200 {
+            err_code = Some(format!("HTTP_{status}"));
+        }
+    }
+
+    if let Some(c) = err_code.clone() {
+        let msg = torbox_friendly(&c, err_detail.as_deref());
+        return Err(DebridError::Api { provider: Provider::TorBox, code: c, message: msg });
+    }
+    let wid = match webdl_id {
+        Some(id) => id,
+        None => {
+            if status == 403 {
+                return Err(DebridError::Http { provider: Provider::TorBox, status, message: "TB: Authentication failed (403)".into(), raw: Some(text) });
+            }
+            if status == 429 {
+                return Err(DebridError::Http { provider: Provider::TorBox, status, message: "TB: Rate limited (429)".into(), raw: Some(text) });
+            }
+            if status >= 500 {
+                return Err(DebridError::Http { provider: Provider::TorBox, status, message: format!("TB: Server error ({status})"), raw: Some(text) });
+            }
+            return Err(DebridError::Api { provider: Provider::TorBox, code: "NO_WEBDL_ID".into(), message: "TB: No webdl_id returned".into() });
+        }
+    };
+
+    // Step2 poll mylist ≤120s, 3s interval
+    let poll_deadline = std::time::Instant::now() + Duration::from_secs(120);
+    let mut filename_hint = String::new();
+    let mut ready = false;
+    while std::time::Instant::now() < poll_deadline {
+        let pr = client
+            .get(TORBOX_MYLIST_URL)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .query(&[("id", wid.to_string())])
+            .send()
+            .await
+            .map_err(|e| DebridError::Network { provider: Provider::TorBox, detail: e.to_string() })?;
+        let t = pr.text().await.map_err(|e| DebridError::Network { provider: Provider::TorBox, detail: e.to_string() })?;
+        let j: serde_json::Value = serde_json::from_str(&t).unwrap_or(serde_json::Value::Null);
+        if j.get("success").and_then(|v| v.as_bool()) == Some(true) {
+            if let Some(data) = j.get("data") {
+                let item = if let Some(arr) = data.as_array() { arr.first().cloned().unwrap_or(serde_json::Value::Null) } else { data.clone() };
+                let state = item.get("download_state").and_then(|v| v.as_str()).unwrap_or("");
+                let finished = item.get("download_finished").and_then(|v| v.as_bool()).unwrap_or(false);
+                if ["cached","completed","uploading","done"].contains(&state) || finished {
+                    filename_hint = item.get("name").or_else(|| item.get("original_name")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    ready = true;
+                    break;
+                }
+                if ["error","failed","stalled"].contains(&state) {
+                    return Err(DebridError::Api { provider: Provider::TorBox, code: state.to_string(), message: format!("TB: Download failed ({state})") });
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    if !ready {
+        return Err(DebridError::Api { provider: Provider::TorBox, code: "TIMEOUT".into(), message: "TB: Download not ready (timeout)".into() });
+    }
+
+    // Step3 requestdl
+    let dr = client
+        .get(TORBOX_REQUESTDL_URL)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .query(&[("token", api_key), ("web_id", &wid.to_string()), ("file_id", "0")])
+        .send()
+        .await
+        .map_err(|e| DebridError::Network { provider: Provider::TorBox, detail: e.to_string() })?;
+    let t = dr.text().await.map_err(|e| DebridError::Network { provider: Provider::TorBox, detail: e.to_string() })?;
+    let j: serde_json::Value = serde_json::from_str(&t).unwrap_or(serde_json::Value::Null);
+    if j.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        if let Some(data) = j.get("data").and_then(|v| v.as_str()) {
+            if !data.trim().is_empty() {
+                return Ok(DebridSuccess { provider: Provider::TorBox, filename: filename_hint, final_url: data.trim().to_string() });
+            }
+        }
+    }
+    let c = j.get("error").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+    let d = j.get("detail").and_then(|v| v.as_str());
+    Err(DebridError::Api { provider: Provider::TorBox, code: c.to_string(), message: torbox_friendly(c, d) })
+}
+
+// ---------- Zincir orchestrator (OF0→OFF) ----------
+
+#[derive(Debug)]
+pub enum ChainOutcome {
+    Debrid(DebridSuccess),
+    Free, // tüm debrid'ler başarısız → FREE scrape'e düş
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ChainError {
+    #[error("tüm provider'lar başarısız: {0}")]
+    AllFailed(String),
+}
+
+/// Sıralı fallback: 1F (info+token) → AD → DL → RD → TB → FREE. İlk başarı döner; hepsi başarısızsa Free.
+pub async fn resolve_chain(
+    client: &reqwest::Client,
+    keys: &ApiKeys,
+    url: &str,
+) -> Result<ChainOutcome, ChainError> {
+    // 1F
+    if keys.has(Provider::OneFichier) {
+        match onefichier_direct_url(client, &keys.onefichier, url).await {
+            Ok((filename, _size, final_url)) => return Ok(ChainOutcome::Debrid(DebridSuccess { provider: Provider::OneFichier, filename, final_url })),
+            Err(_) => {} // fallback
+        }
+    }
+    // AllDebrid
+    if keys.has(Provider::AllDebrid) {
+        if let Ok(s) = alldebrid_unlock(client, &keys.alldebrid, url).await {
+            return Ok(ChainOutcome::Debrid(s));
+        }
+    }
+    // DebridLink
+    if keys.has(Provider::DebridLink) {
+        if let Ok(s) = debridlink_add(client, &keys.debridlink, url).await {
+            return Ok(ChainOutcome::Debrid(s));
+        }
+    }
+    // RealDebrid
+    if keys.has(Provider::RealDebrid) {
+        if let Ok(s) = realdebrid_unrestrict(client, &keys.realdebrid, url).await {
+            return Ok(ChainOutcome::Debrid(s));
+        }
+    }
+    // TorBox
+    if keys.has(Provider::TorBox) {
+        if let Ok(s) = torbox_webdl(client, &keys.torbox, url).await {
+            return Ok(ChainOutcome::Debrid(s));
+        }
+    }
+    // FREE fallback (her zaman var)
+    Ok(ChainOutcome::Free)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +1137,42 @@ mod tests {
         assert_eq!(sanitize_filename("a/b\\c:d.txt"), "a_b_c_d.txt");
         assert_eq!(sanitize_filename("  "), "_");
         assert_eq!(sanitize_filename("game.zip"), "game.zip");
+    }
+
+    // --- Faz3 pure helpers ---
+
+    #[test]
+    fn debridlink_map() {
+        assert_eq!(debridlink_friendly("badToken"), "DL: Invalid API key");
+        assert_eq!(debridlink_friendly("maxLink"), "DL: Daily link limit reached");
+        assert_eq!(debridlink_friendly("unknownXYZ"), "DL: unknownXYZ");
+    }
+
+    #[test]
+    fn realdebrid_map() {
+        assert_eq!(realdebrid_friendly(4, None), "RD: File not found");
+        assert_eq!(realdebrid_friendly(20, None), "RD: Premium account only");
+        assert_eq!(realdebrid_friendly(20, Some("hoster_not_free")), "RD: Premium account only");
+        assert_eq!(realdebrid_friendly(999, Some("custom err")), "RD: custom err");
+    }
+
+    #[test]
+    fn torbox_map() {
+        assert_eq!(torbox_friendly("BAD_TOKEN", None), "TB: Invalid API key");
+        assert_eq!(torbox_friendly("LINK_OFFLINE", None), "TB: Link offline or inaccessible");
+        assert_eq!(torbox_friendly("CUSTOM", Some("detail text")), "TB: detail text");
+    }
+
+    #[test]
+    fn md5_hex_known() {
+        assert_eq!(md5_hex("hello"), "5d41402abc4b2a76b9719d911017c592");
+        assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
+    }
+
+    #[test]
+    fn chain_available_order() {
+        let keys = ApiKeys { onefichier: "".into(), alldebrid: "a".into(), debridlink: "".into(), realdebrid: "r".into(), torbox: "".into() };
+        let avail = keys.available_providers();
+        assert_eq!(avail, vec![Provider::AllDebrid, Provider::RealDebrid, Provider::Free]);
     }
 }

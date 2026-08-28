@@ -18,6 +18,7 @@ bytes = "1"
 regex.workspace = true
 url.workspace = true
 unicode-normalization = "0.1"
+md5 = "0.7"
 manager-core = { workspace = true }
 
 [dev-dependencies]
