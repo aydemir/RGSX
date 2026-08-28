@@ -17,6 +17,7 @@ percent-encoding = "2"
 bytes = "1"
 regex.workspace = true
 url.workspace = true
+unicode-normalization = "0.1"
 manager-core = { workspace = true }
 
 [dev-dependencies]

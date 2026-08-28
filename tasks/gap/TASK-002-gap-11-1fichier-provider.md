@@ -60,3 +60,4 @@ ya da daemon/HTTP sözleşmesine eklenmelidir.
 ## İlerleme
 
 - 2026-08-27 — Faz1: `manager-download/src/one_fichier.rs` (Provider enum 1F→FREE, ApiKeys env/file, DedupCache 1800s, history_provider_fields, 5 test) + `lib.rs` mod export, 34 lib + 14 http_integration yeşil
+- 2026-08-28 — Faz2: `one_fichier.rs` OF5→OF9 1F direkt `file/info.cgi`→`get_token.cgi` (`onefichier_file_info`/`onefichier_get_token`/`onefichier_direct_url`, `OneFichierFileInfo`/`OneFichierDirectError`, `sanitize_filename`, 403/401/500 friendly msg, Resource not found, Bad token/Premium haritaları) + OFF FREE pure helpers (`extract_wait_seconds`, `extract_visible_text`, `normalize_1fichier_text`, `extract_free_block_reason`, `parse_free_form_data`, `extract_free_candidates`, html_unescape, upgrade advice), +11 test (wait ct_mul/min/sec, visible, normalize, block_reason×3, form, candidates, sanitize), Cargo `unicode-normalization`, 45 lib + 14 http_integration yeşil
