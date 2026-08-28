@@ -1005,6 +1005,215 @@ pub async fn resolve_chain(
     Ok(ChainOutcome::Free)
 }
 
+// ---------------------------------------------------------------------------
+// Faz4: OneFichier final_url indirme motoru OFD2→OF18 (HEAD atlama, varlık kontrol,
+// 10x retry + 3 header variant + Range resume + AD 503 refresh + disk + .part
+// + cancel + force_extract). Python OF11..OF18 parity.
+// ---------------------------------------------------------------------------
+
+use std::path::{Path, PathBuf};
+
+/// 1Fichier final_url için header varyantları (OF11 Python `download_header_variants` parity).
+/// 3 varyant: browser default → browser Accept:*/* → curl.
+pub fn onefichier_header_variants() -> Vec<Vec<(String, String)>> {
+    let base = crate::http::default_browser_headers(None);
+    let v0 = base.clone();
+    let mut v1 = base.clone();
+    let mut found = false;
+    for (k, v) in &mut v1 {
+        if k.eq_ignore_ascii_case("Accept") { *v = "*/*".into(); found = true; }
+    }
+    if !found { v1.push(("Accept".into(), "*/*".into())); }
+    let v2 = vec![
+        ("User-Agent".into(), "curl/8.4.0".into()),
+        ("Accept".into(), "*/*".into()),
+        ("Accept-Encoding".into(), "identity".into()),
+        ("Connection".into(), "keep-alive".into()),
+    ];
+    vec![v0, v1, v2]
+}
+
+/// AD/DL/RD için HEAD atlanmalı (geçici/tek kullanımlık URL — Python OFD2 parity).
+pub fn should_skip_head_for_provider(provider: Provider) -> bool {
+    matches!(provider, Provider::AllDebrid | Provider::DebridLink | Provider::RealDebrid)
+}
+
+/// HEAD ile remote_size al (transient provider'da None döner — atlama).
+pub async fn head_remote_size(
+    client: &reqwest::Client,
+    final_url: &str,
+    provider: Provider,
+) -> Option<u64> {
+    if should_skip_head_for_provider(provider) { return None; }
+    let resp = client.head(final_url).send().await.ok()?;
+    if !resp.status().is_success() { return None; }
+    resp.headers().get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
+/// Mevcut dosya durumu (OF10 parity).
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExistingStatus {
+    NotExists,
+    ExistsAndMatches,
+    ExistsButMismatch,
+}
+
+pub fn existing_file_status(dest_path: &Path, remote_size: Option<u64>) -> ExistingStatus {
+    match std::fs::metadata(dest_path) {
+        Ok(m) => {
+            if let Some(rs) = remote_size {
+                if m.len() == rs { ExistingStatus::ExistsAndMatches } else { ExistingStatus::ExistsButMismatch }
+            } else {
+                // lolroms gibi doğrulanamaz durumda varsa kabul (python H1l parity) — ama 1fichier için size biliniyorsa mismatch say
+                ExistingStatus::ExistsAndMatches
+            }
+        }
+        Err(_) => ExistingStatus::NotExists,
+    }
+}
+
+/// Aynı taban adla farklı uzantıda dosya var mı? (OF8b/OF10 alternative parity). `None` → yok.
+pub fn find_same_stem_existing(dest_dir: &Path, sanitized_filename: &str, remote_size: Option<u64>) -> Option<PathBuf> {
+    let stem = Path::new(sanitized_filename).file_stem()?.to_str()?;
+    let dir = std::fs::read_dir(dest_dir).ok()?;
+    for entry in dir.flatten() {
+        let p = entry.path();
+        if !p.is_file() { continue; }
+        let s = p.file_stem()?.to_str()?;
+        if s == stem {
+            // Boyut kontrolü
+            if let Some(rs) = remote_size {
+                if let Ok(m) = std::fs::metadata(&p) {
+                    if m.len() != rs { continue; } // mismatch → indirme devam etmeli, bu dosyayı atlama
+                }
+            }
+            if p.file_name()?.to_str()? != sanitized_filename {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// `force_extract` kararı (OF17 parity): `is_zip_non_supported && auto_extract` VEYA PS3 redump + auto_extract.
+pub fn decide_force_extract(
+    is_zip_non_supported: bool,
+    auto_extract: bool,
+    platform_folder: &str,
+    platform: &str,
+) -> bool {
+    if !auto_extract { return false; }
+    if is_zip_non_supported { return true; }
+    manager_core::extract::is_ps3_redump_target(platform_folder, platform)
+}
+
+/// Faz4 ana indirme: final_url → dest_path, 10x retry, Range resume, AD 503 refresh, disk/precheck, .part→replace.
+/// Python OF11..OF15 parity. `retry_delay` üretimde 10s, testte küçük tutulabilir.
+pub async fn download_onefichier_final_url(
+    client: &reqwest::Client,
+    final_url: &str,
+    dest_path: &Path,
+    provider: Provider,
+    api_keys: &ApiKeys,
+    original_url: &str,
+    cancel: Option<&crate::http::stream::CancelFlag>,
+    on_progress: Option<std::sync::Arc<crate::http::stream::ProgressCb>>,
+    max_retries: u32,
+    retry_delay: Duration,
+) -> Result<PathBuf, crate::http::DownloadError> {
+    let dest_dir = dest_path.parent().unwrap_or(dest_path);
+    // Yazılabilirlik pre-check (Gap-5 precheck_destination parity)
+    match manager_core::disk::precheck_destination(dest_dir, 0) {
+        Ok(()) => {}
+        Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
+        Err(manager_core::disk::DiskError::PermissionDenied(m)) => return Err(crate::http::DownloadError::PermissionDenied(m)),
+        Err(manager_core::disk::DiskError::InsufficientSpace { free, required }) => return Err(crate::http::DownloadError::InsufficientDiskSpace(format!("gerekli {required} bayt, mevcut {free} bayt"))),
+    }
+
+    let variants = onefichier_header_variants();
+    let max = max_retries.max(1);
+    let mut current_url = final_url.to_string();
+
+    for attempt in 0..max {
+        if cancel.map(|c| c.is_set()).unwrap_or(false) {
+            return Err(crate::http::DownloadError::Canceled);
+        }
+        let resume = crate::http::stream::resume_offset(dest_path);
+        let var_idx = (attempt as usize).min(variants.len().saturating_sub(1));
+        let headers = &variants[var_idx];
+        let mut builder = client.get(&current_url);
+        for (k, v) in headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+        if resume > 0 {
+            builder = builder.header("Range", format!("bytes={resume}-"));
+        }
+        let resp = match builder.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if attempt + 1 >= max {
+                    return Err(crate::http::DownloadError::from(e));
+                }
+                tokio::time::sleep(retry_delay).await;
+                continue;
+            }
+        };
+        let status = resp.status().as_u16();
+        // OF11a: AD 503 → refresh
+        if status == 503 && provider == Provider::AllDebrid && attempt + 1 < max {
+            if let Some((new_url, _)) = refresh_alldebrid_url(client, &api_keys.alldebrid, original_url).await {
+                current_url = new_url;
+            }
+            tokio::time::sleep(retry_delay).await;
+            continue;
+        }
+        if (500..=599).contains(&status) {
+            if attempt + 1 >= max {
+                return Err(crate::http::DownloadError::Http(format!("HTTP {status}")));
+            }
+            tokio::time::sleep(retry_delay).await;
+            continue;
+        }
+        if !(200..=299).contains(&status) && status != 206 {
+            return Err(crate::http::DownloadError::Http(format!("HTTP {status}")));
+        }
+        // Başarılı yanıt → disk alan kontrolü (total_size)
+        let content_len = resp.headers().get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let range_total = resp.headers().get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok()).and_then(crate::http::guards::parse_content_range_total);
+        let total = if let Some(t) = range_total { t } else if content_len > 0 { content_len + if status == 206 { resume } else { 0 } } else { 0 };
+        if total > 0 {
+            match manager_core::disk::precheck_destination(dest_dir, total) {
+                Ok(()) => {}
+                Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
+                Err(manager_core::disk::DiskError::PermissionDenied(m)) => return Err(crate::http::DownloadError::PermissionDenied(m)),
+                Err(manager_core::disk::DiskError::InsufficientSpace { free, required }) => return Err(crate::http::DownloadError::InsufficientDiskSpace(format!("gerekli {required} bayt, mevcut {free} bayt"))),
+            }
+        }
+        let (s, _detect) = crate::http::stream::download_stream_async(resp, dest_path, resume, cancel, on_progress.clone()).await
+            .map_err(crate::http::DownloadError::from)?;
+        if s.canceled {
+            let _ = tokio::fs::remove_file(crate::http::stream::part_path_for(dest_path)).await;
+            return Err(crate::http::DownloadError::Canceled);
+        }
+        if s.downloaded == 0 {
+            let _ = tokio::fs::remove_file(dest_path).await;
+            if attempt + 1 >= max {
+                return Err(crate::http::DownloadError::EmptyResponse("0 byte".into()));
+            }
+            tokio::time::sleep(retry_delay).await;
+            continue;
+        }
+        crate::http::stream::finalize_part(dest_path, s.downloaded).await
+            .map_err(crate::http::DownloadError::from)?;
+        return Ok(dest_path.to_path_buf());
+    }
+    Err(crate::http::DownloadError::Http("tüm denemeler başarısız".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1174,5 +1383,70 @@ mod tests {
         let keys = ApiKeys { onefichier: "".into(), alldebrid: "a".into(), debridlink: "".into(), realdebrid: "r".into(), torbox: "".into() };
         let avail = keys.available_providers();
         assert_eq!(avail, vec![Provider::AllDebrid, Provider::RealDebrid, Provider::Free]);
+    }
+
+    // --- Faz4 pure helpers ---
+
+    #[test]
+    fn header_variants_shape() {
+        let v = onefichier_header_variants();
+        assert_eq!(v.len(), 3);
+        // v0 browser UA, v1 Accept */*, v2 curl
+        assert!(v[0].iter().any(|(k,_)| k == "User-Agent"));
+        assert!(v[1].iter().any(|(k, val)| k == "Accept" && val == "*/*"));
+        assert!(v[2].iter().any(|(k,val)| k == "User-Agent" && val == "curl/8.4.0"));
+    }
+
+    #[test]
+    fn skip_head_for_provider() {
+        assert!(should_skip_head_for_provider(Provider::AllDebrid));
+        assert!(should_skip_head_for_provider(Provider::DebridLink));
+        assert!(should_skip_head_for_provider(Provider::RealDebrid));
+        assert!(!should_skip_head_for_provider(Provider::OneFichier));
+        assert!(!should_skip_head_for_provider(Provider::TorBox));
+    }
+
+    #[test]
+    fn existing_status_matches() {
+        let dir = std::env::temp_dir().join(format!("rgsx-of4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("file.bin");
+        std::fs::write(&p, b"12345").unwrap();
+        assert_eq!(existing_file_status(&p, Some(5)), ExistingStatus::ExistsAndMatches);
+        assert_eq!(existing_file_status(&p, Some(99)), ExistingStatus::ExistsButMismatch);
+        assert_eq!(existing_file_status(&dir.join("nope"), Some(5)), ExistingStatus::NotExists);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_stem_existing() {
+        let dir = std::env::temp_dir().join(format!("rgsx-of4-stem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("game.zip"), b"aaaa").unwrap();
+        std::fs::write(dir.join("game.rar"), b"aaaa").unwrap();
+        // search for game.zip -> should find game.rar as alternative (same stem, different ext)
+        let alt = find_same_stem_existing(&dir, "game.zip", Some(4));
+        assert!(alt.is_some());
+        let alt_path = alt.unwrap();
+        assert!(alt_path.file_name().unwrap().to_string_lossy().ends_with(".rar"));
+        // size mismatch -> should not return
+        let alt2 = find_same_stem_existing(&dir, "game.zip", Some(999));
+        assert!(alt2.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn decide_force_extract_cases() {
+        // zip non-supported + auto => true
+        assert!(decide_force_extract(true, true, "snes", "Super Nintendo"));
+        // normal zip + auto false => false
+        assert!(!decide_force_extract(false, false, "snes", "snes"));
+        // PS3 redump + auto true => true
+        assert!(decide_force_extract(false, true, "ps3", "ps3"));
+        assert!(!decide_force_extract(false, true, "snes", "snes"));
+        // bios platform not force (ps3 check only)
+        assert!(!decide_force_extract(false, true, "bios", "BIOS"));
     }
 }
