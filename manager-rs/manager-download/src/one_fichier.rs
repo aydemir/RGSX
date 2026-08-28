@@ -1097,16 +1097,14 @@ pub fn find_same_stem_existing(dest_dir: &Path, sanitized_filename: &str, remote
     None
 }
 
-/// `force_extract` kararı (OF17 parity): `is_zip_non_supported && auto_extract` VEYA PS3 redump + auto_extract.
+/// `force_extract` kararı (OF17 parity) — `manager_core::extract::should_force_extract` delegesi.
 pub fn decide_force_extract(
     is_zip_non_supported: bool,
     auto_extract: bool,
     platform_folder: &str,
     platform: &str,
 ) -> bool {
-    if !auto_extract { return false; }
-    if is_zip_non_supported { return true; }
-    manager_core::extract::is_ps3_redump_target(platform_folder, platform)
+    manager_core::extract::should_force_extract(auto_extract, is_zip_non_supported, platform_folder, platform)
 }
 
 /// Faz4 ana indirme: final_url → dest_path, 10x retry, Range resume, AD 503 refresh, disk/precheck, .part→replace.
@@ -1212,6 +1210,324 @@ pub async fn download_onefichier_final_url(
         return Ok(dest_path.to_path_buf());
     }
     Err(crate::http::DownloadError::Http("tüm denemeler başarısız".into()))
+}
+
+// ---------------------------------------------------------------------------
+// Faz5: FREE tam akış (OFF) + orchestrator finalize
+// Python `download_1fichier_free_mode` parity: GET→wait→f1 POST (3x retry)→
+// candidate HEAD/GET doğrulama→HEAD filename→stream .part→finalize.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error)]
+pub enum FreeModeError {
+    #[error("iptal edildi")]
+    Canceled,
+    #[error("bloklandı: {0}")]
+    Blocked(String),
+    #[error("indirme linki bulunamadı")]
+    NotFound,
+    #[error("HTTP {status}: {message}")]
+    Http { status: u16, message: String },
+    #[error("ağ hatası: {0}")]
+    Network(String),
+    #[error("boş yanıt")]
+    Empty,
+    #[error("io: {0}")]
+    Io(String),
+}
+
+fn extract_cd_filename(cd: &str) -> Option<String> {
+    // filename*=UTF-8'' veya filename="..." parity (vimm.rs re_cd_filename ile aynı mantık)
+    let re = Regex::new(r#"(?i)filename\*?=(?:UTF-8''|"|'|)([^"';\r\n]+)"#).ok()?;
+    let caps = re.captures(cd)?;
+    let raw = caps.get(1)?.as_str().trim().trim_matches('"').trim_matches('\'').to_string();
+    let decoded = percent_encoding::percent_decode_str(&raw).decode_utf8().map(|c| c.into_owned()).unwrap_or(raw);
+    // percent_decode + sanitize
+    let s = decoded.trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+async fn validate_free_candidate(
+    client: &reqwest::Client,
+    candidate: &str,
+) -> bool {
+    // HEAD önce
+    if let Ok(resp) = client.head(candidate).send().await {
+        let status = resp.status().as_u16();
+        if status < 400 {
+            if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+                if ct.to_ascii_lowercase().contains("text/html") {
+                    // HTML ise GET fallback dene
+                } else {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        } else {
+            return false;
+        }
+    }
+    // HEAD başarısız veya HTML → hızlı GET ile doğrula (body preview)
+    if let Ok(resp) = client.get(candidate).send().await {
+        let status = resp.status().as_u16();
+        if status >= 400 { return false; }
+        if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+            if ct.to_ascii_lowercase().contains("text/html") {
+                // body'de <html var mı kontrol et (landing page)
+                if let Ok(txt) = resp.text().await {
+                    if txt.to_ascii_lowercase().contains("<html") { return false; }
+                } else { return false; }
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// FREE tam indirme (OFF). `dest_dir` altına gerçek filename ile kaydeder.
+/// Python parity: wait_callback/progress_callback/cancel_event desteklenir (opsiyonel).
+pub async fn free_mode_download(
+    client: &reqwest::Client,
+    url: &str,
+    dest_dir: &Path,
+    cancel: Option<&crate::http::stream::CancelFlag>,
+    on_progress: Option<std::sync::Arc<crate::http::stream::ProgressCb>>,
+    on_wait: Option<std::sync::Arc<dyn Fn(u64, u64) + Send + Sync + 'static>>,
+) -> Result<PathBuf, FreeModeError> {
+    if cancel.map(|c| c.is_set()).unwrap_or(false) { return Err(FreeModeError::Canceled); }
+    tokio::fs::create_dir_all(dest_dir).await.map_err(|e| FreeModeError::Io(e.to_string()))?;
+
+    // 1. GET page initial
+    let resp = client.get(url).send().await.map_err(|e| FreeModeError::Network(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(FreeModeError::Http { status: resp.status().as_u16(), message: format!("GET {}", resp.status()) });
+    }
+    let page_url = resp.url().to_string();
+    let html = resp.text().await.map_err(|e| FreeModeError::Network(e.to_string()))?;
+
+    // 2. wait countdown
+    let wait_s = extract_wait_seconds(&html);
+    if wait_s > 0 {
+        for remaining in (1..=wait_s).rev() {
+            if cancel.map(|c| c.is_set()).unwrap_or(false) { return Err(FreeModeError::Canceled); }
+            if let Some(cb) = &on_wait { cb(remaining, wait_s); }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    // 3. form f1 POST (3x retry, extra wait handling)
+    let mut final_html = html.clone();
+    let mut final_page_url = page_url.clone();
+    if let Some(data) = parse_free_form_data(&html) {
+        let origin = url::Url::parse(&page_url).ok()
+            .and_then(|u| Some(format!("{}://{}", u.scheme(), u.host_str()?)))
+            .unwrap_or_else(|| page_url.clone());
+        let mut post_html: Option<String> = None;
+        let mut post_page_url = page_url.clone();
+        for _ in 0..3 {
+            if cancel.map(|c| c.is_set()).unwrap_or(false) { return Err(FreeModeError::Canceled); }
+            let post_resp = client.post(&post_page_url)
+                .header("Referer", post_page_url.clone())
+                .header("Origin", origin.clone())
+                .form(&data)
+                .send().await.map_err(|e| FreeModeError::Network(e.to_string()))?;
+            let status = post_resp.status().as_u16();
+            if !(200..=299).contains(&status) && status != 303 {
+                // 3xx redirect zaten reqwest follow eder; diğer hata → retry
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            let purl = post_resp.url().to_string();
+            let h = post_resp.text().await.map_err(|e| FreeModeError::Network(e.to_string()))?;
+            // extra wait?
+            let extra = extract_wait_seconds(&h);
+            if extra > 0 {
+                for remaining in (1..=extra).rev() {
+                    if cancel.map(|c| c.is_set()).unwrap_or(false) { return Err(FreeModeError::Canceled); }
+                    if let Some(cb) = &on_wait { cb(remaining, extra); }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                post_page_url = purl.clone();
+                continue;
+            }
+            post_html = Some(h);
+            post_page_url = purl;
+            break;
+        }
+        if let Some(h) = post_html {
+            final_html = h;
+            final_page_url = post_page_url;
+        } else {
+            return Err(FreeModeError::Http { status: 0, message: "form POST başarısız".into() });
+        }
+        if let Some(block) = extract_free_block_reason(&final_html) {
+            return Err(FreeModeError::Blocked(block));
+        }
+    }
+
+    // 4. candidate extraction + HEAD/GET validation
+    let candidates = extract_free_candidates(&final_html, &final_page_url);
+    let mut direct_link: Option<String> = None;
+    for cand in &candidates {
+        if validate_free_candidate(client, cand).await {
+            direct_link = Some(cand.clone());
+            break;
+        }
+    }
+    let dl = match direct_link {
+        Some(u) => u,
+        None => {
+            if let Some(block) = extract_free_block_reason(&final_html) {
+                return Err(FreeModeError::Blocked(block));
+            }
+            return Err(FreeModeError::NotFound);
+        }
+    };
+
+    // 5. HEAD filename
+    let head = client.head(&dl).send().await.map_err(|e| FreeModeError::Network(e.to_string()))?;
+    let mut filename = "downloaded_file".to_string();
+    if let Some(cd) = head.headers().get(reqwest::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()) {
+        if let Some(f) = extract_cd_filename(cd) { filename = f; }
+    }
+    // fallback: URL son segment
+    if filename == "downloaded_file" {
+        if let Some(seg) = dl.split('/').filter(|s| !s.is_empty()).last() {
+            if !seg.is_empty() && !seg.contains('?') { filename = seg.to_string(); }
+        }
+    }
+    filename = sanitize_filename(&filename);
+    // percent decode for URL encoded
+    if let Ok(dec) = percent_encoding::percent_decode_str(&filename).decode_utf8() { filename = dec.into_owned(); }
+    let dest_path = dest_dir.join(&filename);
+
+    // 6. stream download (FREE python directly writes to dest, but we use .part parity for resume safety)
+    let resp = client.get(&dl).send().await.map_err(|e| FreeModeError::Network(e.to_string()))?;
+    let status = resp.status().as_u16();
+    if !(200..=299).contains(&status) && status != 206 {
+        return Err(FreeModeError::Http { status, message: format!("GET {status}") });
+    }
+    let total = resp.headers().get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    if total > 0 {
+        match manager_core::disk::precheck_destination(dest_dir, total) {
+            Ok(()) => {}
+            Err(manager_core::disk::DiskError::QueryFailed(_)) => {}
+            Err(e) => return Err(FreeModeError::Io(e.to_string())),
+        }
+    }
+    // resume? FREE modda .part kullanımı yoktu ama Faz4 parity için destekle: resume 0
+    let (s, _detect) = crate::http::stream::download_stream_async(resp, &dest_path, 0, cancel, on_progress).await
+        .map_err(|e| FreeModeError::Io(e.to_string()))?;
+    if s.canceled { return Err(FreeModeError::Canceled); }
+    if s.downloaded == 0 { return Err(FreeModeError::Empty); }
+    crate::http::stream::finalize_part(&dest_path, s.downloaded).await.map_err(|e| FreeModeError::Io(e.to_string()))?;
+    Ok(dest_path)
+}
+
+/// Orchestrator: 1Fichier URL → chain → download (debrid veya FREE) → force_extract → provider history.
+/// Python `download_from_1fichier` thread ana akışı parity (OF2..OF18 + OFF).
+pub struct OneFichierOrchestrator {
+    pub client: reqwest::Client,
+    pub keys: ApiKeys,
+}
+
+impl OneFichierOrchestrator {
+    pub fn new(keys: ApiKeys) -> Self {
+        let client = reqwest::Client::builder().cookie_store(true).build().unwrap_or_else(|_| reqwest::Client::new());
+        Self { client, keys }
+    }
+    pub fn with_client(client: reqwest::Client, keys: ApiKeys) -> Self {
+        Self { client, keys }
+    }
+
+    /// Tam zincir: resolve → download → extract (opsiyonel). Başarıda (provider, dest_path) döner.
+    pub async fn download(
+        &self,
+        url: &str,
+        dest_dir: &Path,
+        game_name: &str,
+        platform: &str,
+        is_zip_non_supported: bool,
+        auto_extract: bool,
+        cancel: Option<&crate::http::stream::CancelFlag>,
+        on_progress: Option<std::sync::Arc<crate::http::stream::ProgressCb>>,
+    ) -> Result<(Provider, PathBuf), crate::http::DownloadError> {
+        // Dedup? caller yönetir (DedupCache)
+        let chain = resolve_chain(&self.client, &self.keys, url).await
+            .map_err(|e| crate::http::DownloadError::Client(e.to_string()))?;
+        let (provider, final_url, filename) = match chain {
+            ChainOutcome::Debrid(s) => (s.provider, s.final_url.clone(), if s.filename.is_empty() { game_name.to_string() } else { s.filename.clone() }),
+            ChainOutcome::Free => {
+                // FREE scrape
+                let p = free_mode_download(&self.client, url, dest_dir, cancel, on_progress.clone(), None).await
+                    .map_err(|e| match e {
+                        FreeModeError::Canceled => crate::http::DownloadError::Canceled,
+                        FreeModeError::Blocked(m) => crate::http::DownloadError::Http(m),
+                        FreeModeError::NotFound => crate::http::DownloadError::Http("Lien de téléchargement introuvable".into()),
+                        FreeModeError::Http { status, message } => crate::http::DownloadError::Http(format!("FREE HTTP {status}: {message}")),
+                        FreeModeError::Network(m) => crate::http::DownloadError::Network(m),
+                        FreeModeError::Empty => crate::http::DownloadError::EmptyResponse("FREE 0 byte".into()),
+                        FreeModeError::Io(m) => crate::http::DownloadError::Client(m),
+                    })?;
+                // FREE'de filename zaten dest içinde, provider FREE
+                let prov = Provider::Free;
+                // force_extract + chmod
+                let need_extract = decide_force_extract(is_zip_non_supported, auto_extract, &platform_folder_hint(platform), platform);
+                if need_extract {
+                    // postprocess (extract) — manager_core::extract::extract_archive
+                    let _ = extract_after_download(&p, dest_dir, platform).await;
+                } else {
+                    #[cfg(unix)] { let _ = tokio::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o644)).await; }
+                }
+                return Ok((prov, p));
+            }
+        };
+        // Debrid yolu: dest_path kur
+        let sanitized = sanitize_filename(&filename);
+        let dest_path = dest_dir.join(sanitized);
+        // BIOS redirect? caller dest_dir zaten platform'a göre seçili; orchestrator dest_dir'i doğrudan kullanır (redirect_bios_dest api.rs'de yapılır)
+        // Varlık kontrolü (OF10)
+        let head_size = head_remote_size(&self.client, &final_url, provider).await;
+        match existing_file_status(&dest_path, head_size) {
+            ExistingStatus::ExistsAndMatches => return Ok((provider, dest_path)),
+            ExistingStatus::ExistsButMismatch => { let _ = tokio::fs::remove_file(&dest_path).await; }
+            ExistingStatus::NotExists => {}
+        }
+        // alternatif uzantı kontrolü
+        if let Some(alt) = find_same_stem_existing(dest_dir, &dest_path.file_name().unwrap().to_string_lossy(), head_size) {
+            return Ok((provider, alt));
+        }
+        // indir
+        let out = download_onefichier_final_url(&self.client, &final_url, &dest_path, provider, &self.keys, url, cancel, on_progress, 10, Duration::from_secs(10)).await?;
+        // force_extract & chmod
+        let pf = dest_path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).unwrap_or("");
+        let need_extract = decide_force_extract(is_zip_non_supported, auto_extract, pf, platform);
+        if need_extract {
+            let _ = extract_after_download(&out, dest_dir, platform).await;
+        } else {
+            #[cfg(unix)] { let _ = tokio::fs::set_permissions(&out, std::os::unix::fs::PermissionsExt::from_mode(0o644)).await; }
+        }
+        // provider history caller tarafından history_provider_fields ile yazılır
+        let _ = dest_path; // silence
+        Ok((provider, out))
+    }
+}
+
+fn platform_folder_hint(platform: &str) -> String {
+    platform.to_ascii_lowercase().replace(' ', "")
+}
+
+async fn extract_after_download(path: &Path, dest_dir: &Path, _platform: &str) -> Result<(), String> {
+    let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    let res = match ext.as_str() {
+        "zip" => manager_core::extract::extract_archive(path, dest_dir).map(|_| ()),
+        "7z" => manager_core::extract::extract_archive(path, dest_dir).map(|_| ()),
+        "rar" => manager_core::extract::extract_archive(path, dest_dir).map(|_| ()),
+        _ => return Ok(()),
+    };
+    res.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -1443,10 +1759,28 @@ mod tests {
         assert!(decide_force_extract(true, true, "snes", "Super Nintendo"));
         // normal zip + auto false => false
         assert!(!decide_force_extract(false, false, "snes", "snes"));
-        // PS3 redump + auto true => true
+        // PS3 redump => force (auto'dan bağımsız)
         assert!(decide_force_extract(false, true, "ps3", "ps3"));
+        assert!(decide_force_extract(false, false, "ps3", "ps3"));
         assert!(!decide_force_extract(false, true, "snes", "snes"));
-        // bios platform not force (ps3 check only)
-        assert!(!decide_force_extract(false, true, "bios", "BIOS"));
+        // BIOS + auto => force
+        assert!(decide_force_extract(false, true, "bios", "BIOS"));
+        assert!(!decide_force_extract(false, false, "bios", "BIOS"));
+    }
+
+    // --- Faz5 FREE helpers ---
+
+    #[test]
+    fn cd_filename_extract() {
+        assert_eq!(extract_cd_filename("attachment; filename=\"game.zip\"").as_deref(), Some("game.zip"));
+        assert_eq!(extract_cd_filename("attachment; filename*=UTF-8''game%20test.zip").as_deref(), Some("game test.zip"));
+        assert!(extract_cd_filename("inline; no-filename").is_none());
+    }
+
+    #[test]
+    fn free_block_reason_still_works() {
+        let html = "<div>Le téléchargement gratuit est temporairement limité. Veuillez vous identifiez-vous immediatement</div>";
+        assert!(extract_free_block_reason(html).is_some());
+        assert!(extract_free_block_reason("<p>ok</p>").is_none());
     }
 }

@@ -591,6 +591,32 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
     if native_download {
         if let Some(direct) = direct_url {
             if !is_torrent_url(direct) {
+                // 1fichier provider zinciri (TASK-002-gap-11) — debrid/free fallback.
+                if is_onefichier_url(direct) {
+                    let platform = body
+                        .get("platform")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let game_name = body
+                        .get("game_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if platform.is_empty() || game_name.is_empty() {
+                        return json_err(
+                            "Paramètre manquant: platform et game_name requis (1fichier)",
+                            StatusCode::BAD_REQUEST,
+                        );
+                    }
+                    return native_onefichier_download(
+                        state,
+                        direct.to_string(),
+                        platform,
+                        game_name,
+                    )
+                    .await;
+                }
                 if let Ok(manager_download::DownloadSource::DirectHttp(resolved)) =
                     manager_download::DownloadManager::new().resolve(direct)
                 {
@@ -660,6 +686,9 @@ pub async fn download(State(state): State<AppState>, Json(body): Json<Value>) ->
         // Katalog yoksa (native mod) doğrudan HTTP indirme yapılır. Native DDL kapalıyken
         // bu blok atlanır ve istek bridge/placeholder yoluna düşer (flag parity + test izolasyonu).
         if !is_torrent_url(&game_url) && native_download {
+            if is_onefichier_url(&game_url) {
+                return native_onefichier_download(state, game_url, platform, gname).await;
+            }
             match manager_download::DownloadManager::new().resolve(&game_url) {
                 Ok(manager_download::DownloadSource::DirectHttp(resolved)) => {
                     return native_ddl_download(state, game_url, resolved, platform, gname).await;
@@ -2545,6 +2574,222 @@ async fn native_ddl_download(
     })))
 }
 
+/// TASK-002-gap-11 Faz5 — 1fichier native indirme (OF0..OF18 parity).
+/// `native_ddl_download` ile aynı kuyruk/semaphore/pause/retry iskeleti, ancak
+/// `manager_download::one_fichier::OneFichierOrchestrator` üzerinden debrid zinciri
+/// (1F→AD→DL→RD→TB→FREE) ve FREE scrape akışını kullanır. Başarıda `provider_used`
+/// history'ye yazılır (UI "AD:" parity).
+async fn native_onefichier_download(
+    state: AppState,
+    game_url: String,
+    platform: String,
+    game_name: String,
+) -> Response {
+    let task_id = web_task_id();
+    let downloads = if let Some(b) = &state.bridge {
+        b.get_app_paths().await.map(|(d, _)| d).unwrap_or_default()
+    } else {
+        std::env::var("RGSX_DOWNLOADS_FOLDER").unwrap_or_else(|_| "downloads".to_string())
+    };
+    // DDL ile aynı dest_dir hesabı (roms/platform), filename zincirden gelir.
+    let dest_dir = {
+        let base_file = match effective_roms_folder() {
+            Some(rf) => rom_dest_for(&rf, &platform, &game_name, &game_url),
+            None => dest_path_for(&downloads, &game_url, &game_name),
+        };
+        let dir = base_file.parent().map(|p| p.to_path_buf()).unwrap_or(base_file);
+        // gap-28 BIOS redirect (parent klasör seviyesinde)
+        let file_probe = dir.join(sanitize_file_name(&game_name));
+        let redirected = redirect_bios_dest(file_probe, &platform, &game_name);
+        redirected.parent().map(|p| p.to_path_buf()).unwrap_or(dir)
+    };
+
+    push_queued_history_entry(
+        &state,
+        &task_id,
+        &game_url,
+        &game_name,
+        &platform,
+        "Queued",
+        "Ajouté à la file d'attente (1fichier)",
+        0,
+    );
+
+    let c_state = state.clone();
+    let c_url = game_url.clone();
+    let c_name = game_name.clone();
+    let c_plat = platform.clone();
+    let c_task = task_id.clone();
+    if !claim_in_flight(&c_state, &c_url) {
+        return ok(contract::ok(json!({
+            "queued": false,
+            "message": "Déjà en cours de téléchargement",
+            "url": c_url,
+            "task_id": Value::Null,
+        })));
+    }
+    let cancel: Arc<Notify> = {
+        let mut d = c_state.write();
+        let sig = Arc::new(Notify::new());
+        d.cancel_signals.insert(c_url.clone(), sig.clone());
+        sig
+    };
+    let pause_sig: Arc<Notify> = {
+        let mut d = c_state.write();
+        let sig = Arc::new(Notify::new());
+        d.pause_signals.insert(c_url.clone(), sig.clone());
+        sig
+    };
+    let shutdown = c_state.shutdown.clone();
+    let c_dir = dest_dir.clone();
+    tokio::spawn(async move {
+        let _dl_t0 = std::time::Instant::now();
+        let _dl_permit = {
+            let sem = c_state.read().download_semaphore.clone();
+            match sem.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    let mut d = c_state.write();
+                    d.retry_in_flight.remove(&c_url);
+                    d.cancel_signals.remove(&c_url);
+                    d.pause_signals.remove(&c_url);
+                    return;
+                }
+            }
+        };
+        if c_state.read().aborting.load(Ordering::SeqCst) {
+            let mut d = c_state.write();
+            d.retry_in_flight.remove(&c_url);
+            d.cancel_signals.remove(&c_url);
+            d.pause_signals.remove(&c_url);
+            return;
+        }
+        let mut current_task_id = c_task.clone();
+        let current_url = c_url.clone();
+        let mut aborted: Option<String> = None;
+        // 1fichier orchestrator (ApiKeys env/file)
+        let keys = manager_download::one_fichier::ApiKeys::from_env();
+        let orch = manager_download::one_fichier::OneFichierOrchestrator::new(keys);
+        // Auto-extract ayarı
+        let auto_extract = manager_core::settings::Settings::load().auto_extract;
+        // Platform'dan is_zip_non_supported çıkarımı: şu an web katmanında bilgi yok → false
+        // (queue.py'de platform'a göre hesaplanıyordu; native DDL'de torrent dışı için false).
+        let is_zip_non_supported = false;
+        loop {
+            if c_state.global_paused.load(Ordering::Relaxed) {
+                let pr = c_state.read().pause_resume.clone();
+                let _ = tokio::time::timeout(Duration::from_millis(1000), pr.notified()).await;
+                continue;
+            }
+            let down = c_state.read().network_down.load(Ordering::Relaxed);
+            if down {
+                if probe_connectivity().await {
+                    let mut d = c_state.write();
+                    d.network_down.store(false, Ordering::SeqCst);
+                    d.network_error_streak.store(0, Ordering::SeqCst);
+                    for q in d.queue.iter_mut() {
+                        if q.get("status").and_then(|v| v.as_str()) == Some("Ağ bekleniyor") {
+                            q["status"] = json!("Downloading");
+                        }
+                    }
+                    d.network_resume.notify_waiters();
+                    c_state.dirty.store(true, Ordering::SeqCst);
+                    if d.network_outage_confirmed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                        crate::sse::publish(&c_state.events, "network_restored", &json!({ "network_down": false }));
+                    }
+                } else {
+                    c_state.write().network_outage_confirmed.store(true, Ordering::SeqCst);
+                    let nr = c_state.read().network_resume.clone();
+                    let _ = tokio::time::timeout(Duration::from_millis(1000), nr.notified()).await;
+                    continue;
+                }
+            }
+            let progress_state = c_state.clone();
+            let progress_url = current_url.clone();
+            let cf = CancelFlag::new();
+            let cf2 = cf.clone();
+            let on_progress: std::sync::Arc<manager_download::http::stream::ProgressCb> =
+                std::sync::Arc::new(move |downloaded: u64, total: u64| {
+                    let pct = if total > 0 { (downloaded * 100 / total) as u32 } else { 0 };
+                    let mut data = progress_state.write();
+                    data.progress[&progress_url] = json!({ "status": "Downloading", "progress": pct });
+                    progress_state.dirty.store(true, Ordering::Relaxed);
+                });
+            let orch_fut = orch.download(&current_url, &c_dir, &c_name, &c_plat, is_zip_non_supported, auto_extract, Some(&cf2), Some(on_progress));
+            let mut paused_now = false;
+            let result = tokio::select! {
+                r = orch_fut => r,
+                _ = pause_sig.notified() => { cf.set(); paused_now = true; Err(DownloadError::Canceled) },
+                _ = cancel.notified() => { cf.set(); aborted = Some("İptal edildi".to_string()); Err(DownloadError::Canceled) },
+                _ = shutdown.notified() => { cf.set(); aborted = Some("Sunucu kapatılıyor".to_string()); Err(DownloadError::Canceled) },
+            };
+            match result {
+                Ok((provider, path)) => {
+                    c_state.write().network_error_streak.store(0, Ordering::SeqCst);
+                    // Provider history parity (OF _set_provider_in_history)
+                    {
+                        let (used, prefix) = manager_download::one_fichier::history_provider_fields(provider);
+                        c_state.dirty.store(true, Ordering::SeqCst);
+                        let mut d = c_state.write();
+                        for e in d.history.iter_mut() {
+                            if e.get("url").and_then(|v| v.as_str()) == Some(&current_url) {
+                                e["provider"] = json!(used);
+                                e["provider_prefix"] = json!(prefix);
+                            }
+                        }
+                        for q in d.queue.iter_mut() {
+                            if q.get("url").and_then(|v| v.as_str()) == Some(&current_url) {
+                                q["provider"] = json!(used);
+                            }
+                        }
+                    }
+                    finalize_download_in_state(&c_state, &current_task_id, &current_url, &c_name, &c_plat, true, &path.display().to_string()).await;
+                    break;
+                }
+                Err(e) => {
+                    if paused_now { continue; }
+                    let cls = classify_download_error(&e);
+                    let is_network = matches!(e, DownloadError::Network(_));
+                    match decide_retry(&c_state, &current_url, &c_name, &current_task_id, &e.message(), cls, is_network).await {
+                        RetryDecision::Retry { new_task_id, delay } => {
+                            let dur = Duration::from_secs_f64(delay.max(0.0));
+                            tokio::select! {
+                                _ = tokio::time::sleep(dur) => {},
+                                _ = cancel.notified() => { cf.set(); aborted = Some("İptal edildi".to_string()); },
+                                _ = shutdown.notified() => { cf.set(); aborted = Some("Sunucu kapatılıyor".to_string()); },
+                            }
+                            match aborted {
+                                Some(ref msg) => {
+                                    finalize_download_in_state(&c_state, &current_task_id, &current_url, &c_name, &c_plat, false, msg).await;
+                                    break;
+                                }
+                                None => { current_task_id = new_task_id; continue; }
+                            }
+                        }
+                        RetryDecision::Stop => {
+                            finalize_download_in_state(&c_state, &current_task_id, &current_url, &c_name, &c_plat, false, &e.message()).await;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let mut d = c_state.write();
+        d.retry_in_flight.remove(&current_url);
+        d.cancel_signals.remove(&current_url);
+        d.pause_signals.remove(&current_url);
+    });
+
+    ok(contract::ok(json!({
+        "queued": true,
+        "game_name": game_name,
+        "platform": platform,
+        "task_id": task_id,
+        "message": format!("{game_name} ajouté à la file d'attente (1fichier)"),
+        "queue_position": 0,
+    })))
+}
+
 /// `get_app_paths` downloads klasörü + URL/oyun adından hedef dosya yolunu kurar.
 /// URL'nin sondaki parçası bilinen bir ROM/.torrent uzantısıyla bitiyorsa onu,
 /// değilse temizlenmiş `game_name`'i dosya adı yapar (Python
@@ -2644,6 +2889,11 @@ fn is_torrent_url(url: &str) -> bool {
     }
     // `.torrent` uzantısı — olası `?query` sonrasını çıkar.
     u.split('?').next().unwrap_or("").ends_with(".torrent")
+}
+
+/// 1fichier URL'i mi? (Python `is_1fichier_url` parity).
+fn is_onefichier_url(url: &str) -> bool {
+    url.to_ascii_lowercase().contains("1fichier.com")
 }
 
 /// Bilinen ROM / torrent dosya uzantısı (Python `check_extension_before_download`).
