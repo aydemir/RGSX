@@ -2,7 +2,8 @@
 
 - **id:** TASK-012j
 - **title:** SDL2 sanal klavye (Qwerty/Azerty/Qwertz) + folder browser + gamepad imleç
-- **status:** todo
+- **status:** in-progress
+- **updated:** 2026-08-27
 - **priority:** P2
 - **created:** 2026-08-21
 - **environment:** both
