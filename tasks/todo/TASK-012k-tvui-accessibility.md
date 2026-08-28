@@ -40,3 +40,5 @@ state olarak portlanır. `fonts.py` ölçekleme `font_scale_options` ile uygulan
 ## İlerleme
 
 - 2026-08-21 — yön (B) kararıyla çıkarıldı (SPA TASK-012e superseded).
+- 2026-08-27 — Faz1: `accessibility.rs` (FONT_SCALE_OPTIONS 14 + FOOTER 19, font_scale/footer ayrı, high_contrast palette override anında, 8 test)
+- 2026-08-27 — Faz2: `state.rs` a11y field + Display menu (font/grid/theme) canlı kontrol + `sdl2_shell.rs` a11y_bg/a11y_color entegrasyon, 85/85 yeşil

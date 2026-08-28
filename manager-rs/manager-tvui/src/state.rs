@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::accessibility::Accessibility;
 use crate::folder_browser::{BrowserMode, FolderBrowser};
 use crate::menus::{MenuKind, MenuNav};
 use crate::net::{PlatformTile, TvuiState, UiAction, UiKey};
@@ -61,6 +62,8 @@ pub struct TvuiScreen {
     pub browser: Option<FolderBrowser>,
     /// Global search query (keyboard.input senkronu, controls/search.py parity)
     pub search_query: String,
+    /// TASK-012k: erişilebilirlik (font_scale / footer_font_scale / yüksek kontrast)
+    pub a11y: Accessibility,
     /// SSE/loading tarafı (net::TvuiState ile senkron).
     pub net: TvuiState,
     /// Son key-repeat zaman damgası (Python `process_key_repeats` parity).
@@ -84,6 +87,7 @@ impl Default for TvuiScreen {
             keyboard: None,
             browser: None,
             search_query: String::new(),
+            a11y: Accessibility::default(),
             net: TvuiState::default(),
             last_key: None,
             last_at: None,
@@ -375,6 +379,21 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                                     screen.search_query.clear();
                                     if let Some(kb) = screen.keyboard.as_mut() { kb.input.clear(); }
                                     // overlay açık kalır, tekrar arama yapılabilir
+                                }
+                                _ => close = true,
+                            }
+                        }
+                        MenuKind::Display => {
+                            match key {
+                                "display_font" => {
+                                    screen.a11y.inc_font_scale();
+                                    // canlı uygula — kapatma yok, tekrar basıldıkça artar
+                                }
+                                "display_grid" => {
+                                    screen.a11y.inc_footer_scale();
+                                }
+                                "display_theme" => {
+                                    screen.a11y.toggle_high_contrast();
                                 }
                                 _ => close = true,
                             }
@@ -777,5 +796,34 @@ mod tests {
         reduce(&mut s, UiKey::Back, now() + Duration::from_millis(600));
         // Back parent'a gitti ama browser hâlâ açık (kök değilse)
         assert!(s.browser.is_some());
+    }
+
+    #[test]
+    fn accessibility_display_menu_controls() {
+        let mut s = TvuiScreen::default();
+        let lang = crate::i18n::load_lang("en");
+        s.overlay = Some(crate::menus::MenuNav::new(crate::menus::MenuKind::Display, &lang, &lang));
+        let initial_font = s.a11y.font_scale();
+        // display_font -> inc
+        s.overlay.as_mut().unwrap().selected = 2; // display_font
+        reduce(&mut s, UiKey::Confirm, now());
+        assert!(s.a11y.font_scale() > initial_font);
+        // display_theme -> toggle high contrast
+        s.overlay = Some(crate::menus::MenuNav::new(crate::menus::MenuKind::Display, &lang, &lang));
+        s.overlay.as_mut().unwrap().selected = 0; // display_theme
+        assert!(!s.a11y.high_contrast);
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(200));
+        assert!(s.a11y.high_contrast);
+        assert!(s.overlay.is_some()); // display'de kapatma yok, canlı
+    }
+
+    #[test]
+    fn accessibility_scales_separate() {
+        let mut s = TvuiScreen::default();
+        s.a11y.set_font_scale_idx(13); // 2.0
+        s.a11y.set_footer_scale_idx(0); // 0.7
+        assert_eq!(s.a11y.scaled(100), 200);
+        assert_eq!(s.a11y.scaled_footer(100), 70);
+        assert_ne!(s.a11y.font_scale(), s.a11y.footer_font_scale());
     }
 }

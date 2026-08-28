@@ -28,6 +28,13 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t).clamp(0.0, 255.0) as u8
 }
 
+fn a11y_color(theme: &Theme, screen: &TvuiScreen, name: &str) -> (u8, u8, u8, u8) {
+    screen.a11y.effective_color(theme, name)
+}
+fn a11y_bg(theme: &Theme, screen: &TvuiScreen, preset: &str) -> ((u8, u8, u8), (u8, u8, u8)) {
+    screen.a11y.effective_background(theme, preset)
+}
+
 /// Seçili arka plan preset'ini dikey gradyan olarak çizer (top → bottom).
 /// Faz C (bulgu 12): gradyan her frame'de h adet `draw_line` yerine BİR KEZ
 /// texture'a üretilir ve blit edilir; pencere boyutu değişirse yenilenir.
@@ -37,13 +44,14 @@ fn draw_background<'a>(
     tc: &'a TextureCreator<WindowContext>,
     cache: &mut Option<(u32, u32, Texture<'a>)>,
     theme: &Theme,
+    screen: &TvuiScreen,
     preset: &str,
 ) -> (u32, u32) {
     let (w, h) = match canvas.output_size() {
         Ok((w, h)) if w > 0 && h > 0 => (w, h),
         _ => (1280, 720),
     };
-    let (top, bottom) = theme.background(preset);
+    let (top, bottom) = a11y_bg(theme, screen, preset);
     let stale = !matches!(cache, Some((cw, ch, _)) if *cw == w && *ch == h);
     if stale {
         let mut pixels: Vec<u8> = Vec::with_capacity((w * h * 4) as usize);
@@ -91,7 +99,7 @@ fn draw_background<'a>(
         }
     }
     // Tema paleti yüklendi kanıtı: `fond_lignes` rengiyle ince çerçeve.
-    canvas.set_draw_color(to_color(theme.color("fond_lignes")));
+    canvas.set_draw_color(to_color(a11y_color(theme, screen, "fond_lignes")));
     let (fw, fh) = (w.saturating_sub(40), h.saturating_sub(40));
     if fw > 0 && fh > 0 {
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(20, 20, fw, fh));
@@ -662,7 +670,7 @@ pub fn run_native_shell(
             let mut s = tvui_lock(state);
             expire_stale_restart_at(&mut s, std::time::Instant::now());
         }
-        let dims = draw_background(&mut canvas, &texture_creator, &mut bg_cache, theme, &preset);
+        let dims = draw_background(&mut canvas, &texture_creator, &mut bg_cache, theme, &screen, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
         // Yeniden başlatma ekranı (apply sonrası) — grid/loading yerine tam ekran.
         let restarting = tvui_lock(state).update_restarting;
