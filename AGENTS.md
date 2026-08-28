@@ -28,7 +28,7 @@ Otomat `tasks/` sorgularında `grep -R tasks/` / `Grep pattern="status"` / `Glob
 **Zorunlu akış:**
 
 1. `read tasks/index.json` — yoksa `bash python3 scripts/build-tasks-index.py` ile üret (front-matter + legacy bullet her ikisini de parse eder).
-2. `bash jq '...' tasks/index.json` ile filtrele — tek dosya, tek tool call (`jq` yoksa `python3 -c "import json; ..."` eşdeğeri kullanılabilir; CI `ubuntu-22.04` imajında `jq` preinstalled, `tasks-index.yml` bunu `which jq` ile doğrular).
+2. `bash jq '...' tasks/index.json` ile filtrele — tek dosya, tek tool call (`jq` yoksa `python3 -c "import json; ..."` eşdeğeri kullanılabilir; CI `ubuntu-22.04` imajında `jq` preinstalled, `tasks-index.yml` bunu `which jq` ile doğrular; Windows'ta `scoop install jq` ile kurulu — şu an `jq-1.8.2` doğrulandı, kuruluysa `jq` tercih edilir).
 3. Sadece eşleşen `id`'lerin dosyasını `read tasks/**/{ID}*.md` ile çek (gövde gerektiğinde).
 
 **Fallback (yalnız bozuk/stale durumda):** `tasks/index.json` yok, JSON parse hatası veriyor veya `scripts/build-tasks-index.py` çökerse otomat kör kalmaz — tek seferlik `Grep`/`Glob` ile doğrudan `tasks/**/*.md` okuyabilir. Bu durumda hatayı logla ve imkân varsa index'i yeniden üretmeyi dene.
