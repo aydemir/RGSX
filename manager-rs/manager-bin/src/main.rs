@@ -147,6 +147,17 @@ fn open_folder(path: &str) {
     let _ = std::process::Command::new("explorer").arg(path).spawn();
 }
 
+/// TASK-012l cutover: `RGSX_TVUI=1` varsayılan, `0`/false ile kapatılabilir.
+pub fn is_tvui_enabled() -> bool {
+    match std::env::var("RGSX_TVUI") {
+        Ok(v) => {
+            let s = v.trim().to_ascii_lowercase();
+            !(s == "0" || s == "false" || s == "off" || s.is_empty())
+        }
+        Err(_) => true, // varsayılan 1
+    }
+}
+
 fn main() {
     // TASK-012m Faz 5 — `--recover`: önceki apply'ın .old yedeğinden geri yükle
     // (rollback). Sunucu BAŞLAMADAN tek-seferlik çalışır ve çıkar.
@@ -316,14 +327,11 @@ async fn run(paths: paths::RgsxPaths) {
         manager_tvui::native_input::start_native_input(events.clone(), es);
     }
 
-    // TVUI shell: `RGSX_TVUI=1` ise native SDL2 shell başlatır (manager-tvui).
+    // TVUI shell: `RGSX_TVUI` varsayılan 1 (TASK-012l cutover). `0` ile kapatılabilir.
     // Ayrı thread'de (SDL event loop'u bloklar). TASK-012-gap-03 Faz B: SPA
     // `?mode=tv` yolu emekli edildi — tek TVUI = native SDL2. Headless ortamda
-    // hata loglanır, sunucu etkilenmez.
-    if std::env::var("RGSX_TVUI")
-        .map(|v| v == "1")
-        .unwrap_or(false)
-    {
+    // hata loglanır, sunucu etkilenmez. Python pygame TVUI TASK-012-gap-02 ile söküldü.
+    if is_tvui_enabled() {
         let tv_port = port;
         std::thread::spawn(move || {
             if let Err(e) = manager_tvui::launch(tv_port) {

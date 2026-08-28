@@ -2,7 +2,7 @@
 
 - **id:** TASK-012k
 - **title:** SDL2 erişilebilirlik (font_scale / footer_font_scale / yüksek kontrast)
-- **status:** in-progress
+- **status:** done
 - **updated:** 2026-08-27
 - **priority:** P2
 - **created:** 2026-08-21

@@ -2,7 +2,8 @@
 
 - **id:** TASK-012l
 - **title:** TVUI cutover — `RGSX_TVUI=1` varsayılan, Python pygame TVUI retire
-- **status:** todo
+- **status:** done
+- **updated:** 2026-08-27
 - **priority:** P1
 - **created:** 2026-08-21
 - **environment:** both
@@ -41,3 +42,4 @@
 ## İlerleme
 
 - 2026-08-21 — yön (B) kararıyla çıkarıldı (SPA TASK-012f superseded).
+- 2026-08-27 — Cutover: `manager-bin/src/main.rs:is_tvui_enabled` + `manager-tvui/src/lib.rs:is_tvui_enabled` varsayılan 1 (RGSX_TVUI=0 ile off), `ports/RGSX` zaten TASK-012-gap-02 ile arşivli; TASK-012i/J/K done’a çekildi, 85/85 yeşil

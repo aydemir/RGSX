@@ -1,0 +1,16 @@
+# Divergence Notes — TVUI (TASK-012l)
+
+Python `ports/RGSX/tvui.py` + `display/*` + `controls/*` (pygame) → Rust `manager-tvui` (rust-sdl2) native port — yön (B).
+
+- **Cutover:** `RGSX_TVUI` env varsayılan `1` (TASK-012l). `RGSX_TVUI=0`/`false`/`off` ile kapatılır. Önceki `RGSX_TVUI=1` opt-in artık default; Python pygame TVUI `TASK-012-gap-02` ile retire edildi (python-skeleton-final tag arşiv).
+- **Theme:** `display/colors.py`+`fonts.py`+`transitions.py`+`icons.py` + `theme.xml` → `manager-tvui/assets/theme.json` (serde_json). `THEME_COLORS` + `BACKGROUND_THEME_PRESETS` aynı. `RGSX_TVUI_THEME` env ile override, yoksa gömülü default.
+- **Screens:** `display/*` `draw_*` → `manager-tvui/src/render.rs` + `sdl2_shell.rs` primitives (background gradient texture cache, grid tile scale+alpha transition, game_list row + progress, progress bar, menu overlay, virtual_keyboard, folder_browser).
+- **State:** `config.menu_state` → `manager-tvui/src/state.rs:MenuState` (Loading/PlatformGrid/GameList/Progress/Error/ConfirmExit) + `TvuiScreen` (platforms/games/progress/transition/overlay + `filtered_games` parity region filter + sort + search_query). Key-repeat 120ms (Python 100ms).
+- **Menus:** `display/menus.py` (92KB) + `global_search.py` → `manager-tvui/src/menus.rs` (MenuKind Pause/Display/FilterMain/FilterAdvanced/GlobalSort/GlobalSearch, MenuNav wrap, i18n fallback) + `state.rs:reduce` overlay dispatch. `pause → display/filter/sort/search` zinciri, `filter_usa/europe/japan/other` toggle, `sort_name/size asc/desc`, `search_edit/clear`.
+- **Virtual keyboard:** `display/virtual_keyboard.py` (deklaratif Qwerty/Azerty/Qwertz, `nintendo_layout` Qwertz→Qwerty) + `controls/search.py` GLOBAL_SEARCH_KEYBOARD_LAYOUT → `manager-tvui/src/virtual_keyboard.rs` (KeyboardVariant + `apply_nintendo_layout` Y↔Z, VirtualKeyboard cursor ragged clamp, confirm/back). Gamepad `native_input.rs` (gilrs) ızgara imleç entegrasyonu.
+- **Folder browser:** `display/folder_browser.py` (`config.folder_browser_*` path/items/selection/scroll/visible) → `manager-tvui/src/folder_browser.rs` (BrowserMode Platform/RomsRoot/HistoryMove, nav/page/enter/go_parent/visible_slice, fs `list_dirs` + Windows drive desteği).
+- **Accessibility:** `accessibility.py` + `display/fonts.py` (`font_scale_options` 14, `footer_font_scale_options` 19) + `display/colors.py` high-contrast → `manager-tvui/src/accessibility.rs` (Accessibility: font_scale_idx/footer_idx/high_contrast, FONT_SCALE_OPTIONS/FOOTER_FOOTER, high_contrast_palette siyah/sarı anında `effective_color`/`effective_background`, `scaled`/`scaled_footer`, Display menu `display_font`/`display_grid`/`display_theme` canlı kontrol).
+- **Input:** `controls/*` (menus/search) → `state.rs:reduce` SAF reducer + `native_input.rs` (gilrs GilrsSource, ES `es_input.cfg` id→RgsxAction, `RgsxAction` Confirm/Back/Nav/PageUp/PageDown/Menu/View/Secondary/Context, FakeSource test).
+- **Contract:** 102 contract + SSE `catalog_update`/`platforms`/`games` + progress yeşil; `RGSX_TVUI=1` altında Python TVUI yüklenmez, yalnız SDL2 native. Headless `RGSX_TVUI_WINDOWED=1` pencere modu, vsync PresentVSync.
+
+Arşiv referansı: `python-skeleton-final` tag (`ports/RGSX` snapshot).
