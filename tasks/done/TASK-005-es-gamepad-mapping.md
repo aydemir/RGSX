@@ -2,7 +2,7 @@
 
 - **id:** TASK-005
 - **title:** EmulationStation `es_input.cfg` (ve `SDL_GAMECONTROLLERCONFIG`) map'inin RGSX UI'a uygulanması
-- **status:** in-progress
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-14
 - **environment:** both
