@@ -347,6 +347,112 @@ fn draw_menu_overlay(
     }
 }
 
+/// TASK-012j — sanal klavye overlay (gamepad ızgara, seçili tuş border_selected).
+fn draw_virtual_keyboard(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+) {
+    let Some(kb) = &screen.keyboard else { return; };
+    canvas.set_draw_color(to_color(theme.color("shadow")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
+    // Input alanı
+    let iw = ((w as i32) * 60 / 100).max(200) as u32;
+    let ih: u32 = 36;
+    let ix = ((w as i32 - iw as i32) / 2).max(0) as i32;
+    let iy = (h as i32 / 6).max(0) as i32;
+    canvas.set_draw_color(to_color(theme.color("button_selected")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(ix, iy, iw, ih));
+    canvas.set_draw_color(to_color(theme.color("border_selected")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(ix, iy, iw, ih));
+    // Klavye ızgarası
+    let key_w: u32 = 48;
+    let key_h: u32 = 40;
+    let gap: u32 = 6;
+    let rows = kb.layout.len() as u32;
+    let total_h = rows * key_h + (rows.saturating_sub(1) * gap) + 20;
+    let ky = iy + ih as i32 + 20;
+    // Her satır ortalanır
+    for (r, row) in kb.layout.iter().enumerate() {
+        let row_w = row.len() as u32 * key_w + (row.len().saturating_sub(1) as u32 * gap);
+        let rx = ((w as i32 - row_w as i32) / 2).max(0) as i32;
+        let ry = ky + r as i32 * (key_h as i32 + gap as i32);
+        // y taşmasın (ekran dışı ise atla)
+        if ry + key_h as i32 > h as i32 || ry < 0 { continue; }
+        let _ = total_h;
+        for (c, _k) in row.iter().enumerate() {
+            let x = rx + c as i32 * (key_w as i32 + gap as i32);
+            let is_sel = kb.cursor == (r, c);
+            let bg = if is_sel { theme.color("button_selected") } else { theme.color("button_idle") };
+            let border = if is_sel { theme.color("border_selected") } else { theme.color("border") };
+            canvas.set_draw_color(to_color(bg));
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, ry, key_w, key_h));
+            canvas.set_draw_color(to_color(border));
+            let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, ry, key_w, key_h));
+        }
+    }
+}
+
+/// TASK-012j — folder browser overlay (path + liste + scrollbar + seçili highlight).
+fn draw_folder_browser(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+) {
+    let Some(fb) = &screen.browser else { return; };
+    canvas.set_draw_color(to_color(theme.color("shadow")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
+    let pw = ((w as i32) * 80 / 100).max(200) as u32;
+    let ph = ((h as i32) * 85 / 100).max(200) as u32;
+    let px = ((w as i32 - pw as i32) / 2).max(0) as i32;
+    let py = ((h as i32 - ph as i32) / 2).max(0) as i32;
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(px, py, pw, ph));
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(px, py, pw, ph));
+    // Path çubuğu (border_selected)
+    let bar_h: u32 = 28;
+    canvas.set_draw_color(to_color(theme.color("button_selected")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + 10, py + 40, pw - 20, bar_h));
+    canvas.set_draw_color(to_color(theme.color("border_selected")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(px + 10, py + 40, pw - 20, bar_h));
+    // Liste
+    let item_h: u32 = 30;
+    let gap: u32 = 4;
+    let list_y = py + 80;
+    let visible = fb.visible_items.min(10) as usize;
+    let slice = fb.visible_slice();
+    for (i, _item) in slice.iter().enumerate() {
+        let abs_idx = fb.scroll_offset + i;
+        let is_sel = abs_idx == fb.selection;
+        let y = list_y + i as i32 * (item_h as i32 + gap as i32);
+        if y + item_h as i32 > py + ph as i32 - 20 { break; }
+        let bg = if is_sel { theme.color("button_hover") } else { theme.color("button_idle") };
+        let border = if is_sel { theme.color("highlight") } else { theme.color("border") };
+        // highlight seçiliyse farklı
+        let draw_border = if is_sel { theme.color("border_selected") } else { border };
+        canvas.set_draw_color(to_color(bg));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + 20, y, pw - 40, item_h));
+        canvas.set_draw_color(to_color(draw_border));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(px + 20, y, pw - 40, item_h));
+        // scrollbar (son item'da)
+        if visible < fb.items.len() && i == 0 {
+            let sb_x = px + pw as i32 - 18;
+            let sb_y = list_y;
+            let sb_h = (visible as u32 * (item_h + gap)) as u32;
+            canvas.set_draw_color(to_color(theme.color("border")));
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(sb_x, sb_y, 6, sb_h));
+            let cursor_h = (sb_h * visible as u32 / fb.items.len().max(1) as u32).max(12);
+            let cursor_y = sb_y + ((sb_h - cursor_h) * fb.scroll_offset as u32 / (fb.items.len() - visible).max(1) as u32) as i32;
+            canvas.set_draw_color(to_color(theme.color("highlight")));
+            let _ = canvas.fill_rect(sdl2::rect::Rect::new(sb_x, cursor_y, 6, cursor_h));
+        }
+        let _ = visible;
+    }
+}
+
 /// TASK-012m Faz 5 — self-update banner (metin yok; ttf erte). Aşamaya göre renk:
 /// `available`=warning_text (turuncu — bulgu 10 fix), `downloading`=neon (mavi,
 /// iç dolgu=percent), `ready`=success (yeşil), `failed`=error_text (kırmızı).
@@ -578,6 +684,13 @@ pub fn run_native_shell(
             // TASK-012i: overlay varsa üstte çiz (pause/display/filter)
             if screen.overlay.is_some() {
                 draw_menu_overlay(&mut canvas, theme, &screen, dims);
+            }
+            // TASK-012j: sanal klavye / folder browser en üstte (overlay üstüne)
+            if screen.keyboard.is_some() {
+                draw_virtual_keyboard(&mut canvas, theme, &screen, dims);
+            }
+            if screen.browser.is_some() {
+                draw_folder_browser(&mut canvas, theme, &screen, dims);
             }
             // Faz 5: transition bittiyse temizle
             if let Some(tr) = &screen.transition {

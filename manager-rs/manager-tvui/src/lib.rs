@@ -6,6 +6,7 @@
 //! `RGSX_TVUI=1` → SDL2 native shell — tek TVUI yolu (Python pygame fallback
 //! TASK-012-gap-02 ile söküldü).
 
+pub mod folder_browser;
 pub mod i18n;
 pub mod menus;
 pub mod native_input;
@@ -14,6 +15,7 @@ pub mod render;
 pub mod sdl2_shell;
 pub mod state;
 pub mod theme;
+pub mod virtual_keyboard;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;

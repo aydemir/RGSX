@@ -42,3 +42,6 @@ SDL2'ye portlanır. Gamepad imleç: SDL2 ızgara + `native_input.rs` (gilrs) ile
 ## İlerleme
 
 - 2026-08-21 — yön (B) kararıyla çıkarıldı (SPA TASK-012d superseded).
+- 2026-08-27 — Faz1: `virtual_keyboard.rs` (Qwerty/Azerty/Qwertz deklaratif layout + nintendo_layout Y↔Z, gamepad cursor 9 test)
+- 2026-08-27 — Faz2: `folder_browser.rs` (BrowserMode/platform/roms_root/history_move + nav/page + scroll + 8 test)
+- 2026-08-27 — Faz3: `state.rs` entegrasyon (keyboard/browser intercept + GlobalSearch→keyboard + search_query filter) + `sdl2_shell.rs` draw_virtual_keyboard/draw_folder_browser, 75/75 yeşil

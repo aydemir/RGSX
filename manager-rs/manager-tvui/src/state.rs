@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::folder_browser::{BrowserMode, FolderBrowser};
 use crate::menus::{MenuKind, MenuNav};
 use crate::net::{PlatformTile, TvuiState, UiAction, UiKey};
 use crate::render::Transition;
+use crate::virtual_keyboard::{KeyboardVariant, VirtualKeyboard};
 
 /// Menu state — `tvui.py` `config.menu_state` değerlerinin tip-güvenli karşılığı.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +56,11 @@ pub struct TvuiScreen {
     /// Filter/sort state (game_list filtering parity, display/menus.py)
     pub filters: HashMap<String, String>,
     pub sort_mode: String,
+    /// TASK-012j: sanal klavye + folder browser (display/virtual_keyboard.py + folder_browser.py)
+    pub keyboard: Option<VirtualKeyboard>,
+    pub browser: Option<FolderBrowser>,
+    /// Global search query (keyboard.input senkronu, controls/search.py parity)
+    pub search_query: String,
     /// SSE/loading tarafı (net::TvuiState ile senkron).
     pub net: TvuiState,
     /// Son key-repeat zaman damgası (Python `process_key_repeats` parity).
@@ -74,6 +81,9 @@ impl Default for TvuiScreen {
             overlay: None,
             filters: HashMap::new(),
             sort_mode: "name_asc".to_string(),
+            keyboard: None,
+            browser: None,
+            search_query: String::new(),
             net: TvuiState::default(),
             last_key: None,
             last_at: None,
@@ -133,6 +143,11 @@ impl TvuiScreen {
     /// `sort_mode` `name_asc/desc` veya `size_asc/desc` (size parse sayısal).
     pub fn filtered_games(&self) -> Vec<GameRow> {
         let mut list = self.games.clone();
+        // TASK-012j: search_query ile alt dize filtresi (controls/search.py filter_games_by_search_query parity)
+        if !self.search_query.trim().is_empty() {
+            let q = self.search_query.to_lowercase();
+            list.retain(|g| g.name.to_lowercase().contains(&q));
+        }
         // Filter: region bazlı basit (USA/Europe/Japan/Other)
         for (k, v) in &self.filters {
             if v == "exclude" {
@@ -188,6 +203,31 @@ impl TvuiScreen {
         self.last_at = Some(now);
         false
     }
+
+    /// TASK-012j: sanal klavyeyi aç (variant env'den, nintendo_layout flag dahil).
+    pub fn open_keyboard(&mut self, variant: KeyboardVariant) {
+        let nintendo = std::env::var("RGSX_NINTENDO_LAYOUT").map(|v| v == "1").unwrap_or(false);
+        let mut kb = VirtualKeyboard::new(variant, nintendo);
+        kb.input = self.search_query.clone();
+        self.keyboard = Some(kb);
+    }
+
+    pub fn close_keyboard(&mut self) {
+        if let Some(kb) = self.keyboard.take() {
+            self.search_query = kb.input.clone();
+        }
+    }
+
+    /// TASK-012j: folder browser aç.
+    pub fn open_browser(&mut self, mode: BrowserMode, path: impl Into<std::path::PathBuf>) {
+        let mut fb = FolderBrowser::new(mode, path);
+        fb.refresh_from_fs();
+        self.browser = Some(fb);
+    }
+
+    pub fn close_browser(&mut self) {
+        self.browser = None;
+    }
 }
 
 /// SAF reducer: mevcut screen + semantik tuş → (menu geçişi + opsiyonel UiAction).
@@ -206,6 +246,74 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
     if !is_nav {
         screen.last_key = None;
         screen.last_at = None;
+    }
+
+    // TASK-012j: folder browser en üst öncelik (gamepad imleç gezinir, Confirm girer, Back yukarı)
+    if screen.browser.is_some() {
+        match key {
+            UiKey::NavUp => { if let Some(b) = screen.browser.as_mut() { b.nav_up(); } },
+            UiKey::NavDown => { if let Some(b) = screen.browser.as_mut() { b.nav_down(); } },
+            UiKey::PageUp => { if let Some(b) = screen.browser.as_mut() { b.page_up(); } },
+            UiKey::PageDown => { if let Some(b) = screen.browser.as_mut() { b.page_down(); } },
+            UiKey::NavLeft => { if let Some(b) = screen.browser.as_mut() { b.nav_up(); } },
+            UiKey::NavRight => { if let Some(b) = screen.browser.as_mut() { b.nav_down(); } },
+            UiKey::Confirm => {
+                if let Some(b) = screen.browser.as_mut() {
+                    let _next = b.enter();
+                    b.refresh_from_fs();
+                }
+            }
+            UiKey::Back | UiKey::Menu => {
+                // Kökte ise browser'ı kapat, değilse parent'a
+                let at_root = screen.browser.as_ref().map(|b| b.current_path.parent().is_none()).unwrap_or(true);
+                if at_root || key == UiKey::Menu {
+                    screen.browser = None;
+                } else if let Some(b) = screen.browser.as_mut() {
+                    let _up = b.go_parent();
+                    b.refresh_from_fs();
+                }
+            }
+            _ => {}
+        }
+        return None;
+    }
+
+    // TASK-012j: sanal klavye açıkken gamepad imleç + Confirm/Back (karakter ekle/sil)
+    if screen.keyboard.is_some() {
+        match key {
+            UiKey::NavUp => { if let Some(kb) = screen.keyboard.as_mut() { kb.move_up(); } },
+            UiKey::NavDown => { if let Some(kb) = screen.keyboard.as_mut() { kb.move_down(); } },
+            UiKey::NavLeft => { if let Some(kb) = screen.keyboard.as_mut() { kb.move_left(); } },
+            UiKey::NavRight => { if let Some(kb) = screen.keyboard.as_mut() { kb.move_right(); } },
+            UiKey::PageUp => { if let Some(kb) = screen.keyboard.as_mut() { kb.move_up(); } },
+            UiKey::PageDown => { if let Some(kb) = screen.keyboard.as_mut() { kb.move_down(); } },
+            UiKey::Confirm => {
+                if let Some(kb) = screen.keyboard.as_mut() {
+                    let q = kb.confirm();
+                    screen.search_query = q;
+                }
+            }
+            UiKey::Back => {
+                if let Some(kb) = screen.keyboard.as_mut() {
+                    if kb.input.is_empty() {
+                        // boşta Back → klavyeyi kapat
+                        screen.search_query = kb.input.clone();
+                        screen.keyboard = None;
+                    } else {
+                        let q = kb.backspace();
+                        screen.search_query = q;
+                    }
+                }
+            }
+            UiKey::Menu => {
+                // Menu → klavyeyi kapat ve query'yi koru
+                if let Some(kb) = screen.keyboard.take() {
+                    screen.search_query = kb.input;
+                }
+            }
+            _ => {}
+        }
+        return None;
     }
 
     // TASK-012i: overlay açıkken nav/confirm/back overlay'i yönetir (pause/display/filter/sort)
@@ -254,6 +362,22 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                             }
                             .to_string();
                             close = true;
+                        }
+                        MenuKind::GlobalSearch => {
+                            match key {
+                                "search_edit" => {
+                                    // Klavyeyi aç — overlay kapanır, keyboard aktif olur
+                                    let variant = KeyboardVariant::from_str(&std::env::var("RGSX_KEYBOARD_LAYOUT").unwrap_or_else(|_| "qwerty".into()));
+                                    screen.open_keyboard(variant);
+                                    close = true;
+                                }
+                                "search_clear" => {
+                                    screen.search_query.clear();
+                                    if let Some(kb) = screen.keyboard.as_mut() { kb.input.clear(); }
+                                    // overlay açık kalır, tekrar arama yapılabilir
+                                }
+                                _ => close = true,
+                            }
                         }
                         _ => close = true,
                     }
@@ -586,5 +710,72 @@ mod tests {
         s.sort_mode = "size_desc".into();
         let sorted = s.filtered_games();
         assert_eq!(sorted[0].name, "Game D");
+    }
+
+    #[test]
+    fn virtual_keyboard_gamepad_typing() {
+        let mut s = TvuiScreen::default();
+        s.open_keyboard(crate::virtual_keyboard::KeyboardVariant::Qwerty);
+        assert!(s.keyboard.is_some());
+        let t0 = now();
+        // cursor (0,0)=0, right ->1
+        reduce(&mut s, UiKey::NavRight, t0);
+        assert_eq!(s.keyboard.as_ref().unwrap().cursor, (0,1));
+        reduce(&mut s, UiKey::Confirm, t0 + Duration::from_millis(200));
+        assert_eq!(s.search_query, "1");
+        assert_eq!(s.keyboard.as_ref().unwrap().input, "1");
+        reduce(&mut s, UiKey::Back, t0 + Duration::from_millis(400));
+        assert_eq!(s.search_query, "");
+        // boşta Back → kapanır
+        reduce(&mut s, UiKey::Back, t0 + Duration::from_millis(600));
+        assert!(s.keyboard.is_none());
+    }
+
+    #[test]
+    fn global_search_overlay_opens_keyboard() {
+        let mut s = make_grid(1);
+        s.menu = MenuState::PlatformGrid;
+        reduce(&mut s, UiKey::Menu, now());
+        // Pause overlay -> select OpenSearch (index 4)
+        if let Some(ov) = s.overlay.as_mut() { ov.selected = 4; }
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(200));
+        // Şimdi pause kapandı, GlobalSort değil Search için direkt açalım
+        let lang = crate::i18n::load_lang("en");
+        s.overlay = Some(crate::menus::MenuNav::new(crate::menus::MenuKind::GlobalSearch, &lang, &lang));
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(400)); // search_edit
+        assert!(s.keyboard.is_some());
+        assert!(s.overlay.is_none());
+    }
+
+    #[test]
+    fn search_query_filters_games() {
+        let mut s = TvuiScreen::default();
+        s.games = vec![
+            GameRow { name: "Super Mario (USA)".into(), size: "10".into(), url: "a".into() },
+            GameRow { name: "Zelda (Europe)".into(), size: "20".into(), url: "b".into() },
+            GameRow { name: "Mario Kart".into(), size: "30".into(), url: "c".into() },
+        ];
+        s.search_query = "mario".into();
+        let filtered = s.filtered_games();
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|g| g.name.to_lowercase().contains("mario")));
+    }
+
+    #[test]
+    fn folder_browser_gamepad_nav() {
+        let mut s = TvuiScreen::default();
+        s.open_browser(crate::folder_browser::BrowserMode::RomsRoot, "/tmp");
+        s.browser.as_mut().unwrap().set_items(vec!["..".into(), "a".into(), "b".into(), "c".into()]);
+        s.browser.as_mut().unwrap().visible_items = 2;
+        assert_eq!(s.browser.as_ref().unwrap().selection, 0);
+        reduce(&mut s, UiKey::NavDown, now());
+        assert_eq!(s.browser.as_ref().unwrap().selection, 1);
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(200));
+        assert_eq!(s.browser.as_ref().unwrap().selection, 2);
+        reduce(&mut s, UiKey::PageDown, now() + Duration::from_millis(400));
+        assert_eq!(s.browser.as_ref().unwrap().selection, 3);
+        reduce(&mut s, UiKey::Back, now() + Duration::from_millis(600));
+        // Back parent'a gitti ama browser hâlâ açık (kök değilse)
+        assert!(s.browser.is_some());
     }
 }
