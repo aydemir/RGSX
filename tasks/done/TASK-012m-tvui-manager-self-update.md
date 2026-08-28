@@ -2,7 +2,7 @@
 
 - **id:** TASK-012m
 - **title:** Manager binary self-update (version check + download + SHA256 verify + platform-safe apply + restart)
-- **status:** in-progress
+- **status:** done
 - **priority:** P1
 - **created:** 2026-08-22
 - **updated:** 2026-08-22
@@ -127,4 +127,5 @@ alıp apply'ı ayrı tık yaptık (indirme uzun→arka plan, apply geri alınama
   iptal) + `manager_update_apply` handler (servis reddi + `RGSX_SELF_APPLY=1` gate ile Win/Linux
   replace+relaunch + `.old` yedeği). TVUI: stage makinesi, Enter=indir/uygula, C=iptal,
   "Yeniden başlatılıyor…" ekranı. manager-http/tvui/bin derlendi; testler yeşil (28 lib + 19 tvui
-  + smoke). **Commit edilmedi** (kullanıcı açık onayı bekleniyor; apply kapısı default kapalı).
+   + smoke). **Commit edilmedi** (kullanıcı açık onayı bekleniyor; apply kapısı default kapalı).
+- 2026-08-27 — Kullanıcı onayı ile done: TASK-012l cutover sonrası kuyruk+iptal + apply gate + --recover doğrulandı (self_update_smoke 1/1, manager-tvui 88/88), Faz 5 güvenli parçalar commitlendi, apply kapısı `RGSX_SELF_APPLY=1` ile korumalı
