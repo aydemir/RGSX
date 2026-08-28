@@ -2,7 +2,8 @@
 
 - **id:** TASK-002-gap-11
 - **title:** 1fichier download provider zinciri (1F→AD→DL→RD→TB→FREE sıralı fallback, debrid unlock/poll, Range resume, 10x retry, provider_used history yazımı)
-- **status:** todo
+- **status:** in-progress
+- **updated:** 2026-08-27
 - **priority:** P0
 - **created:** 2026-08-14
 - **environment:** both
@@ -53,3 +54,9 @@ ya da daemon/HTTP sözleşmesine eklenmelidir.
 - Range resume (`.part` + `os.replace`) + 10x retry/backoff parity.
 - FREE mode: API anahtarı olmadan indirme + zip/rar/7z extract + progress callback'leri.
 - Duplicate URL dedup (≤1800s bekleme + cache) korunur.
+
+---
+
+## İlerleme
+
+- 2026-08-27 — Faz1: `manager-download/src/one_fichier.rs` (Provider enum 1F→FREE, ApiKeys env/file, DedupCache 1800s, history_provider_fields, 5 test) + `lib.rs` mod export, 34 lib + 14 http_integration yeşil

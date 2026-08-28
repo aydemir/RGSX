@@ -12,6 +12,7 @@
 //! kaynakları için çalışır.
 
 pub mod http;
+pub mod one_fichier;
 
 use std::sync::Arc;
 
