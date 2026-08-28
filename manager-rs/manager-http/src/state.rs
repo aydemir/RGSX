@@ -295,6 +295,121 @@ impl StateData {
         self.downloaded_index = idx;
     }
 
+    /// TASK-002-gap-9 (M0) — restart sonrası yarıda kalan indirmeyi sürdürme.
+    ///
+    /// Python `_resume_interrupted_downloads` (rgsx_manager.py:743) parity'si:
+    /// `history`'de `Downloading`/`Téléchargement`/`Paused` status'lu entry'ler
+    /// varsa bunları `Queued`'a çevirip kuyruğa geri ekler. qBittorrent path'inde
+    /// partial verisi korunur → kaldığı yerden devam; Rust librqbit path'inde de
+    /// `.rqbitpart` diskte kalır, yeniden `add_torrent(overwrite=true)` ile resume
+    /// edilir (HTTP ise `Range` resume retry envelope içinde).
+    ///
+    /// - `already downloaded` (downloaded_index) veya hâlâ `Queued`/`Active` ise atlanır.
+    /// - `url` yoksa veya boşsa atlanır.
+    /// Döner: yeniden kuyruğa alınan entry sayısı.
+    pub fn resume_interrupted_downloads(&mut self) -> usize {
+        let mut to_enqueue: Vec<(usize, String, String, String)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for (idx, entry) in self.history.iter().enumerate() {
+            let Some(obj) = entry.as_object() else { continue };
+            let status = obj
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !is_interrupted_status(status) {
+                continue;
+            }
+            let url = obj
+                .get("url")
+                .or_else(|| obj.get("source_url"))
+                .or_else(|| obj.get("download_url"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if url.is_empty() {
+                continue;
+            }
+            let platform = obj
+                .get("platform")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let name = obj
+                .get("game_name")
+                .or_else(|| obj.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            // already downloaded → skip (O(1) index)
+            if !platform.is_empty() && !name.is_empty() && self.downloaded_index.contains(&(platform.clone(), name.clone())) {
+                continue;
+            }
+            // already queued/active → skip
+            if self.queued_ids.contains(&url) {
+                continue;
+            }
+            if let Some(st) = self.tasks.get(&url) {
+                if matches!(st, TaskState::Queued | TaskState::Active) {
+                    continue;
+                }
+            }
+            if seen.contains(&url) {
+                continue;
+            }
+            seen.insert(url.clone());
+            // also check if any history already queued for same url (covers pre-rebuild)
+            to_enqueue.push((idx, url, platform, name));
+        }
+        let mut n = 0usize;
+        for (idx, url, platform, name) in to_enqueue {
+            // history entry status → Queued
+            if let Some(entry) = self.history.get_mut(idx) {
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert("status".to_string(), json!("Queued"));
+                    obj.insert("entity_state".to_string(), json!("QUEUED"));
+                }
+            }
+            // progress → Queued 0%
+            self.progress[&url] = json!({ "status": "Queued", "progress": 0 });
+            // enqueue only if we have at least url + name/platform (fallback name from url)
+            let display_name = if name.is_empty() {
+                url.rsplit('/').next().unwrap_or(&url).to_string()
+            } else {
+                name
+            };
+            let plat = if platform.is_empty() { "unknown".to_string() } else { platform };
+            let item = QueuedItem {
+                platform: plat,
+                name: display_name,
+                url: url.clone(),
+            };
+            // gap-30 queue structures
+            if !self.queued_items.contains_key(&url) {
+                self.pending_set.push_back(url.clone());
+                self.queued_items.insert(url.clone(), item);
+            }
+            self.tasks.insert(url.clone(), TaskState::Queued);
+            self.queued_ids.insert(url.clone());
+            // legacy queue Vec parity (api.rs queue_size uses Vec, but new system uses pending_set;
+            // keep Vec in sync for SSE snapshot backwards compat)
+            // Avoid duplicating Vec entry if already present
+            if !self.queue.iter().any(|v| v.get("url").and_then(Value::as_str) == Some(&url)) {
+                self.queue.push(json!({
+                    "url": url,
+                    "platform": self.queued_items.get(&url).map(|i| i.platform.clone()).unwrap_or_default(),
+                    "game_name": self.queued_items.get(&url).map(|i| i.name.clone()).unwrap_or_default(),
+                    "status": "Queued",
+                }));
+            }
+            n += 1;
+        }
+        if n > 0 {
+            tracing::info!("resume_interrupted: {} entry Queued'a alındı", n);
+        }
+        n
+    }
+
     /// `/api/browse-directories` — verilen kökün alt dizinleri (placeholder: boş).
     /// Python `handlers_ui.py` gerçek tarama yapar; bu slice sadece şablon.
     pub fn browse(&self, path: &str) -> (String, Vec<serde_json::Value>) {
@@ -314,6 +429,15 @@ impl StateData {
             .unwrap_or_default();
         (path.to_string(), dirs)
     }
+}
+
+/// M0 helper — `history` status interrupted sayılır mı?
+fn is_interrupted_status(s: &str) -> bool {
+    let lower = s.trim().to_lowercase();
+    lower == "downloading"
+        || lower == "paused"
+        || lower.starts_with("téléchargement")
+        || lower.starts_with("telechargement")
 }
 
 /// Axum handler'lara `State` extractor ile verilen paylaşılan durum.
@@ -416,5 +540,83 @@ impl AppState {
     /// kullanarak worker kilitlerini uzun süre tutmaz. `Vec` taraması YOK.
     pub fn queued_ids_snapshot(&self) -> HashSet<TaskId> {
         self.read().queued_ids.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resume_interrupted_queues_paused_downloading() {
+        let mut data = StateData::empty();
+        data.history = vec![
+            json!({"platform":"psx","game_name":"GameA","url":"https://a.com/a.zip","status":"Downloading"}),
+            json!({"platform":"snes","game_name":"GameB","url":"https://b.com/b.zip","status":"Téléchargement"}),
+            json!({"platform":"nes","game_name":"GameC","url":"https://c.com/c.zip","status":"Paused"}),
+            json!({"platform":"psx","game_name":"GameD","url":"https://d.com/d.zip","status":"Download_OK"}),
+            json!({"platform":"psx","game_name":"GameE","url":"https://e.com/e.zip","status":"Queued"}),
+            json!({"platform":"psx","game_name":"GameF","url":"https://f.com/f.zip","status":"Erreur"}),
+        ];
+        data.rebuild_downloaded_index();
+        let n = data.resume_interrupted_downloads();
+        assert_eq!(n, 3, "Downloading/Téléchargement/Paused → 3 Queued");
+        assert_eq!(data.pending_set.len(), 3);
+        assert_eq!(data.queued_ids.len(), 3);
+        assert!(data.queued_ids.contains("https://a.com/a.zip"));
+        assert!(data.queued_ids.contains("https://b.com/b.zip"));
+        assert!(data.queued_ids.contains("https://c.com/c.zip"));
+        // history status mutated to Queued
+        assert_eq!(data.history[0]["status"], json!("Queued"));
+        assert_eq!(data.history[1]["status"], json!("Queued"));
+        assert_eq!(data.history[2]["status"], json!("Queued"));
+        // non-interrupted untouched
+        assert_eq!(data.history[3]["status"], json!("Download_OK"));
+        assert_eq!(data.history[4]["status"], json!("Queued"));
+        // progress seeded
+        assert_eq!(data.progress["https://a.com/a.zip"]["status"], json!("Queued"));
+        // tasks
+        assert_eq!(data.tasks.get("https://a.com/a.zip"), Some(&TaskState::Queued));
+    }
+
+    #[test]
+    fn resume_does_not_requeue_already_downloaded() {
+        let mut data = StateData::empty();
+        data.downloaded = json!({"psx":["GameA"]});
+        data.rebuild_downloaded_index();
+        data.history = vec![
+            json!({"platform":"psx","game_name":"GameA","url":"https://a.com/a.zip","status":"Downloading"}),
+            json!({"platform":"psx","game_name":"GameB","url":"https://b.com/b.zip","status":"Downloading"}),
+        ];
+        let n = data.resume_interrupted_downloads();
+        assert_eq!(n, 1, "already downloaded skip");
+        assert!(data.queued_ids.contains("https://b.com/b.zip"));
+        assert!(!data.queued_ids.contains("https://a.com/a.zip"));
+    }
+
+    #[test]
+    fn resume_skips_already_queued_and_empty_url() {
+        let mut data = StateData::empty();
+        data.history = vec![
+            json!({"platform":"psx","game_name":"GameA","url":"https://a.com/a.zip","status":"Downloading"}),
+            json!({"platform":"psx","game_name":"GameA","url":"https://a.com/a.zip","status":"Paused"}),
+            json!({"platform":"psx","game_name":"GameX","status":"Downloading"}),
+        ];
+        let n = data.resume_interrupted_downloads();
+        assert_eq!(n, 1, "duplicate url only once, empty url skip");
+        assert_eq!(data.pending_set.len(), 1);
+    }
+
+    #[test]
+    fn resume_tolerates_telechargement_variants() {
+        let mut data = StateData::empty();
+        data.history = vec![
+            json!({"platform":"psx","game_name":"G1","url":"https://1.com/1.zip","status":"Téléchargement en cours"}),
+            json!({"platform":"psx","game_name":"G2","url":"https://2.com/2.zip","status":"téléchargement"}),
+            json!({"platform":"psx","game_name":"G3","url":"https://3.com/3.zip","status":"DOWNLOADING"}),
+        ];
+        let n = data.resume_interrupted_downloads();
+        assert_eq!(n, 3);
     }
 }

@@ -2,7 +2,8 @@
 
 - **id:** TASK-002-gap-9
 - **title:** Interrupted-download resume after restart (Rust librqbit session ephemral)
-- **status:** todo
+- **status:** done
+- **updated:** 2026-08-28
 - **priority:** P1
 - **created:** 2026-08-14
 - **environment:** both
@@ -35,3 +36,9 @@ kaybolur, torrent partial verisi ve resume mümkün olmaz → indirme baştan ba
 - Manager restart → Rust daemon aktif torrentleri korur/RESUME eder (qBittorrent parity).
 - Partial `.rqbitpart` verisi restart sonrası kaybolmaz.
 - `_resume_interrupted_downloads` mantığı Rust daemon'a taşınır veya Python orkestratör korunur.
+
+---
+
+## İlerleme
+
+- 2026-08-28 — `manager-http/src/state.rs` `StateData::resume_interrupted_downloads()` eklendi: history `Downloading`/`Téléchargement`/`Paused` (variant toleranslı, lowercase) → `Queued`/`QUEUED` çevirme + `progress[url]=Queued` + `pending_set`/`queued_items`/`tasks=Queued`/`queued_ids`/`queue Vec` enqueue (duplicate/empty url + already-downloaded skip, HashSet seen dedup). `is_interrupted_status` helper. `manager-bin/src/main.rs` startup'ta `installed_list`→`rebuild_downloaded_index` sonrası `resume_interrupted_downloads()` çağrısı + `history_path` atomik persist + log. `.rqbitpart` diskte kalır → `add_torrent(overwrite=true)` ile torrent resume, HTTP `Range` resume retry envelope içinde. 4 yeni unit test (`queues_paused_downloading`, `does_not_requeue_already_downloaded`, `skips_already_queued_and_empty_url`, `tolerates_telechargement_variants`) + 28 mevcut yeşil, 32 http lib yeşil — **gap kapandı**.

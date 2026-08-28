@@ -266,6 +266,20 @@ async fn run(paths: paths::RgsxPaths) {
         );
     }
 
+    // TASK-002-gap-9 (M0) — restart sonrası yarıda kalan indirmeyi sürdürme.
+    // Python `_resume_interrupted_downloads` parity'si: history'de
+    // `Downloading`/`Téléchargement`/`Paused` entry'ler `Queued`'a çevrilip
+    // kuyruğa geri eklenir. Diskteki `.rqbitpart`/partial korunur → queue_worker
+    // bir sonraki loop'ta dispatch eder, torrent ise `overwrite=true` ile resume,
+    // HTTP ise `Range` resume ile devam eder.
+    let resumed = data.resume_interrupted_downloads();
+    if resumed > 0 {
+        if let Some(ref hp) = data.history_path {
+            manager_http::persist::save_history(&data.history, hp);
+        }
+        tracing::info!("resume_interrupted: {} oyun kuyruğa geri alındı", resumed);
+    }
+
     // Faz 12.6d — eşzamanlı indirme sınırı semaphore kapasitesi (ayar'dan türet).
     let max_dl = manager_core::settings::Settings::load()
         .max_simultaneous_downloads

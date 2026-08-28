@@ -565,7 +565,7 @@
   {
     "id": "TASK-002-gap-9",
     "title": "Interrupted-download resume after restart (Rust librqbit session ephemral)",
-    "status": "todo",
+    "status": "done",
     "priority": "P1",
     "environment": "both",
     "labels": [
@@ -574,7 +574,7 @@
       "torrent"
     ],
     "depends_on": [],
-    "updated": "2026-08-14",
+    "updated": "2026-08-28",
     "file": "tasks/gap/TASK-002-gap-9-resume-interrupted.md",
     "superseded_by": ""
   },
