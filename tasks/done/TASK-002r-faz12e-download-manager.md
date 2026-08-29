@@ -1,3 +1,12 @@
+---
+id: TASK-002r-faz12e-download-manager
+title: Faz 12e download manager (native DDL resolver + HTTP indirme)
+status: done
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-002r — Faz 12e: download manager (native DDL resolver + doğrudan HTTP indirme)
 
 > Bağımlı: ROADMAP_FAZ12_RUST_WEBUI_TVUI.md. Python `one_fichier.py` / `utils/torrent.py`

@@ -183,8 +183,8 @@ def normalize_entry(path: Path, fm: dict, legacy: dict):
     depends_on = merged.get("depends_on") or merged.get("dependsOn") or merged.get("Depends_on") or []
     if isinstance(depends_on, str):
         depends_on = [depends_on] if depends_on else []
-    # file relative
-    rel = str(path.relative_to(ROOT))
+    # file relative (POSIX normalize — Windows \ vs Linux / drift engel)
+    rel = path.relative_to(ROOT).as_posix()
     # superseded_by
     superseded_by = merged.get("superseded_by") or merged.get("supersededBy") or merged.get("superseded") or ""
     return {

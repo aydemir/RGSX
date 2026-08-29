@@ -53,13 +53,13 @@
   },
   {
     "id": "TASK-002-gap-1-nihai-teknik-spesifikasyon",
-    "title": "",
-    "status": "todo",
+    "title": "Nihai Teknik Spesifikasyon (KEEP_CONTRACT) - DOGRULANMIS",
+    "status": "documented-only",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-002-gap-1-nihai-teknik-spesifikasyon.md",
     "superseded_by": ""
   },
@@ -96,7 +96,7 @@
     ],
     "depends_on": [],
     "updated": "2026-08-28",
-    "file": "tasks/gap/TASK-002-gap-11-1fichier-provider.md",
+    "file": "tasks/done/TASK-002-gap-11-1fichier-provider.md",
     "superseded_by": ""
   },
   {
@@ -575,7 +575,7 @@
     ],
     "depends_on": [],
     "updated": "2026-08-28",
-    "file": "tasks/gap/TASK-002-gap-9-resume-interrupted.md",
+    "file": "tasks/done/TASK-002-gap-9-resume-interrupted.md",
     "superseded_by": ""
   },
   {
@@ -948,61 +948,61 @@
   },
   {
     "id": "TASK-002n-faz12a-webui-spa",
-    "title": "",
-    "status": "todo",
+    "title": "Faz 12a WebUI native SPA (Vue 3 + tower-http)",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-002n-faz12a-webui-spa.md",
     "superseded_by": ""
   },
   {
     "id": "TASK-002o-faz12c-catalog-native",
-    "title": "",
-    "status": "todo",
+    "title": "Faz 12c Catalog native port (Python→Rust)",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-002o-faz12c-catalog-native.md",
     "superseded_by": ""
   },
   {
     "id": "TASK-002p-faz12d-hdd-scan",
-    "title": "",
-    "status": "todo",
+    "title": "Faz 12d HDD scan native port (Python→Rust)",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-002p-faz12d-hdd-scan.md",
     "superseded_by": ""
   },
   {
     "id": "TASK-002q-faz12b-tvui-webview",
-    "title": "",
-    "status": "todo",
+    "title": "Faz 12b TVUI shell (WebUI SPA + kiosk/webview) - superseded SDL2",
+    "status": "superseded",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-21",
     "file": "tasks/done/TASK-002q-faz12b-tvui-webview.md",
-    "superseded_by": ""
+    "superseded_by": "Yön (B) native SDL2 - bkz TASK-012g..l"
   },
   {
     "id": "TASK-002r-faz12e-download-manager",
-    "title": "",
-    "status": "todo",
+    "title": "Faz 12e download manager (native DDL resolver + HTTP indirme)",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-002r-faz12e-download-manager.md",
     "superseded_by": ""
   },
@@ -1045,13 +1045,13 @@
   },
   {
     "id": "TASK-003-native-webui",
-    "title": "",
-    "status": "todo",
+    "title": "Rust WebUI Tam Native Katalog UI (Python yedegi)",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-003-native-webui.md",
     "superseded_by": ""
   },
@@ -1111,13 +1111,13 @@
   },
   {
     "id": "TASK-006-native-settings-webui",
-    "title": "",
-    "status": "todo",
+    "title": "WebUI Ayarlar panelini native /api/settings'e bagla",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [],
     "depends_on": [],
-    "updated": "",
+    "updated": "2026-08-14",
     "file": "tasks/done/TASK-006-native-settings-webui.md",
     "superseded_by": ""
   },
@@ -1389,7 +1389,7 @@
       "TASK-005"
     ],
     "updated": "2026-08-21",
-    "file": "tasks/todo/TASK-012g-tvui-sdl2-shell-theme.md",
+    "file": "tasks/done/TASK-012g-tvui-sdl2-shell-theme.md",
     "superseded_by": ""
   },
   {

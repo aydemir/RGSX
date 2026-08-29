@@ -1,3 +1,12 @@
+---
+id: TASK-002p-faz12d-hdd-scan
+title: Faz 12d HDD scan native port (Python→Rust)
+status: done
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-002p — Faz 12d: HDD scan native port (Python→Rust)
 
 > Bağımlı: ROADMAP_FAZ12_RUST_WEBUI_TVUI.md (onaylandı). Python `update_gamelist.py` /

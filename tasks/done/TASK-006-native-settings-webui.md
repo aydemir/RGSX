@@ -1,3 +1,12 @@
+---
+id: TASK-006-native-settings-webui
+title: WebUI Ayarlar panelini native /api/settings'e bagla
+status: done
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-006 — WebUI Ayarlar panelini native `/api/settings`'e bağla
 
 **Durum:** done

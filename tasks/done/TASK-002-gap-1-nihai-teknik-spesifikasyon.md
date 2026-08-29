@@ -1,3 +1,12 @@
+---
+id: TASK-002-gap-1-nihai-teknik-spesifikasyon
+title: Nihai Teknik Spesifikasyon (KEEP_CONTRACT) - DOGRULANMIS
+status: documented-only
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-002-GAP-1 — Nihai Teknik Spesifikasyon (KEEP_CONTRACT) — DOĞRULANMIŞ
 
 **Dal:** custom • **Tarih:** 2026-08-14 (yeniden doğrulama) •

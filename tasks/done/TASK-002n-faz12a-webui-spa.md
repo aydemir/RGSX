@@ -1,3 +1,12 @@
+---
+id: TASK-002n-faz12a-webui-spa
+title: Faz 12a WebUI native SPA (Vue 3 + tower-http)
+status: done
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-002n — Faz 12a: WebUI native SPA (Vue 3 + tower-http)
 
 > Bağımlı: ROADMAP_FAZ12_RUST_WEBUI_TVUI.md (onaylandı). En düşük riskli faz.

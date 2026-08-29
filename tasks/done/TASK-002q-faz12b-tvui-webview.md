@@ -1,3 +1,13 @@
+---
+id: TASK-002q-faz12b-tvui-webview
+title: Faz 12b TVUI shell (WebUI SPA + kiosk/webview) - superseded SDL2
+status: superseded
+priority: P2
+environment: both
+updated: 2026-08-21
+superseded_by: Yön (B) native SDL2 - bkz TASK-012g..l
+---
+
 # TASK-002q — Faz 12b: TVUI shell (WebUI SPA + kiosk/webview)
 
 > Bağımlı: ROADMAP_FAZ12_RUST_WEBUI_TVUI.md (onaylandı). Strateji: pygame TVUI native

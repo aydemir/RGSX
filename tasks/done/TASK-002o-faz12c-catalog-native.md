@@ -1,3 +1,12 @@
+---
+id: TASK-002o-faz12c-catalog-native
+title: Faz 12c Catalog native port (Python→Rust)
+status: done
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-002o — Faz 12c: Catalog native port (Python→Rust)
 
 > Bağımlı: ROADMAP_FAZ12_RUST_WEBUI_TVUI.md (onaylandı). `CatalogSource` trait

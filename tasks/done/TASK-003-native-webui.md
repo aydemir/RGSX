@@ -1,3 +1,12 @@
+---
+id: TASK-003-native-webui
+title: Rust WebUI Tam Native Katalog UI (Python yedegi)
+status: done
+priority: P2
+environment: both
+updated: 2026-08-14
+---
+
 # TASK-003 — Rust WebUI: Tam Native Katalog UI (Python yedeği)
 
 **Nihai hedef:** Rust webui = Python webui'nin TÜM özellikleriyle (katalog tarama, oyun
