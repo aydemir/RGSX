@@ -85,11 +85,12 @@ pub struct TvuiState {
 }
 
 /// Tek bir platform kutusu (grid tile'ı). `name` görünen etiket, `folder` disk
-/// eşleşmesi (sonraki faz: game_list).
+/// eşleşmesi (sonraki faz: game_list), `image` platform_image dosya adı.
 #[derive(Debug, Clone, Default)]
 pub struct PlatformTile {
     pub name: String,
     pub folder: String,
+    pub image: String,
 }
 
 pub type SharedTvuiState = Arc<Mutex<TvuiState>>;
@@ -166,7 +167,7 @@ fn apply_snapshot(state: &SharedTvuiState, data: &serde_json::Value) {
     }
 }
 
-/// `/api/platforms` yanıtını (`{platforms:[{platform_name,folder,...}]}`) tile listesine çözer.
+/// `/api/platforms` yanıtını (`{platforms:[{platform_name,folder,platform_image,...}]}`) tile listesine çözer.
 pub fn parse_platforms(v: &serde_json::Value) -> Vec<PlatformTile> {
     v.get("platforms")
         .and_then(|a| a.as_array())
@@ -182,6 +183,12 @@ pub fn parse_platforms(v: &serde_json::Value) -> Vec<PlatformTile> {
                     folder: p
                         .get("folder")
                         .or_else(|| p.get("dossier"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    image: p
+                        .get("platform_image")
+                        .or_else(|| p.get("image"))
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .to_string(),

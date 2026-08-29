@@ -188,8 +188,8 @@ fn draw_grid(
         let base_x = margin + col * (tile_w + gap);
         let base_y = margin + row * (tile_h + gap);
         let is_sel = sel == Some(i);
-        // Box-art cache: ikon yolunu çöz (SDL texture yükleme Faz 5'te cache'lenir)
-        let _icon_path = crate::render::BoxArtCache::icon_path_for(&p.name, &theme.icons.path);
+        // Box-art cache: ikon yolunu çöz (folder bazlı, platform_image fallback)
+        let _icon_path = crate::render::BoxArtCache::icon_path_for(&p.folder, &theme.icons.path);
         // Seçili tile: transition scale + border_selected
         if is_sel {
             let scale = trans_scale;
@@ -277,6 +277,45 @@ fn draw_game_list(
             }
         }
         y += (row_h + gap) as i32;
+    }
+}
+
+/// Footer — tuş atamaları (Python display/footer.py parity, TTF yok → renkli bar + border)
+fn draw_footer(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+) {
+    let bh: u32 = 36;
+    let y = h.saturating_sub(bh) as i32;
+    // Footer bar
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, y, w, bh));
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, y, w, bh));
+    // Seçili menüye göre hint renkleri (metin yerine renk blokları — TTF ile sonra metin)
+    let hints: &[&str] = match screen.menu {
+        MenuState::PlatformGrid => &["↑↓←→ Gezin", "Enter Seç", "M Menü", "Esc Çık"],
+        MenuState::GameList => &["↑↓ Seç", "Enter İndir", "Bksp Geri", "M Menü"],
+        MenuState::Loading => &["R Retry", "Enter Çevrimdışı"],
+        MenuState::Error(_) => &["R Retry", "Enter Çevrimdışı", "Esc Çık"],
+        MenuState::Progress => &["Esc Geri"],
+        MenuState::ConfirmExit => &["Enter Çık", "Esc İptal"],
+    };
+    // Her hint için küçük renkli kutu (TTF sonrası metin eklenecek)
+    let mut x = 20;
+    for hint in hints {
+        let is_sel = hint.contains("Enter");
+        let bg = if is_sel { theme.color("border_selected") } else { theme.color("button_selected") };
+        canvas.set_draw_color(to_color(bg));
+        // Hint genişliği metin uzunluğuna göre kabaca
+        let hw = (hint.len() as u32 * 7 + 12).min(w.saturating_sub(40) / hints.len() as u32);
+        if x + hw as i32 > w as i32 - 10 { break; }
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y + 6, hw, bh - 12));
+        canvas.set_draw_color(to_color(theme.color("neon")));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y + 6, hw, bh - 12));
+        x += hw as i32 + 12;
     }
 }
 
@@ -650,7 +689,7 @@ pub fn run_native_shell(
                             let plat = screen
                                 .platforms
                                 .get(screen.selected_platform)
-                                .map(|p| p.name.clone())
+                                .map(|p| p.folder.clone())
                                 .unwrap_or_default();
                             if !plat.is_empty() {
                                 let st = Arc::clone(state);
@@ -689,6 +728,7 @@ pub fn run_native_shell(
                 }
                 MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims),
             }
+            draw_footer(&mut canvas, theme, &screen, dims);
             // TASK-012i: overlay varsa üstte çiz (pause/display/filter)
             if screen.overlay.is_some() {
                 draw_menu_overlay(&mut canvas, theme, &screen, dims);

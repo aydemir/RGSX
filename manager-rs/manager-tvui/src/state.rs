@@ -575,6 +575,7 @@ mod tests {
             .map(|i| PlatformTile {
                 name: format!("P{i}"),
                 folder: format!("p{i}"),
+                image: format!("p{i}.png"),
             })
             .collect();
         s.selected_platform = 0;
@@ -646,6 +647,7 @@ mod tests {
         s.net.platforms = vec![PlatformTile {
             name: "NES".into(),
             folder: "nes".into(),
+            image: "nes.png".into(),
         }];
         s.sync_from_net();
         assert_eq!(s.menu, MenuState::PlatformGrid);
