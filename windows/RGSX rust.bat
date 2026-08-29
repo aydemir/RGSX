@@ -253,9 +253,8 @@ echo       %ESC%%GREEN%^> Server up: http://127.0.0.1:!RGSX_MANAGER_PORT!/%ESC%%
 echo [%DATE% %TIME%] Server up on port !RGSX_MANAGER_PORT! >> "%LOG_FILE%"
 
 if defined TVUI_MODE (
-    echo       %ESC%%CYAN%^> TVUI kiosk requested - manager tries chromium/chrome; browser opened as fallback%ESC%%RESET%
-    echo [%DATE% %TIME%] TVUI kiosk requested; opening default browser at http://127.0.0.1:!RGSX_MANAGER_PORT!/?mode=tv >> "%LOG_FILE%"
-    start "" "http://127.0.0.1:!RGSX_MANAGER_PORT!/?mode=tv"
+    echo       %ESC%%CYAN%^> Native SDL2 TVUI active - browser fallback kaldirildi%ESC%%RESET%
+    echo [%DATE% %TIME%] Native SDL2 TVUI active (RGSX_TVUI=1), browser not opened >> "%LOG_FILE%"
 ) else if not defined NO_TVUI (
     echo       %ESC%%CYAN%^> Opening WebUI in browser...%ESC%%RESET%
     echo [%DATE% %TIME%] Opening browser at http://127.0.0.1:!RGSX_MANAGER_PORT!/ >> "%LOG_FILE%"
