@@ -1294,7 +1294,7 @@
   {
     "id": "TASK-012-gap-05",
     "title": "TVUI box-art doku render eksigi — icon_path texture blit ve cache",
-    "status": "todo",
+    "status": "done",
     "priority": "P2",
     "environment": "both",
     "labels": [

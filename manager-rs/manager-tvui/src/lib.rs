@@ -7,6 +7,7 @@
 //! tek TVUI yolu = native SDL2 (Python pygame fallback TASK-012-gap-02 ile söküldü).
 
 pub mod accessibility;
+pub mod boxart;
 pub mod folder_browser;
 pub mod i18n;
 pub mod menus;

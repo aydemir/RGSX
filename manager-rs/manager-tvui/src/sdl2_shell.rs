@@ -144,14 +144,15 @@ fn draw_loading(
 
 /// `ready` sonrası platform grid'i: `/api/platforms`'tan gelen `state.platforms`
 /// listesini tile olarak dizer. Faz 3: seçili tile `border_selected` + scale ile vurgulanır.
-fn draw_grid(
+fn draw_grid<'a>(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
     state: &SharedTvuiState,
     screen: &TvuiScreen,
     (w, _h): (u32, u32),
-    tc: &TextureCreator<WindowContext>,
+    tc: &'a TextureCreator<WindowContext>,
     font_scale: f32,
+    art: &mut crate::boxart::SdlBoxArtCache<'a>,
 ) {
     let (platforms, offline) = {
         let s = tvui_lock(state);
@@ -191,7 +192,7 @@ fn draw_grid(
         let base_x = margin + col * (tile_w + gap);
         let base_y = margin + row * (tile_h + gap);
         let is_sel = sel == Some(i);
-        let _icon_path = crate::render::BoxArtCache::icon_path_for(&p.name, &theme.icons.path);
+        let icon_path = crate::render::BoxArtCache::icon_path_for(&p.name, &theme.icons.path);
         if is_sel {
             let scale = trans_scale;
             let sw = (tile_w as f32 * scale) as u32;
@@ -215,6 +216,8 @@ fn draw_grid(
                 sw + (pad * 2) as u32,
                 sh + (pad * 2) as u32,
             ));
+            // Box-art: secili tile ile birlikte olceklenen rect'e blit (yoksa fallback kutu kalir).
+            let _ = art.blit(canvas, tc, &icon_path, sdl2::rect::Rect::new(x, y, sw, sh));
             let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(x, y, sw, sh), 12, font_scale);
 
         } else {
@@ -222,6 +225,7 @@ fn draw_grid(
             let _ = canvas.fill_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
             canvas.set_draw_color(to_color(theme.color("neon")));
             let _ = canvas.draw_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
+            let _ = art.blit(canvas, tc, &icon_path, sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
             let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h), 11, font_scale);
 
         }
@@ -584,9 +588,10 @@ pub fn run_native_shell(
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
 
     let preset = std::env::var("RGSX_TVUI_BG").unwrap_or_else(|_| "default".into());
-    // TASK-012h Faz 3/5: state machine + box-art cache (Faz 5)
+    // TASK-012h Faz 3/5 + gap-05: state machine + box-art texture cache (cap 64).
     let mut screen = TvuiScreen::default();
-    let _art_cache = crate::render::BoxArtCache::new(32);
+    let mut art_cache =
+        crate::boxart::SdlBoxArtCache::new(crate::boxart::MAX_TEXTURES, theme.icons.path.clone());
 
     'running: loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -698,11 +703,15 @@ pub fn run_native_shell(
             // screen.menu üzerinden çizim (Faz 3/4/5)
                 let font_scale = screen.a11y.font_scale().max(0.5).min(3.0);
     match screen.menu {
-                MenuState::PlatformGrid => draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale),
+                MenuState::PlatformGrid => {
+                    art_cache.sync_icons_path(&theme.icons.path);
+                    draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale, &mut art_cache)
+                },
                 MenuState::GameList => draw_game_list(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
                 MenuState::Loading | MenuState::Error(_) => draw_loading(&mut canvas, theme, state, dims, &texture_creator, font_scale),
                 MenuState::ConfirmExit => {
-                    draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale);
+                    art_cache.sync_icons_path(&theme.icons.path);
+                    draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale, &mut art_cache);
                     canvas.set_draw_color(to_color(theme.color("warning_text")));
                     let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
                 }
