@@ -16,6 +16,7 @@ pub mod render;
 pub mod sdl2_shell;
 pub mod state;
 pub mod theme;
+pub mod text;
 pub mod virtual_keyboard;
 
 use std::path::PathBuf;

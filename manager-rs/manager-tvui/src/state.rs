@@ -48,6 +48,9 @@ pub struct TvuiScreen {
     /// Seçili platformun oyun listesi (net.games ile senkron).
     pub games: Vec<GameRow>,
     pub selected_game: usize,
+    /// Sayfa adımı (Python `config.visible_games` parity — default 15,
+    /// `config.py:494`; Python'da da layout'tan güncellenmez, sabit).
+    pub visible_games: usize,
     /// Faz 4: canlı progress haritası (net.progress ile senkron).
     pub progress: HashMap<String, serde_json::Value>,
     /// Faz 5: platform seçim transition'ı (scale+alpha, theme.json ile).
@@ -79,6 +82,7 @@ impl Default for TvuiScreen {
             selected_platform: 0,
             games: Vec::new(),
             selected_game: 0,
+            visible_games: 15,
             progress: HashMap::new(),
             transition: None,
             overlay: None,
@@ -428,29 +432,53 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             None
         }
         MenuState::PlatformGrid => match key {
-            UiKey::NavUp | UiKey::NavLeft => {
+            // Izgara 6 sütun (draw_grid cols): Left/Right yatay ±1, Up/Down dikey ±6.
+            // Tek satırlık listede (n<=6) Up/Down Left/Right gibi davranır.
+            UiKey::NavLeft => {
                 if screen.platforms.is_empty() {
                     return None;
                 }
-                if screen.selected_platform > 0 {
-                    screen.selected_platform -= 1;
+                let n = screen.platforms.len();
+                screen.selected_platform = (screen.selected_platform + n - 1) % n;
+                None
+            }
+            UiKey::NavRight => {
+                if screen.platforms.is_empty() {
+                    return None;
+                }
+                let n = screen.platforms.len();
+                screen.selected_platform = (screen.selected_platform + 1) % n;
+                None
+            }
+            UiKey::NavUp => {
+                if screen.platforms.is_empty() {
+                    return None;
+                }
+                let n = screen.platforms.len();
+                if n <= 6 {
+                    screen.selected_platform = (screen.selected_platform + n - 1) % n;
                 } else {
-                    screen.selected_platform = screen.platforms.len() - 1; // wrap
+                    screen.selected_platform = (screen.selected_platform + n - 6) % n;
                 }
                 None
             }
-            UiKey::NavDown | UiKey::NavRight => {
+            UiKey::NavDown => {
                 if screen.platforms.is_empty() {
                     return None;
                 }
-                screen.selected_platform = (screen.selected_platform + 1) % screen.platforms.len();
+                let n = screen.platforms.len();
+                if n <= 6 {
+                    screen.selected_platform = (screen.selected_platform + 1) % n;
+                } else {
+                    screen.selected_platform = (screen.selected_platform + 6) % n;
+                }
                 None
             }
             UiKey::PageUp => {
                 if screen.platforms.is_empty() {
                     return None;
                 }
-                let step = 6usize; // grid 3×2 varsayımı; test edilebilir sabit
+                let step = 6usize; // ızgara 6 sütun (draw_grid cols)
                 screen.selected_platform = screen.selected_platform.saturating_sub(step);
                 None
             }
@@ -482,27 +510,32 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             _ => None,
         },
         MenuState::GameList => match key {
+            // Python parity (controls/handlers.py): Up/Down wrap'li ±1,
+            // Left≡PageUp (−visible_games), Right≡PageDown (+visible_games, clamp).
             UiKey::NavUp => {
-                if screen.selected_game > 0 {
-                    screen.selected_game -= 1;
+                if !screen.games.is_empty() {
+                    let n = screen.games.len();
+                    screen.selected_game = (screen.selected_game + n - 1) % n;
                 }
                 None
             }
             UiKey::NavDown => {
                 if !screen.games.is_empty() {
                     screen.selected_game =
-                        (screen.selected_game + 1).min(screen.games.len() - 1);
+                        (screen.selected_game + 1) % screen.games.len();
                 }
                 None
             }
-            UiKey::PageUp => {
-                screen.selected_game = screen.selected_game.saturating_sub(10);
+            UiKey::NavLeft | UiKey::PageUp => {
+                let step = screen.visible_games;
+                screen.selected_game = screen.selected_game.saturating_sub(step);
                 None
             }
-            UiKey::PageDown => {
+            UiKey::NavRight | UiKey::PageDown => {
                 if !screen.games.is_empty() {
+                    let step = screen.visible_games;
                     screen.selected_game =
-                        (screen.selected_game + 10).min(screen.games.len() - 1);
+                        (screen.selected_game + step).min(screen.games.len() - 1);
                 }
                 None
             }
@@ -595,6 +628,24 @@ mod tests {
     }
 
     #[test]
+    fn platform_grid_row_nav() {
+        // 8 platform (2 satır): Down/Up satır atlar (±6), Left/Right yatay (±1).
+        let mut s = make_grid(8);
+        reduce(&mut s, UiKey::NavDown, now());
+        assert_eq!(s.selected_platform, 6);
+        reduce(&mut s, UiKey::NavUp, now() + Duration::from_millis(200));
+        assert_eq!(s.selected_platform, 0);
+        reduce(&mut s, UiKey::NavRight, now() + Duration::from_millis(400));
+        assert_eq!(s.selected_platform, 1);
+        reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(600));
+        assert_eq!(s.selected_platform, 0);
+        reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(800));
+        assert_eq!(s.selected_platform, 7); // wrap
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(1000));
+        assert_eq!(s.selected_platform, 5); // (7+6)%8
+    }
+
+    #[test]
     fn platform_grid_confirm_goes_to_gamelist() {
         let mut s = make_grid(2);
         reduce(&mut s, UiKey::Confirm, now());
@@ -633,6 +684,35 @@ mod tests {
         assert_eq!(s.menu, MenuState::GameList);
         reduce(&mut s, UiKey::Back, now() + Duration::from_millis(800));
         assert_eq!(s.menu, MenuState::PlatformGrid);
+    }
+
+    #[test]
+    fn gamelist_left_right_alias_page() {
+        // Python parity: Left≡PageUp(−visible_games=15), Right≡PageDown(+15);
+        // Up/Down wrap'li. 20 oyunla adım gerçekten ayırt edilir (10 değil).
+        let mut s = TvuiScreen::default();
+        s.menu = MenuState::GameList;
+        s.games = (0..20)
+            .map(|i| GameRow {
+                name: format!("G{i}"),
+                size: "10M".into(),
+                url: format!("http://x/{i}"),
+            })
+            .collect();
+        assert_eq!(s.visible_games, 15); // config.py:494 parity
+        s.selected_game = 0;
+        reduce(&mut s, UiKey::NavRight, now());
+        assert_eq!(s.selected_game, 15);
+        reduce(&mut s, UiKey::NavRight, now() + Duration::from_millis(200));
+        assert_eq!(s.selected_game, 19); // (15+15).min(19)
+        reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(400));
+        assert_eq!(s.selected_game, 4);
+        reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(600));
+        assert_eq!(s.selected_game, 0); // üstte clamp
+        reduce(&mut s, UiKey::NavUp, now() + Duration::from_millis(800));
+        assert_eq!(s.selected_game, 19); // wrap
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(1000));
+        assert_eq!(s.selected_game, 0); // wrap
     }
 
     #[test]
