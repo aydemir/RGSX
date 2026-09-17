@@ -17,8 +17,247 @@ use sdl2::video::{Window, WindowContext};
 use crate::net::{
     apply_ui_action, expire_stale_restart_at, tvui_lock, ui_decision, SharedTvuiState, UiKey,
 };
-use crate::state::{MenuState, TvuiScreen};
+use crate::state::{MenuState, TvuiScreen, GRID_COLS, GRID_PER_PAGE, GRID_ROWS};
 use crate::theme::Theme;
+
+/// Box-art kök dizinini çözer (SDL'siz, test edilebilir). Sıra:
+/// 1. `RGSX_IMAGES_FOLDER` (katalog `NativeCatalog` ile aynı kaynak)
+/// 2. `RGSX_DATA_DIR/images`
+/// 3. exe'den RetroBat anchor: `roms/ports/RGSX` yanındaki exe → 3×parent =
+///    RetroBat root → `saves/ports/rgsx/images`
+/// 4. tema `icons.path` (CWD-relative, dev fallback)
+/// Bulunamazsa tema yolunu aynen döner (çağıran fallback kutuyu korur).
+pub fn resolve_icons_path(theme_icons_path: &str) -> String {
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("RGSX_IMAGES_FOLDER") {
+        if !p.trim().is_empty() {
+            cands.push(std::path::PathBuf::from(p));
+        }
+    }
+    if let Ok(d) = std::env::var("RGSX_DATA_DIR") {
+        if !d.trim().is_empty() {
+            cands.push(std::path::PathBuf::from(d).join("images"));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let root = dir
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent());
+            if let Some(r) = root {
+                cands.push(r.join("saves").join("ports").join("rgsx").join("images"));
+            }
+        }
+    }
+    cands.push(std::path::PathBuf::from(theme_icons_path));
+    for c in &cands {
+        if c.is_dir() {
+            return c.to_string_lossy().into_owned();
+        }
+    }
+    theme_icons_path.to_string()
+}
+
+/// Seçili tile pulse ölçeği (Python parity: `1.15 + 0.05*sin`, 600ms periyot).
+/// `now_ms` monoton milisaniye (SystemTime/UNIX_EPOCH). Saf, test edilebilir.
+pub fn selection_pulse_scale(now_ms: u64) -> f32 {
+    const BASE: f32 = 1.15;
+    const AMP: f32 = 0.05;
+    const PERIOD_MS: f32 = 600.0;
+    let phase = (now_ms as f32 % PERIOD_MS) / PERIOD_MS * std::f32::consts::TAU;
+    BASE + AMP * phase.sin()
+}
+
+/// Monoton duvar saati (ms). SDL'siz; pulse fazı buradan beslenir.
+pub fn wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Platform logosunu blit eder; dosyası yoksa `default.png` fallback'ini dener
+/// (Python `miss → default.png` parity; ikisi de yoksa false → kutu kalır).
+fn blit_platform_art<'a>(
+    art: &mut crate::boxart::SdlBoxArtCache<'a>,
+    canvas: &mut Canvas<Window>,
+    tc: &'a TextureCreator<WindowContext>,
+    icons_path: &str,
+    icon_path: &str,
+    dst: sdl2::rect::Rect,
+) -> bool {
+    if art.blit(canvas, tc, icon_path, dst) {
+        return true;
+    }
+    let fallback = format!("{}/default.png", icons_path.trim_end_matches('/'));
+    if fallback != icon_path {
+        return art.blit(canvas, tc, &fallback, dst);
+    }
+    false
+}
+
+/// Header rozet çubuğu yüksekliği (grid `margin_top` buradan türetilir).
+pub const HEADER_H: u32 = 30;
+
+/// Python `grid.format_disk_size_gb` parity: >=100 → tam, >=10 → 1 ondalık, else 2.
+pub fn format_disk_gb(size_bytes: u64) -> String {
+    let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    if gb >= 100.0 {
+        format!("{gb:.0}GB")
+    } else if gb >= 10.0 {
+        format!("{gb:.1}GB")
+    } else {
+        format!("{gb:.2}GB")
+    }
+}
+
+/// Gömülü `version.json` → "2.6.5.6" (derleme anında, deploy'da da geçerli).
+pub fn app_version() -> String {
+    const RAW: &str = include_str!("../../../version.json");
+    serde_json::from_str::<serde_json::Value>(RAW)
+        .ok()
+        .and_then(|v| v.get("version").and_then(|x| x.as_str()).map(|s| s.to_string()))
+        .unwrap_or_else(|| "?.?.?".to_string())
+}
+
+/// LAN IP (manager-bin `local_lan_ip` parity, std-only UDP numarası, trafik yok).
+pub fn lan_ip() -> String {
+    (|| {
+        let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+        sock.connect("8.8.8.8:80").ok()?;
+        sock.local_addr().ok().map(|a| a.ip().to_string())
+    })()
+    .unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
+/// Manager portu: `RGSX_MANAGER_BIN_PORT` > `RGSX_TVUI_PORT` > 5000.
+pub fn manager_port() -> u16 {
+    std::env::var("RGSX_MANAGER_BIN_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .or_else(|| {
+            std::env::var("RGSX_TVUI_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+        })
+        .unwrap_or(5000)
+}
+
+/// ROM klasörü disk satırı: `"349GB/446GB"`. Yol yoksa/disk bulunamazsa `""`.
+pub fn disk_free_total(roms_path: &str) -> String {
+    if roms_path.trim().is_empty() {
+        return String::new();
+    }
+    let path = std::path::Path::new(roms_path);
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    // En spesifik mount point (en uzun prefix).
+    let best = disks
+        .iter()
+        .filter(|d| path.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len());
+    match best {
+        Some(d) => format!(
+            "{}/{}",
+            format_disk_gb(d.available_space()),
+            format_disk_gb(d.total_space())
+        ),
+        None => String::new(),
+    }
+}
+
+/// Header üç rozet metni (SDL'siz, test edilebilir):
+/// sol `Sayfa p/t [HDD] free/total` (tek sayfada `Res: WxH`),
+/// orta `-- ad -- (n)`, sağ `vVer ip:port`.
+pub fn header_data(
+    platform_name: &str,
+    games_count: usize,
+    page: usize,
+    total_pages: usize,
+    w: u32,
+    h: u32,
+    disk: &str,
+    version: &str,
+    ip: &str,
+    port: u16,
+) -> (String, String, String) {
+    let left = if total_pages > 1 {
+        let disk_part = if disk.is_empty() {
+            String::new()
+        } else {
+            format!(" [HDD] {disk}")
+        };
+        format!("Sayfa {}/{}{disk_part}", page + 1, total_pages)
+    } else if disk.is_empty() {
+        format!("Res: {w}x{h}")
+    } else {
+        format!("[HDD] {disk} Res: {w}x{h}")
+    };
+    let name = if platform_name.trim().is_empty() {
+        "RGSX"
+    } else {
+        platform_name.trim()
+    };
+    let middle = format!("-- {name} -- ({games_count})");
+    let right = format!("v{version} {ip}:{port}");
+    (left, middle, right)
+}
+
+/// Header çubuğu: sol/orta/sağ rozet (Python `grid.py` header parity).
+/// Orta rozet seçili platformu gösterir; `selected` yoksa "RGSX".
+fn draw_header(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
+) {
+    let (name, count) = screen
+        .platforms
+        .get(screen.selected_platform)
+        .map(|p| (p.name.as_str(), p.games_count))
+        .unwrap_or(("RGSX", 0));
+    let total_pages = (screen.platforms.len() + GRID_PER_PAGE - 1) / GRID_PER_PAGE;
+    let page = if screen.platforms.is_empty() {
+        0
+    } else {
+        screen.selected_platform.min(screen.platforms.len() - 1) / GRID_PER_PAGE
+    };
+    let roms = std::env::var("RGSX_ROMS_FOLDER").unwrap_or_default();
+    let (left, middle, right) = header_data(
+        name,
+        count,
+        page,
+        total_pages,
+        w,
+        h,
+        &disk_free_total(&roms),
+        &app_version(),
+        &lan_ip(),
+        manager_port(),
+    );
+    let y = 8i32;
+    let bw_left: u32 = 300.min(w / 3);
+    let bw_mid: u32 = 360.min(w / 3);
+    let bw_right: u32 = 280.min(w / 3);
+    let boxes = [
+        (20i32, bw_left, left),
+        ((w as i32 - bw_mid as i32) / 2, bw_mid, middle),
+        (w as i32 - bw_right as i32 - 20, bw_right, right),
+    ];
+    for (x, bw, label) in boxes {
+        if bw == 0 || x < 0 {
+            continue;
+        }
+        let r = sdl2::rect::Rect::new(x, y, bw, HEADER_H);
+        canvas.set_draw_color(to_color(theme.color("button_idle")));
+        let _ = canvas.fill_rect(r);
+        canvas.set_draw_color(to_color(theme.color("border")));
+        let _ = canvas.draw_rect(r);
+        let _ = crate::text::draw_text_centered(canvas, tc, &label, theme.color("neon"), r, 11, font_scale);
+    }
+}
 
 fn to_color((r, g, b, a): (u8, u8, u8, u8)) -> Color {
     Color::RGBA(r, g, b, a)
@@ -149,7 +388,7 @@ fn draw_grid<'a>(
     theme: &Theme,
     state: &SharedTvuiState,
     screen: &TvuiScreen,
-    (w, _h): (u32, u32),
+    (w, h): (u32, u32),
     tc: &'a TextureCreator<WindowContext>,
     font_scale: f32,
     art: &mut crate::boxart::SdlBoxArtCache<'a>,
@@ -169,12 +408,30 @@ fn draw_grid<'a>(
 
         return;
     }
-    let cols: u32 = 6;
-    let gap: u32 = 16;
-    let margin: u32 = 40;
-    let avail_w = w.saturating_sub(margin * 2);
-    let tile_w = (avail_w.saturating_sub(gap * (cols - 1))) / cols;
-    let tile_h = tile_w * 3 / 4;
+    // 3×4 sayfa geometrisi (Python `display/grid.py` parity):
+    // margin_lr = 0.026W, margin_top = max(0.140H, header+clearance),
+    // margin_bottom = footer rezervi; hücre = min(col_w, row_h), gap = 0.15*hücre.
+    let cols = GRID_COLS as u32;
+    let rows = GRID_ROWS as u32;
+    let per = GRID_PER_PAGE;
+    let n = platforms.len();
+    let page = (screen.selected_platform.min(n - 1)) / per;
+    let start = page * per;
+    let end = (start + per).min(n);
+    let margin_lr = ((w as f32 * 0.026) as u32).max(12);
+    let header_bottom = 8 + HEADER_H;
+    let clearance = ((h as f32 * 0.03) as u32).max(20);
+    let margin_top = ((h as f32 * 0.14) as u32).max(header_bottom + clearance);
+    let footer_gap = ((h as f32 * 0.018) as u32).max(12);
+    let margin_bottom = (70 + footer_gap).max(((h as f32 * 0.118) as u32).max(70));
+    let avail_w = w.saturating_sub(margin_lr * 2);
+    let avail_h = h.saturating_sub(margin_top + margin_bottom);
+    let col_w = (avail_w / cols).max(1);
+    let row_h = (avail_h / rows).max(1);
+    let cell = col_w.min(row_h);
+    let gap = ((cell as f32 * 0.15) as u32).max(4);
+    let tile_w = col_w.saturating_sub(gap);
+    let tile_h = row_h.saturating_sub(gap);
     let sel = if matches!(screen.menu, MenuState::PlatformGrid) {
         Some(screen.selected_platform)
     } else {
@@ -186,23 +443,38 @@ fn draw_grid<'a>(
         .and_then(|tr| tr.sample(Instant::now()))
         .map(|(s, _)| s)
         .unwrap_or(1.0);
-    for (i, p) in platforms.iter().enumerate() {
-        let col = (i as u32) % cols;
-        let row = (i as u32) / cols;
-        let base_x = margin + col * (tile_w + gap);
-        let base_y = margin + row * (tile_h + gap);
-        let is_sel = sel == Some(i);
+    for (local_i, p) in platforms[start..end].iter().enumerate() {
+        let abs_i = start + local_i;
+        let col = (local_i as u32) % cols;
+        let row = (local_i as u32) / cols;
+        let base_x = margin_lr + col * col_w + gap / 2;
+        let base_y = margin_top + row * row_h + gap / 2;
+        let is_sel = sel == Some(abs_i);
         // Box-art cache: ikon yolunu çöz (folder bazlı, platform_image fallback)
         let icon_path = crate::render::BoxArtCache::icon_path_for(&p.folder, &theme.icons.path);
         // Seçili tile: transition scale + border_selected
         if is_sel {
-            let scale = trans_scale;
+            // Seçili vurgu: transition varsa onun ölçeği, yoksa pulse (1.15±0.05).
+            let scale = if screen.transition.is_some() {
+                trans_scale
+            } else {
+                selection_pulse_scale(wall_ms())
+            };
             let sw = (tile_w as f32 * scale) as u32;
             let sh = (tile_h as f32 * scale) as u32;
             let dx = ((tile_w as i32 - sw as i32) / 2) as i32;
             let dy = ((tile_h as i32 - sh as i32) / 2) as i32;
             let x = base_x as i32 + dx;
             let y = base_y as i32 + dy;
+            // Neon glow: dışta 2 katman (boşlukta eriyen çerçeve hissi).
+            canvas.set_draw_color(to_color(theme.color("neon")));
+            let glow_pad = 6i32;
+            let _ = canvas.draw_rect(sdl2::rect::Rect::new(
+                x - glow_pad,
+                y - glow_pad,
+                sw + (glow_pad * 2) as u32,
+                sh + (glow_pad * 2) as u32,
+            ));
             canvas.set_draw_color(to_color(theme.color("button_selected")));
             let pad = 2i32;
             let _ = canvas.fill_rect(sdl2::rect::Rect::new(
@@ -218,17 +490,20 @@ fn draw_grid<'a>(
                 sw + (pad * 2) as u32,
                 sh + (pad * 2) as u32,
             ));
-            // Box-art: secili tile ile birlikte olceklenen rect'e blit (yoksa fallback kutu kalir).
-            let _ = art.blit(canvas, tc, &icon_path, sdl2::rect::Rect::new(x, y, sw, sh));
-            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(x, y, sw, sh), 12, font_scale);
+            // Box-art: secili tile ile birlikte olceklenen rect'e blit (yoksa default.png, o da yoksa kutu kalir).
+            let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, sdl2::rect::Rect::new(x, y, sw, sh));
+            // Etiket: logoyu kapatmasın diye alt şeritte, küçük punto.
+            let label_h = 20u32.min(sh);
+            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(x, y + (sh - label_h) as i32, sw, label_h), 10, font_scale);
 
         } else {
             canvas.set_draw_color(to_color(theme.color("button_idle")));
             let _ = canvas.fill_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
             canvas.set_draw_color(to_color(theme.color("neon")));
             let _ = canvas.draw_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
-            let _ = art.blit(canvas, tc, &icon_path, sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
-            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h), 11, font_scale);
+            let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
+            let label_h = 18u32.min(tile_h);
+            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(base_x as i32, base_y as i32 + (tile_h - label_h) as i32, tile_w, label_h), 9, font_scale);
 
         }
     }
@@ -298,12 +573,15 @@ fn draw_game_list(
     }
 }
 
-/// Footer — tuş atamaları (Python display/footer.py parity, TTF yok → renkli bar + border)
+/// Footer — tuş atamaları (Python display/footer.py parity).
+/// gap-04 sonrası fontdue metin aktif: her hint kutusuna ortalanmış etiket basılır.
 fn draw_footer(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
     screen: &TvuiScreen,
     (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
 ) {
     let bh: u32 = 36;
     let y = h.saturating_sub(bh) as i32;
@@ -321,7 +599,7 @@ fn draw_footer(
         MenuState::Progress => &["Esc Geri"],
         MenuState::ConfirmExit => &["Enter Çık", "Esc İptal"],
     };
-    // Her hint için küçük renkli kutu (TTF sonrası metin eklenecek)
+    // Her hint için küçük renkli kutu + ortalanmış metin etiketi.
     let mut x = 20;
     for hint in hints {
         let is_sel = hint.contains("Enter");
@@ -330,9 +608,11 @@ fn draw_footer(
         // Hint genişliği metin uzunluğuna göre kabaca
         let hw = (hint.len() as u32 * 7 + 12).min(w.saturating_sub(40) / hints.len() as u32);
         if x + hw as i32 > w as i32 - 10 { break; }
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y + 6, hw, bh - 12));
+        let r = sdl2::rect::Rect::new(x, y + 6, hw, bh - 12);
+        let _ = canvas.fill_rect(r);
         canvas.set_draw_color(to_color(theme.color("neon")));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y + 6, hw, bh - 12));
+        let _ = canvas.draw_rect(r);
+        let _ = crate::text::draw_text_centered(canvas, tc, hint, theme.color("neon"), r, 10, font_scale);
         x += hw as i32 + 12;
     }
 }
@@ -629,6 +909,11 @@ pub fn run_native_shell(
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
 
     let preset = std::env::var("RGSX_TVUI_BG").unwrap_or_else(|_| "default".into());
+    // Box-art kökü: tema `assets/icons/` göreli yazar; gerçek logolar data_dir/images
+    // altındadır (katalogla aynı kaynak). Çözülmüş yolla temanın kopyasını kullan.
+    let mut resolved_theme = theme.clone();
+    resolved_theme.icons.path = resolve_icons_path(&theme.icons.path);
+    let theme: &Theme = &resolved_theme;
     // TASK-012h Faz 3/5 + gap-05: state machine + box-art texture cache (cap 64).
     let mut screen = TvuiScreen::default();
     let mut art_cache =
@@ -758,7 +1043,8 @@ pub fn run_native_shell(
                 }
                 MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
             }
-            draw_footer(&mut canvas, theme, &screen, dims);
+            draw_header(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
+            draw_footer(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
             // TASK-012i: overlay varsa üstte çiz (pause/display/filter)
             if screen.overlay.is_some() {
                 draw_menu_overlay(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
@@ -785,4 +1071,99 @@ pub fn run_native_shell(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_icons_path_prefers_images_folder_env() {
+        let prev_img = std::env::var("RGSX_IMAGES_FOLDER").ok();
+        let prev_data = std::env::var("RGSX_DATA_DIR").ok();
+        let tmp = std::env::temp_dir().join("rgsx-tvui-test-images");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("RGSX_IMAGES_FOLDER", &tmp);
+        std::env::remove_var("RGSX_DATA_DIR");
+        assert_eq!(resolve_icons_path("assets/icons/"), tmp.to_string_lossy());
+        match prev_img {
+            Some(v) => std::env::set_var("RGSX_IMAGES_FOLDER", v),
+            None => std::env::remove_var("RGSX_IMAGES_FOLDER"),
+        }
+        match prev_data {
+            Some(v) => std::env::set_var("RGSX_DATA_DIR", v),
+            None => std::env::remove_var("RGSX_DATA_DIR"),
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn resolve_icons_path_falls_back_to_theme() {
+        let prev_img = std::env::var("RGSX_IMAGES_FOLDER").ok();
+        let prev_data = std::env::var("RGSX_DATA_DIR").ok();
+        std::env::remove_var("RGSX_IMAGES_FOLDER");
+        std::env::set_var(
+            "RGSX_DATA_DIR",
+            std::env::temp_dir().join("rgsx-tvui-test-nodir"),
+        );
+        // exe-anchor da tutmazsa tema yolu aynen döner (çağıran kutuyu korur).
+        let out = resolve_icons_path("assets/icons/");
+        assert!(
+            out == "assets/icons/"
+                || out.ends_with("saves/ports/rgsx/images")
+                || out.ends_with("saves\\ports\\rgsx\\images"),
+            "beklenmeyen: {out}"
+        );
+        match prev_img {
+            Some(v) => std::env::set_var("RGSX_IMAGES_FOLDER", v),
+            None => std::env::remove_var("RGSX_IMAGES_FOLDER"),
+        }
+        match prev_data {
+            Some(v) => std::env::set_var("RGSX_DATA_DIR", v),
+            None => std::env::remove_var("RGSX_DATA_DIR"),
+        }
+    }
+
+    #[test]
+    fn format_disk_gb_matches_python_tiers() {
+        assert_eq!(format_disk_gb(349 * 1024 * 1024 * 1024), "349GB");
+        assert_eq!(format_disk_gb((12.5 * 1024.0 * 1024.0 * 1024.0) as u64), "12.5GB");
+        assert_eq!(format_disk_gb((1.23 * 1024.0 * 1024.0 * 1024.0) as u64), "1.23GB");
+    }
+
+    #[test]
+    fn app_version_matches_version_json() {
+        assert_eq!(app_version(), "2.6.5.6");
+    }
+
+    #[test]
+    fn header_data_shapes_three_badges() {
+        let (l, m, r) = header_data("BIOS", 12, 0, 13, 1280, 720, "349GB/446GB", "2.6.5.6", "10.0.0.36", 5000);
+        assert_eq!(l, "Sayfa 1/13 [HDD] 349GB/446GB");
+        assert_eq!(m, "-- BIOS -- (12)");
+        assert_eq!(r, "v2.6.5.6 10.0.0.36:5000");
+        // Tek sayfa: sol rozet disk+çözünürlük; boş platform → RGSX fallback.
+        let (l2, m2, _) = header_data("", 0, 0, 1, 800, 600, "", "2.6.5.6", "127.0.0.1", 5000);
+        assert_eq!(l2, "Res: 800x600");
+        assert_eq!(m2, "-- RGSX -- (0)");
+        let (l3, _, _) = header_data("NES", 5, 0, 1, 800, 600, "10GB/20GB", "2.6.5.6", "127.0.0.1", 5000);
+        assert_eq!(l3, "[HDD] 10GB/20GB Res: 800x600");
+    }
+
+    #[test]
+    fn disk_free_total_empty_path_is_empty() {
+        assert_eq!(disk_free_total(""), "");
+    }
+
+    #[test]
+    fn selection_pulse_stays_in_band_and_loops() {
+        // Bant: 1.10..=1.20, 600ms periyotla başa döner, determinist.
+        for ms in [0u64, 150, 300, 450, 599] {
+            let s = selection_pulse_scale(ms);
+            assert!((1.10..=1.20).contains(&s), "bant dışı {ms}: {s}");
+        }
+        assert!((selection_pulse_scale(0) - selection_pulse_scale(600)).abs() < 1e-6);
+        assert!((selection_pulse_scale(150) - 1.20).abs() < 1e-6); // tepe
+        assert!((selection_pulse_scale(450) - 1.10).abs() < 1e-6); // çukur
+    }
 }

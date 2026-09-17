@@ -85,12 +85,14 @@ pub struct TvuiState {
 }
 
 /// Tek bir platform kutusu (grid tile'ı). `name` görünen etiket, `folder` disk
-/// eşleşmesi (sonraki faz: game_list), `image` platform_image dosya adı.
+/// eşleşmesi (sonraki faz: game_list), `image` platform_image dosya adı,
+/// `games_count` header orta rozeti (`- ad - (n)`) için oyun sayısı.
 #[derive(Debug, Clone, Default)]
 pub struct PlatformTile {
     pub name: String,
     pub folder: String,
     pub image: String,
+    pub games_count: usize,
 }
 
 pub type SharedTvuiState = Arc<Mutex<TvuiState>>;
@@ -192,6 +194,10 @@ pub fn parse_platforms(v: &serde_json::Value) -> Vec<PlatformTile> {
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    games_count: p
+                        .get("games_count")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0) as usize,
                 })
                 .collect()
         })

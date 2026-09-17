@@ -13,6 +13,13 @@ use crate::net::{PlatformTile, TvuiState, UiAction, UiKey};
 use crate::render::Transition;
 use crate::virtual_keyboard::{KeyboardVariant, VirtualKeyboard};
 
+/// Izgara geometrisi — Python `config.GRID_COLS=3 / GRID_ROWS=4` parity
+/// (`config.py:451`). Hem `draw_grid` hem bu modüldeki nav aynı sabitleri kullanır.
+pub const GRID_COLS: usize = 3;
+pub const GRID_ROWS: usize = 4;
+/// Sayfa başına platform (`GRID_COLS × GRID_ROWS`, Python `systems_per_page`).
+pub const GRID_PER_PAGE: usize = GRID_COLS * GRID_ROWS;
+
 /// Menu state — `tvui.py` `config.menu_state` değerlerinin tip-güvenli karşılığı.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuState {
@@ -432,14 +439,25 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             None
         }
         MenuState::PlatformGrid => match key {
-            // Izgara 6 sütun (draw_grid cols): Left/Right yatay ±1, Up/Down dikey ±6.
-            // Tek satırlık listede (n<=6) Up/Down Left/Right gibi davranır.
+            // Izgara 3×4 sayfa modeli (Python `controls/handlers.py` platform dalı parity):
+            // sayfa = selected / 12, hücre = sayfa içi indeks. Kenarda sayfa çevrilir,
+            // wrap YOK (son sayfa clamp'lenir).
             UiKey::NavLeft => {
                 if screen.platforms.is_empty() {
                     return None;
                 }
                 let n = screen.platforms.len();
-                screen.selected_platform = (screen.selected_platform + n - 1) % n;
+                let page = screen.selected_platform / GRID_PER_PAGE;
+                let gi = screen.selected_platform % GRID_PER_PAGE;
+                let (row, col) = (gi / GRID_COLS, gi % GRID_COLS);
+                if col > 0 {
+                    screen.selected_platform -= 1;
+                } else if page > 0 {
+                    screen.selected_platform = (page - 1) * GRID_PER_PAGE + row * GRID_COLS + (GRID_COLS - 1);
+                    if screen.selected_platform >= n {
+                        screen.selected_platform = n - 1;
+                    }
+                }
                 None
             }
             UiKey::NavRight => {
@@ -447,7 +465,18 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                     return None;
                 }
                 let n = screen.platforms.len();
-                screen.selected_platform = (screen.selected_platform + 1) % n;
+                let page = screen.selected_platform / GRID_PER_PAGE;
+                let gi = screen.selected_platform % GRID_PER_PAGE;
+                let (row, col) = (gi / GRID_COLS, gi % GRID_COLS);
+                let max_idx = (GRID_PER_PAGE.min(n - page * GRID_PER_PAGE)).saturating_sub(1);
+                if col + 1 < GRID_COLS && gi < max_idx {
+                    screen.selected_platform += 1;
+                } else if (page + 1) * GRID_PER_PAGE < n {
+                    screen.selected_platform = (page + 1) * GRID_PER_PAGE + row * GRID_COLS;
+                    if screen.selected_platform >= n {
+                        screen.selected_platform = n - 1;
+                    }
+                }
                 None
             }
             UiKey::NavUp => {
@@ -455,10 +484,17 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                     return None;
                 }
                 let n = screen.platforms.len();
-                if n <= 6 {
-                    screen.selected_platform = (screen.selected_platform + n - 1) % n;
-                } else {
-                    screen.selected_platform = (screen.selected_platform + n - 6) % n;
+                let page = screen.selected_platform / GRID_PER_PAGE;
+                let gi = screen.selected_platform % GRID_PER_PAGE;
+                let col = gi % GRID_COLS;
+                if gi >= GRID_COLS {
+                    screen.selected_platform -= GRID_COLS;
+                } else if page > 0 {
+                    screen.selected_platform =
+                        (page - 1) * GRID_PER_PAGE + (GRID_ROWS - 1) * GRID_COLS + col;
+                    if screen.selected_platform >= n {
+                        screen.selected_platform = n - 1;
+                    }
                 }
                 None
             }
@@ -467,10 +503,17 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                     return None;
                 }
                 let n = screen.platforms.len();
-                if n <= 6 {
-                    screen.selected_platform = (screen.selected_platform + 1) % n;
-                } else {
-                    screen.selected_platform = (screen.selected_platform + 6) % n;
+                let page = screen.selected_platform / GRID_PER_PAGE;
+                let gi = screen.selected_platform % GRID_PER_PAGE;
+                let col = gi % GRID_COLS;
+                let max_idx = (GRID_PER_PAGE.min(n - page * GRID_PER_PAGE)).saturating_sub(1);
+                if gi + GRID_COLS <= max_idx {
+                    screen.selected_platform += GRID_COLS;
+                } else if (page + 1) * GRID_PER_PAGE < n {
+                    screen.selected_platform = (page + 1) * GRID_PER_PAGE + col;
+                    if screen.selected_platform >= n {
+                        screen.selected_platform = n - 1;
+                    }
                 }
                 None
             }
@@ -478,17 +521,32 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                 if screen.platforms.is_empty() {
                     return None;
                 }
-                let step = 6usize; // ızgara 6 sütun (draw_grid cols)
-                screen.selected_platform = screen.selected_platform.saturating_sub(step);
+                let n = screen.platforms.len();
+                let page = screen.selected_platform / GRID_PER_PAGE;
+                if page > 0 {
+                    let gi = screen.selected_platform % GRID_PER_PAGE;
+                    let (row, col) = (gi / GRID_COLS, gi % GRID_COLS);
+                    screen.selected_platform = (page - 1) * GRID_PER_PAGE + row * GRID_COLS + col;
+                    if screen.selected_platform >= n {
+                        screen.selected_platform = n - 1;
+                    }
+                }
                 None
             }
             UiKey::PageDown => {
                 if screen.platforms.is_empty() {
                     return None;
                 }
-                let step = 6usize;
-                screen.selected_platform =
-                    (screen.selected_platform + step).min(screen.platforms.len() - 1);
+                let n = screen.platforms.len();
+                let page = screen.selected_platform / GRID_PER_PAGE;
+                if (page + 1) * GRID_PER_PAGE < n {
+                    let gi = screen.selected_platform % GRID_PER_PAGE;
+                    let (row, col) = (gi / GRID_COLS, gi % GRID_COLS);
+                    screen.selected_platform = (page + 1) * GRID_PER_PAGE + row * GRID_COLS + col;
+                    if screen.selected_platform >= n {
+                        screen.selected_platform = n - 1;
+                    }
+                }
                 None
             }
             UiKey::Confirm => {
@@ -609,6 +667,7 @@ mod tests {
                 name: format!("P{i}"),
                 folder: format!("p{i}"),
                 image: format!("p{i}.png"),
+                games_count: 10 + i,
             })
             .collect();
         s.selected_platform = 0;
@@ -616,24 +675,28 @@ mod tests {
     }
 
     #[test]
-    fn platform_grid_nav_wraps() {
+    fn platform_grid_nav_single_page_no_wrap() {
+        // 3 platform (tek satır, tek sayfa): Right/Down satırda ilerler,
+        // kenarda wrap YOK (Python parity — sayfa çevrilmez).
         let mut s = make_grid(3);
-        reduce(&mut s, UiKey::NavDown, now());
+        reduce(&mut s, UiKey::NavRight, now());
         assert_eq!(s.selected_platform, 1);
-        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(200));
+        reduce(&mut s, UiKey::NavRight, now() + Duration::from_millis(200));
         assert_eq!(s.selected_platform, 2);
-        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(400));
-        assert_eq!(s.selected_platform, 0); // wrap
-        reduce(&mut s, UiKey::NavUp, now() + Duration::from_millis(600));
-        assert_eq!(s.selected_platform, 2); // wrap reverse
+        reduce(&mut s, UiKey::NavRight, now() + Duration::from_millis(400));
+        assert_eq!(s.selected_platform, 2); // sağ kenar: kıpırdamaz
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(600));
+        assert_eq!(s.selected_platform, 2); // alt satır yok: kıpırdamaz
+        reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(800));
+        assert_eq!(s.selected_platform, 1);
     }
 
     #[test]
     fn platform_grid_row_nav() {
-        // 8 platform (2 satır): Down/Up satır atlar (±6), Left/Right yatay (±1).
+        // 8 platform (3×4 tek sayfa): Down/Up satır atlar (±3), Left/Right yatay (±1).
         let mut s = make_grid(8);
         reduce(&mut s, UiKey::NavDown, now());
-        assert_eq!(s.selected_platform, 6);
+        assert_eq!(s.selected_platform, 3);
         reduce(&mut s, UiKey::NavUp, now() + Duration::from_millis(200));
         assert_eq!(s.selected_platform, 0);
         reduce(&mut s, UiKey::NavRight, now() + Duration::from_millis(400));
@@ -641,9 +704,29 @@ mod tests {
         reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(600));
         assert_eq!(s.selected_platform, 0);
         reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(800));
-        assert_eq!(s.selected_platform, 7); // wrap
+        assert_eq!(s.selected_platform, 0); // sol kenar: wrap yok
         reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(1000));
-        assert_eq!(s.selected_platform, 5); // (7+6)%8
+        assert_eq!(s.selected_platform, 3);
+    }
+
+    #[test]
+    fn platform_grid_page_turns() {
+        // 25 platform (3 sayfa): sağ kenardan Right → sonraki sayfa,
+        // PageDown/PageUp aynı hücreye atlar, son sayfa clamp'lenir.
+        let mut s = make_grid(25);
+        s.selected_platform = 2; // sayfa 0, satır 0, kol 2 (sağ kenar)
+        reduce(&mut s, UiKey::NavRight, now());
+        assert_eq!(s.selected_platform, 12); // sayfa 1, satır 0, kol 0
+        reduce(&mut s, UiKey::PageDown, now() + Duration::from_millis(200));
+        assert_eq!(s.selected_platform, 24); // sayfa 2, aynı hücre clamp (24)
+        reduce(&mut s, UiKey::PageDown, now() + Duration::from_millis(400));
+        assert_eq!(s.selected_platform, 24); // son sayfa: kıpırdamaz
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(600));
+        assert_eq!(s.selected_platform, 24); // alt satır yok + sonraki sayfa yok
+        reduce(&mut s, UiKey::PageUp, now() + Duration::from_millis(800));
+        assert_eq!(s.selected_platform, 12); // sayfa 1, aynı hücre
+        reduce(&mut s, UiKey::NavLeft, now() + Duration::from_millis(1000));
+        assert_eq!(s.selected_platform, 2); // kol 0 → önceki sayfa, aynı satır son kol
     }
 
     #[test]
@@ -728,6 +811,7 @@ mod tests {
             name: "NES".into(),
             folder: "nes".into(),
             image: "nes.png".into(),
+            games_count: 10,
         }];
         s.sync_from_net();
         assert_eq!(s.menu, MenuState::PlatformGrid);
@@ -752,13 +836,13 @@ mod tests {
     fn key_repeat_throttling() {
         let mut s = make_grid(5);
         let t0 = now();
-        reduce(&mut s, UiKey::NavDown, t0);
+        reduce(&mut s, UiKey::NavRight, t0);
         assert_eq!(s.selected_platform, 1);
         // 50ms sonra aynı tuş → throttled (120ms eşik)
-        reduce(&mut s, UiKey::NavDown, t0 + Duration::from_millis(50));
+        reduce(&mut s, UiKey::NavRight, t0 + Duration::from_millis(50));
         assert_eq!(s.selected_platform, 1); // hareket etmedi
         // 200ms sonra → tekrar hareket
-        reduce(&mut s, UiKey::NavDown, t0 + Duration::from_millis(200));
+        reduce(&mut s, UiKey::NavRight, t0 + Duration::from_millis(200));
         assert_eq!(s.selected_platform, 2);
         // Farklı tuş hemen işler (throttle sıfırlanır)
         reduce(&mut s, UiKey::Confirm, t0 + Duration::from_millis(210));
@@ -767,12 +851,18 @@ mod tests {
 
     #[test]
     fn page_up_down_grid() {
-        let mut s = make_grid(10);
-        s.selected_platform = 5;
+        // 20 platform (2 sayfa): PageDown/PageUp aynı hücreyle sayfa atlar.
+        let mut s = make_grid(20);
+        s.selected_platform = 5; // sayfa 0, satır 1, kol 2
         reduce(&mut s, UiKey::PageDown, now());
-        assert_eq!(s.selected_platform, 9); // clamp
+        assert_eq!(s.selected_platform, 17); // sayfa 1, satır 1, kol 2
         reduce(&mut s, UiKey::PageUp, now() + Duration::from_millis(200));
-        assert_eq!(s.selected_platform, 3);
+        assert_eq!(s.selected_platform, 5);
+        // Tek sayfada PageDown/PageUp kıpırdatmaz.
+        let mut s1 = make_grid(10);
+        s1.selected_platform = 5;
+        reduce(&mut s1, UiKey::PageDown, now() + Duration::from_millis(400));
+        assert_eq!(s1.selected_platform, 5);
     }
 
     #[test]
