@@ -2,7 +2,7 @@
 //!
 //! `tvui.py` + `display/*` pygame `draw_*`'ları TASK-012h ve sonrasında SDL2
 //! primitives'e portlanır. Bu modül yalnızca shell'i kurar ve `theme.json`
-//! paletiyle arka plan gradyanını çizer (tema yüklendi kanıtı: `fond_lignes` çerçeve).
+//! paletiyle arka plan gradyanını çizer.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -28,9 +28,6 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t).clamp(0.0, 255.0) as u8
 }
 
-fn a11y_color(theme: &Theme, screen: &TvuiScreen, name: &str) -> (u8, u8, u8, u8) {
-    screen.a11y.effective_color(theme, name)
-}
 fn a11y_bg(theme: &Theme, screen: &TvuiScreen, preset: &str) -> ((u8, u8, u8), (u8, u8, u8)) {
     screen.a11y.effective_background(theme, preset)
 }
@@ -98,12 +95,6 @@ fn draw_background<'a>(
             }
         }
     }
-    // Tema paleti yüklendi kanıtı: `fond_lignes` rengiyle ince çerçeve.
-    canvas.set_draw_color(to_color(a11y_color(theme, screen, "fond_lignes")));
-    let (fw, fh) = (w.saturating_sub(40), h.saturating_sub(40));
-    if fw > 0 && fh > 0 {
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(20, 20, fw, fh));
-    }
     (w, h)
 }
 
@@ -115,6 +106,8 @@ fn draw_loading(
     theme: &Theme,
     state: &SharedTvuiState,
     (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
 ) {
     let (pct, error) = {
         let s = tvui_lock(state);
@@ -125,15 +118,17 @@ fn draw_loading(
     let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
     let y = (h as i32 / 2).max(0) as i32;
 
-    if error.is_some() {
-        // Hata ekranı: üstte tam genişlik kırmızı şerit + orta çerçeve.
+    if let Some(err) = &error {
         canvas.set_draw_color(to_color(theme.color("error_text")));
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, (y - 40).max(0) as i32, w, 6));
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+        // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
+            let msg = format!("{} ({}%)", err.chars().take(60).collect::<String>(), (pct * 100.0) as i32);
+            let _ = crate::text::draw_text_centered(canvas, tc, &msg, theme.color("error_text"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 28), 13, font_scale);
+
         return;
     }
 
-    // Normal ilerleme: çerçeve (button_idle) + dolum (neon).
     canvas.set_draw_color(to_color(theme.color("button_idle")));
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
     let fill_w = (bar_w as f32 * pct) as i32;
@@ -141,27 +136,37 @@ fn draw_loading(
         canvas.set_draw_color(to_color(theme.color("neon")));
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w as u32, bar_h));
     }
+    // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
+        let msg = format!("{}%", (pct * 100.0) as i32);
+        let _ = crate::text::draw_text_centered(canvas, tc, &msg, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 14, font_scale);
+
 }
 
 /// `ready` sonrası platform grid'i: `/api/platforms`'tan gelen `state.platforms`
 /// listesini tile olarak dizer. Faz 3: seçili tile `border_selected` + scale ile vurgulanır.
-fn draw_grid(
+fn draw_grid<'a>(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
     state: &SharedTvuiState,
     screen: &TvuiScreen,
     (w, _h): (u32, u32),
+    tc: &'a TextureCreator<WindowContext>,
+    font_scale: f32,
+    art: &mut crate::boxart::SdlBoxArtCache<'a>,
 ) {
     let (platforms, offline) = {
         let s = tvui_lock(state);
         (s.platforms.clone(), s.offline)
     };
-    // Çevrimdışı mod: üstte kırmızı şerit (metin yok — TTF erte).
     if offline {
         canvas.set_draw_color(to_color(theme.color("error_text")));
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, 6));
+        let _ = crate::text::draw_text(canvas, tc, "CEVRIMDISI", theme.color("error_text"), 10, 10, 12, font_scale);
+
     }
     if platforms.is_empty() {
+        let _ = crate::text::draw_text_centered(canvas, tc, "platform yok", theme.color("neon"), sdl2::rect::Rect::new(0, 100, w, 40), 14, font_scale);
+
         return;
     }
     let cols: u32 = 6;
@@ -175,7 +180,6 @@ fn draw_grid(
     } else {
         None
     };
-    // Faz 5: transition scale (seçili tile büyür)
     let trans_scale = screen
         .transition
         .as_ref()
@@ -189,13 +193,12 @@ fn draw_grid(
         let base_y = margin + row * (tile_h + gap);
         let is_sel = sel == Some(i);
         // Box-art cache: ikon yolunu çöz (folder bazlı, platform_image fallback)
-        let _icon_path = crate::render::BoxArtCache::icon_path_for(&p.folder, &theme.icons.path);
+        let icon_path = crate::render::BoxArtCache::icon_path_for(&p.folder, &theme.icons.path);
         // Seçili tile: transition scale + border_selected
         if is_sel {
             let scale = trans_scale;
             let sw = (tile_w as f32 * scale) as u32;
             let sh = (tile_h as f32 * scale) as u32;
-            // Ortala: scale büyüyünce tile ortada kalır
             let dx = ((tile_w as i32 - sw as i32) / 2) as i32;
             let dy = ((tile_h as i32 - sh as i32) / 2) as i32;
             let x = base_x as i32 + dx;
@@ -215,11 +218,18 @@ fn draw_grid(
                 sw + (pad * 2) as u32,
                 sh + (pad * 2) as u32,
             ));
+            // Box-art: secili tile ile birlikte olceklenen rect'e blit (yoksa fallback kutu kalir).
+            let _ = art.blit(canvas, tc, &icon_path, sdl2::rect::Rect::new(x, y, sw, sh));
+            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(x, y, sw, sh), 12, font_scale);
+
         } else {
             canvas.set_draw_color(to_color(theme.color("button_idle")));
             let _ = canvas.fill_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
             canvas.set_draw_color(to_color(theme.color("neon")));
             let _ = canvas.draw_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
+            let _ = art.blit(canvas, tc, &icon_path, sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
+            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h), 11, font_scale);
+
         }
     }
 }
@@ -230,15 +240,18 @@ fn draw_game_list(
     theme: &Theme,
     screen: &TvuiScreen,
     (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
 ) {
     if screen.games.is_empty() {
-        // Boş liste: ortada çerçeve (veri yok)
         let bw = ((w as i32) * 60 / 100).max(40) as u32;
         let bh: u32 = 48;
         let x = ((w as i32 - bw as i32) / 2).max(0) as i32;
         let y = (h as i32 / 2).max(0) as i32;
         canvas.set_draw_color(to_color(theme.color("button_idle")));
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bw, bh));
+        let _ = crate::text::draw_text_centered(canvas, tc, "oyun yok", theme.color("neon"), sdl2::rect::Rect::new(x, y, bw, bh), 12, font_scale);
+
         return;
     }
     let row_h: u32 = 36;
@@ -266,7 +279,6 @@ fn draw_game_list(
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(margin as i32, y, w - margin * 2, row_h));
         canvas.set_draw_color(to_color(border));
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(margin as i32, y, w - margin * 2, row_h));
-        // Progress varsa iç dolgu (neon)
         if let Some(p) = screen.progress.get(&g.url) {
             if let Some(pct) = p.get("progress").and_then(|v| v.as_f64()) {
                 let fill_w = ((w - margin * 2) as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
@@ -276,6 +288,12 @@ fn draw_game_list(
                 }
             }
         }
+        // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
+            let label = format!("{}  {}", g.name, g.size);
+            let truncated = if label.chars().count() > 70 { label.chars().take(67).collect::<String>() + "..." } else { label };
+            let text_color = if is_sel { theme.color("neon") } else { theme.color("neon") };
+            let _ = crate::text::draw_text(canvas, tc, &truncated, text_color, margin as i32 + 8, y + 8, 11, font_scale);
+
         y += (row_h + gap) as i32;
     }
 }
@@ -325,15 +343,15 @@ fn draw_progress_screen(
     theme: &Theme,
     screen: &TvuiScreen,
     (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
 ) {
     let bar_w = ((w as i32) * 70 / 100).max(40) as u32;
     let bar_h: u32 = 28;
     let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
     let y = (h as i32 / 2).max(0) as i32;
-    // Arka plan çerçeve
     canvas.set_draw_color(to_color(theme.color("button_idle")));
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
-    // Seçili oyunun progress'i
     if let Some(g) = screen.games.get(screen.selected_game) {
         if let Some(p) = screen.progress.get(&g.url) {
             let pct = p.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 100.0) as f32 / 100.0;
@@ -342,12 +360,17 @@ fn draw_progress_screen(
                 canvas.set_draw_color(to_color(theme.color("neon")));
                 let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w, bar_h));
             }
+            // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
+                let pct_txt = format!("{}% - {}", (pct * 100.0) as i32, g.name.chars().take(40).collect::<String>());
+                let _ = crate::text::draw_text_centered(canvas, tc, &pct_txt, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
+
             return;
         }
     }
-    // Genel queue progress yoksa neon çerçeve
     canvas.set_draw_color(to_color(theme.color("neon")));
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+    let _ = crate::text::draw_text_centered(canvas, tc, "indirme bekleniyor...", theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
+
 }
 
 /// TASK-012i — pause menu overlay (Faz 1: rect + highlight, metin TTF ile sonra).
@@ -356,11 +379,12 @@ fn draw_menu_overlay(
     theme: &Theme,
     screen: &TvuiScreen,
     (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
 ) {
     let Some(ov) = &screen.overlay else {
         return;
     };
-    // Yarı saydam arka plan (shadow)
     canvas.set_draw_color(to_color(theme.color("shadow")));
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
     let bw = ((w as i32) * 50 / 100).max(200) as u32;
@@ -369,12 +393,11 @@ fn draw_menu_overlay(
     let total_h = ov.items.len() as u32 * bh_each + (ov.items.len().saturating_sub(1) as u32 * gap) + 20;
     let bx = ((w as i32 - bw as i32) / 2).max(0) as i32;
     let by = ((h as i32 - total_h as i32) / 2).max(0) as i32;
-    // Panel
     canvas.set_draw_color(to_color(theme.color("button_idle")));
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, bw, total_h));
     canvas.set_draw_color(to_color(theme.color("border")));
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx, by, bw, total_h));
-    for (i, _label) in ov.items.iter().enumerate() {
+    for (i, label) in ov.items.iter().enumerate() {
         let y = by + 10 + i as i32 * (bh_each as i32 + gap as i32);
         let is_sel = i == ov.selected;
         let bg = if is_sel {
@@ -391,6 +414,8 @@ fn draw_menu_overlay(
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each));
         canvas.set_draw_color(to_color(border));
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each));
+        let _ = crate::text::draw_text_centered(canvas, tc, label, theme.color("neon"), sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each), 12, font_scale);
+
     }
 }
 
@@ -400,11 +425,12 @@ fn draw_virtual_keyboard(
     theme: &Theme,
     screen: &TvuiScreen,
     (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
 ) {
     let Some(kb) = &screen.keyboard else { return; };
     canvas.set_draw_color(to_color(theme.color("shadow")));
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
-    // Input alanı
     let iw = ((w as i32) * 60 / 100).max(200) as u32;
     let ih: u32 = 36;
     let ix = ((w as i32 - iw as i32) / 2).max(0) as i32;
@@ -413,22 +439,21 @@ fn draw_virtual_keyboard(
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(ix, iy, iw, ih));
     canvas.set_draw_color(to_color(theme.color("border_selected")));
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(ix, iy, iw, ih));
-    // Klavye ızgarası
+    let _ = crate::text::draw_text(canvas, tc, &kb.input, theme.color("neon"), ix + 8, iy + 8, 13, font_scale);
+
     let key_w: u32 = 48;
     let key_h: u32 = 40;
     let gap: u32 = 6;
     let rows = kb.layout.len() as u32;
     let total_h = rows * key_h + (rows.saturating_sub(1) * gap) + 20;
     let ky = iy + ih as i32 + 20;
-    // Her satır ortalanır
+    let _ = total_h;
     for (r, row) in kb.layout.iter().enumerate() {
         let row_w = row.len() as u32 * key_w + (row.len().saturating_sub(1) as u32 * gap);
         let rx = ((w as i32 - row_w as i32) / 2).max(0) as i32;
         let ry = ky + r as i32 * (key_h as i32 + gap as i32);
-        // y taşmasın (ekran dışı ise atla)
         if ry + key_h as i32 > h as i32 || ry < 0 { continue; }
-        let _ = total_h;
-        for (c, _k) in row.iter().enumerate() {
+        for (c, k) in row.iter().enumerate() {
             let x = rx + c as i32 * (key_w as i32 + gap as i32);
             let is_sel = kb.cursor == (r, c);
             let bg = if is_sel { theme.color("button_selected") } else { theme.color("button_idle") };
@@ -437,72 +462,15 @@ fn draw_virtual_keyboard(
             let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, ry, key_w, key_h));
             canvas.set_draw_color(to_color(border));
             let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, ry, key_w, key_h));
+            let _ = crate::text::draw_text_centered(canvas, tc, k, theme.color("neon"), sdl2::rect::Rect::new(x, ry, key_w, key_h), 11, font_scale);
+
         }
     }
 }
 
-/// TASK-012j — folder browser overlay (path + liste + scrollbar + seçili highlight).
-fn draw_folder_browser(
-    canvas: &mut Canvas<Window>,
-    theme: &Theme,
-    screen: &TvuiScreen,
-    (w, h): (u32, u32),
-) {
-    let Some(fb) = &screen.browser else { return; };
-    canvas.set_draw_color(to_color(theme.color("shadow")));
-    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
-    let pw = ((w as i32) * 80 / 100).max(200) as u32;
-    let ph = ((h as i32) * 85 / 100).max(200) as u32;
-    let px = ((w as i32 - pw as i32) / 2).max(0) as i32;
-    let py = ((h as i32 - ph as i32) / 2).max(0) as i32;
-    canvas.set_draw_color(to_color(theme.color("button_idle")));
-    let _ = canvas.fill_rect(sdl2::rect::Rect::new(px, py, pw, ph));
-    canvas.set_draw_color(to_color(theme.color("border")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(px, py, pw, ph));
-    // Path çubuğu (border_selected)
-    let bar_h: u32 = 28;
-    canvas.set_draw_color(to_color(theme.color("button_selected")));
-    let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + 10, py + 40, pw - 20, bar_h));
-    canvas.set_draw_color(to_color(theme.color("border_selected")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(px + 10, py + 40, pw - 20, bar_h));
-    // Liste
-    let item_h: u32 = 30;
-    let gap: u32 = 4;
-    let list_y = py + 80;
-    let visible = fb.visible_items.min(10) as usize;
-    let slice = fb.visible_slice();
-    for (i, _item) in slice.iter().enumerate() {
-        let abs_idx = fb.scroll_offset + i;
-        let is_sel = abs_idx == fb.selection;
-        let y = list_y + i as i32 * (item_h as i32 + gap as i32);
-        if y + item_h as i32 > py + ph as i32 - 20 { break; }
-        let bg = if is_sel { theme.color("button_hover") } else { theme.color("button_idle") };
-        let border = if is_sel { theme.color("highlight") } else { theme.color("border") };
-        // highlight seçiliyse farklı
-        let draw_border = if is_sel { theme.color("border_selected") } else { border };
-        canvas.set_draw_color(to_color(bg));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + 20, y, pw - 40, item_h));
-        canvas.set_draw_color(to_color(draw_border));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(px + 20, y, pw - 40, item_h));
-        // scrollbar (son item'da)
-        if visible < fb.items.len() && i == 0 {
-            let sb_x = px + pw as i32 - 18;
-            let sb_y = list_y;
-            let sb_h = (visible as u32 * (item_h + gap)) as u32;
-            canvas.set_draw_color(to_color(theme.color("border")));
-            let _ = canvas.fill_rect(sdl2::rect::Rect::new(sb_x, sb_y, 6, sb_h));
-            let cursor_h = (sb_h * visible as u32 / fb.items.len().max(1) as u32).max(12);
-            let cursor_y = sb_y + ((sb_h - cursor_h) * fb.scroll_offset as u32 / (fb.items.len() - visible).max(1) as u32) as i32;
-            canvas.set_draw_color(to_color(theme.color("highlight")));
-            let _ = canvas.fill_rect(sdl2::rect::Rect::new(sb_x, cursor_y, 6, cursor_h));
-        }
-        let _ = visible;
-    }
-}
-
-/// TASK-012m Faz 5 — self-update banner (metin yok; ttf erte). Aşamaya göre renk:
-/// `available`=warning_text (turuncu — bulgu 10 fix), `downloading`=neon (mavi,
-/// iç dolgu=percent), `ready`=success (yeşil), `failed`=error_text (kırmızı).
+/// TASK-012m Faz 5 — self-update banner (fontdue metinsiz sürümle uyumlu kutu çizimi).
+/// Aşamaya göre renk: `available`=warning_text (turuncu), `downloading`=neon
+/// (mavi, iç dolgu=percent), `ready`=success (yeşil), `failed`=error_text (kırmızı).
 fn draw_update_banner(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -525,7 +493,6 @@ fn draw_update_banner(
         "ready" => "success",
         "downloading" => "neon",
         "failed" => "error_text",
-        // Bulgu 10: 'available' turuncu — kırmızı yalnızca gerçek hataya kalsın.
         _ => "warning_text",
     };
     let bw = ((w as i32) * 60 / 100).max(40) as u32;
@@ -533,16 +500,13 @@ fn draw_update_banner(
     let by = 8i32;
     let bh: u32 = 28;
     let color = to_color(theme.color(color_key));
-    // Çerçeve.
     canvas.set_draw_color(color);
     let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx, by, bw, bh));
-    // `downloading` aşamasında iç dolgu = ilerleme yüzdesi.
     if stage == "downloading" {
         let fill_w = ((bw as u64 * pct as u64 / 100) as u32).max(1).min(bw);
         canvas.set_draw_color(color);
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, fill_w, bh));
     }
-    // `ready` aşamasında yanıp sönen iç dolgu (uygula hazır).
     if stage == "ready" {
         canvas.set_draw_color(color);
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, bw, bh));
@@ -551,12 +515,11 @@ fn draw_update_banner(
 }
 
 /// TASK-012m Faz 5 — apply sonrası "Yeniden başlatılıyor…" tam ekran overlay'i
-/// (metin yok; ttf erte — yalnız ayrı bir renk katmanı).
+/// (yalnız ayrı bir renk katmanı).
 fn draw_restart_screen(canvas: &mut Canvas<Window>, theme: &Theme, (w, h): (u32, u32)) {
     let c = to_color(theme.color("neon"));
     canvas.set_draw_color(c);
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
-    // İçeride koyu bir dikdörtgen (karartma) — görsel vurgu.
     let _ = canvas.fill_rect(sdl2::rect::Rect::new(
         (w as i32 / 4).max(0),
         (h as i32 / 4).max(0),
@@ -565,16 +528,77 @@ fn draw_restart_screen(canvas: &mut Canvas<Window>, theme: &Theme, (w, h): (u32,
     ));
 }
 
-/// Native SDL2 TVUI shell'ini başlatır (tam ekran 10-foot). `Esc` / pencere
-/// kapatma / gamepad `back` ile çıkılır. Bloklayıcıdır; manager-bin ayrı
-/// thread'de çağırır. `state`: SSE `catalog_update` ilerlemesini çizen loading
-/// bar'ının kaynağı. `shutdown`: gamepad `back` (SSE) buraya yazılır.
+/// TASK-012j — folder browser overlay (path + liste + scrollbar + seçili highlight).
+fn draw_folder_browser(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
+) {
+    let Some(fb) = &screen.browser else { return; };
+    canvas.set_draw_color(to_color(theme.color("shadow")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, 0, w, h));
+    let pw = ((w as i32) * 80 / 100).max(200) as u32;
+    let ph = ((h as i32) * 85 / 100).max(200) as u32;
+    let px = ((w as i32 - pw as i32) / 2).max(0) as i32;
+    let py = ((h as i32 - ph as i32) / 2).max(0) as i32;
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(px, py, pw, ph));
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(px, py, pw, ph));
+    let bar_h: u32 = 28;
+    canvas.set_draw_color(to_color(theme.color("button_selected")));
+    let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + 10, py + 40, pw - 20, bar_h));
+    canvas.set_draw_color(to_color(theme.color("border_selected")));
+    let _ = canvas.draw_rect(sdl2::rect::Rect::new(px + 10, py + 40, pw - 20, bar_h));
+    // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
+        let path_txt = fb.current_path.display().to_string();
+        let truncated = if path_txt.chars().count() > 60 { format!("...{}", path_txt.chars().skip(path_txt.chars().count() - 57).collect::<String>()) } else { path_txt };
+        let _ = crate::text::draw_text(canvas, tc, &truncated, theme.color("neon"), px + 14, py + 44, 11, font_scale);
+
+    let list_y = py + 40 + bar_h as i32 + 10;
+    let row_h: u32 = 28;
+    let gap: u32 = 4;
+    let visible = ((ph - 80) / (row_h + gap)) as usize;
+    let start_idx = fb.selection.saturating_sub(visible / 2).min(fb.items.len().saturating_sub(visible));
+    let end_idx = (start_idx + visible).min(fb.items.len());
+    let mut y = list_y;
+    for (idx, entry) in fb.items[start_idx..end_idx].iter().enumerate() {
+        let abs_idx = start_idx + idx;
+        let is_sel = abs_idx == fb.selection;
+        let bg = if is_sel { theme.color("button_selected") } else { theme.color("button_idle") };
+        let border = if is_sel { theme.color("border_selected") } else { theme.color("border") };
+        canvas.set_draw_color(to_color(bg));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + 10, y, pw - 20, row_h));
+        canvas.set_draw_color(to_color(border));
+        let _ = canvas.draw_rect(sdl2::rect::Rect::new(px + 10, y, pw - 20, row_h));
+        // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
+            let name = entry.clone();
+            let _ = crate::text::draw_text(canvas, tc, &name, theme.color("neon"), px + 14, y + 6, 11, font_scale);
+
+        y += (row_h + gap) as i32;
+    }
+    // Scrollbar
+    if fb.items.len() > visible {
+        let bar_track_h = (visible as u32 * (row_h + gap)) as i32;
+        let thumb_h = ((visible as f32 / fb.items.len() as f32) * bar_track_h as f32) as u32;
+        let thumb_y = list_y + ((start_idx as f32 / fb.items.len() as f32) * bar_track_h as f32) as i32;
+        canvas.set_draw_color(to_color(theme.color("border")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + pw as i32 - 10, list_y, 6, bar_track_h as u32));
+        canvas.set_draw_color(to_color(theme.color("neon")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(px + pw as i32 - 10, thumb_y, 6, thumb_h.max(10)));
+    }
+}
+
 pub fn run_native_shell(
     theme: &Theme,
     state: &SharedTvuiState,
     shutdown: &AtomicBool,
 ) -> Result<(), String> {
     let sdl = sdl2::init().map_err(|e| format!("SDL2 init: {e}"))?;
+    // TTF: fontdue pure-Rust (sdl2_ttf bagimliligi kaldirildi)
     let video = sdl.video().map_err(|e| format!("SDL2 video: {e}"))?;
     // Bulgu 13: `RGSX_TVUI_WINDOWED=1` → resizable pencere (masaüstü test/debug);
     // varsayılan 10-foot fullscreen kalır (Python `get_display_fullscreen()` parity'si
@@ -605,9 +629,10 @@ pub fn run_native_shell(
     let mut event_pump = sdl.event_pump().map_err(|e| format!("SDL2 event: {e}"))?;
 
     let preset = std::env::var("RGSX_TVUI_BG").unwrap_or_else(|_| "default".into());
-    // TASK-012h Faz 3/5: state machine + box-art cache (Faz 5)
+    // TASK-012h Faz 3/5 + gap-05: state machine + box-art texture cache (cap 64).
     let mut screen = TvuiScreen::default();
-    let _art_cache = crate::render::BoxArtCache::new(32);
+    let mut art_cache =
+        crate::boxart::SdlBoxArtCache::new(crate::boxart::MAX_TEXTURES, theme.icons.path.clone());
 
     'running: loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -717,28 +742,33 @@ pub fn run_native_shell(
             draw_restart_screen(&mut canvas, theme, dims);
         } else {
             // screen.menu üzerinden çizim (Faz 3/4/5)
-            match screen.menu {
-                MenuState::PlatformGrid => draw_grid(&mut canvas, theme, state, &screen, dims),
-                MenuState::GameList => draw_game_list(&mut canvas, theme, &screen, dims),
-                MenuState::Loading | MenuState::Error(_) => draw_loading(&mut canvas, theme, state, dims),
+                let font_scale = screen.a11y.font_scale().max(0.5).min(3.0);
+    match screen.menu {
+                MenuState::PlatformGrid => {
+                    art_cache.sync_icons_path(&theme.icons.path);
+                    draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale, &mut art_cache)
+                },
+                MenuState::GameList => draw_game_list(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
+                MenuState::Loading | MenuState::Error(_) => draw_loading(&mut canvas, theme, state, dims, &texture_creator, font_scale),
                 MenuState::ConfirmExit => {
-                    draw_grid(&mut canvas, theme, state, &screen, dims);
+                    art_cache.sync_icons_path(&theme.icons.path);
+                    draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale, &mut art_cache);
                     canvas.set_draw_color(to_color(theme.color("warning_text")));
                     let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
                 }
-                MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims),
+                MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
             }
             draw_footer(&mut canvas, theme, &screen, dims);
             // TASK-012i: overlay varsa üstte çiz (pause/display/filter)
             if screen.overlay.is_some() {
-                draw_menu_overlay(&mut canvas, theme, &screen, dims);
+                draw_menu_overlay(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
             }
             // TASK-012j: sanal klavye / folder browser en üstte (overlay üstüne)
             if screen.keyboard.is_some() {
-                draw_virtual_keyboard(&mut canvas, theme, &screen, dims);
+                draw_virtual_keyboard(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
             }
             if screen.browser.is_some() {
-                draw_folder_browser(&mut canvas, theme, &screen, dims);
+                draw_folder_browser(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
             }
             // Faz 5: transition bittiyse temizle
             if let Some(tr) = &screen.transition {

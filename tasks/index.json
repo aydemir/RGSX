@@ -1270,6 +1270,48 @@
     "superseded_by": ""
   },
   {
+    "id": "TASK-012-gap-04",
+    "title": "TVUI frontend TTF metin render eksigi — sdl2_ttf entegrasyonu ve overlay etiketleri",
+    "status": "done",
+    "priority": "P1",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "frontend",
+      "ttf"
+    ],
+    "depends_on": [
+      "TASK-012h",
+      "TASK-012i",
+      "TASK-012j",
+      "TASK-012k"
+    ],
+    "updated": "2026-09-16",
+    "file": "tasks/gap/TASK-012-gap-04-tvui-ttf-metin-render.md",
+    "superseded_by": ""
+  },
+  {
+    "id": "TASK-012-gap-05",
+    "title": "TVUI box-art doku render eksigi — icon_path texture blit ve cache",
+    "status": "done",
+    "priority": "P2",
+    "environment": "both",
+    "labels": [
+      "tvui",
+      "sdl2",
+      "frontend",
+      "boxart"
+    ],
+    "depends_on": [
+      "TASK-012h",
+      "TASK-012-gap-04"
+    ],
+    "updated": "2026-09-03",
+    "file": "tasks/gap/TASK-012-gap-05-tvui-boxart-doku-render.md",
+    "superseded_by": ""
+  },
+  {
     "id": "TASK-012a",
     "title": "TVUI SPA shell (CSS tema değişkenleri) + `RGSX_TVUI` flag hook",
     "status": "superseded",
