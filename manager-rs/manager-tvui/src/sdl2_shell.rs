@@ -147,24 +147,23 @@ fn draw_rounded_rect(
     let _ = canvas.draw_line((x + r as i32, y + h - 1), (x + w - r as i32, y + h - 1));
     let _ = canvas.draw_line((x, y + r as i32), (x, y + h - r as i32));
     let _ = canvas.draw_line((x + w - 1, y + r as i32), (x + w - 1, y + h - r as i32));
-    // 4 köşe yayı (çeyrek daire noktaları).
+    // 4 köşe yayı: her köşede YALNIZCA o köşeye bakan çeyrek çizilir
+    // (tam daire çizilirse köşe dışına taşan halka görünür).
+    // Köşe merkezleri + içe bakan işaretler: TL(-,-), TR(+,-), BL(-,+), BR(+,+).
     let corners = [
-        (x + r as i32, y + r as i32),
-        (x + w - r as i32 - 1, y + r as i32),
-        (x + r as i32, y + h - r as i32 - 1),
-        (x + w - r as i32 - 1, y + h - r as i32 - 1),
+        (x + r as i32, y + r as i32, -1, -1),
+        (x + w - r as i32 - 1, y + r as i32, 1, -1),
+        (x + r as i32, y + h - r as i32 - 1, -1, 1),
+        (x + w - r as i32 - 1, y + h - r as i32 - 1, 1, 1),
     ];
-    for (cx, cy) in corners {
+    for (cx, cy, qx, qy) in corners {
         for dy in 0..=r as i32 {
             let dx = ((r as f64 * r as f64 - dy as f64 * dy as f64).max(0.0).sqrt()).round() as i32;
-            for (sx, sy) in [(1, 1), (1, -1), (-1, 1), (-1, -1)] {
-                // İlgili çeyreği seç: köşe merkezine göre işaret.
-                let _ = canvas.draw_point((cx + sx * dx, cy + sy * dy));
-            }
+            // Çeyrek: dy'yi işaretle, dx'i işaretle (daire simetrisi).
+            let _ = canvas.draw_point((cx + qx * dx, cy + qy * dy));
+            let _ = canvas.draw_point((cx + qx * dy, cy + qy * dx));
         }
     }
-    // Çeyrek filtreleme yerine basit yaklaşım: yukarıdaki 4 yönlü noktalar
-    // köşeyi kapatır; fazlası görselde 1px tolerans içindedir.
 }
 
 /// Platform kaynak rozet anahtarı (Python `get_platform_source_badge_key` parity):
@@ -558,6 +557,7 @@ fn draw_background<'a>(
     let (top, bottom) = a11y_bg(theme, screen, preset);
     let stale = !matches!(cache, Some((cw, ch, _)) if *cw == w && *ch == h);
     if stale {
+        // Tam w*h gradyan (tek seferlik ~3.7MB, cache'te yaşar).
         let mut pixels: Vec<u8> = Vec::with_capacity((w * h * 4) as usize);
         for y in 0..h {
             let t = if h <= 1 {
@@ -565,10 +565,14 @@ fn draw_background<'a>(
             } else {
                 y as f32 / (h - 1) as f32
             };
-            pixels.push(lerp(top.0, bottom.0, t));
-            pixels.push(lerp(top.1, bottom.1, t));
-            pixels.push(lerp(top.2, bottom.2, t));
-            pixels.push(255);
+            let (r, g, b) = (
+                lerp(top.0, bottom.0, t),
+                lerp(top.1, bottom.1, t),
+                lerp(top.2, bottom.2, t),
+            );
+            for _ in 0..w {
+                pixels.extend_from_slice(&[r, g, b, 255]);
+            }
         }
         match tc.create_texture_static(PixelFormatEnum::RGBA32, w, h) {
             Ok(mut tex) => {
@@ -761,7 +765,7 @@ fn draw_grid<'a>(
             );
             draw_rounded_rect(
                 canvas,
-                to_color(theme.color("border_selected")),
+                to_color(theme.color("text")),
                 sdl2::rect::Rect::new(
                     x - pad,
                     y - pad,
@@ -816,8 +820,16 @@ fn draw_game_list(
     let ext_w: u32 = 80;
     let size_w: u32 = 130;
     let list_w = w.saturating_sub(margin * 2);
-    let name_w = list_w.saturating_sub(ext_w + size_w + 32);
     let x0 = margin as i32;
+    let panel = sdl2::rect::Rect::new(
+        x0 - 10,
+        top - 10,
+        list_w + 20,
+        (h.saturating_sub(margin + 40) as i32 - (top - 10)).max(60) as u32,
+    );
+    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), panel, 12);
+    draw_rounded_rect(canvas, to_color(theme.color("border")), panel, 12);
+    let name_w = list_w.saturating_sub(ext_w + size_w + 32);
     let ext_x = x0 + name_w as i32 + 16;
     let size_x = x0 + list_w as i32 - size_w as i32;
     // Başlık satırı + ayraç.

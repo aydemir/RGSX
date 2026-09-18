@@ -98,6 +98,82 @@ fn load_font() -> Option<&'static fontdue::Font> {
         .as_ref()
 }
 
+/// Dizilmiş metin (RGBA tampon + boyut). Taban çizgisi hizalı:
+/// her glif `ymin` bearing'ine göre düşeyde oturtulur (inişli `g/y/p`
+/// sarkar, `A` ile aynı tabanda durur — upstream/pygame parity).
+struct LaidText {
+    buffer: Vec<u8>,
+    w: usize,
+    h: usize,
+}
+
+fn layout_text(
+    font: &fontdue::Font,
+    text: &str,
+    size: f32,
+    color: (u8, u8, u8, u8),
+) -> Option<LaidText> {
+    let adv = |m: &fontdue::Metrics| (m.advance_width.ceil() as usize).max(1);
+    // 1. Rasterize + ölçüler (taban üstü = ymin+yükseklik).
+    let mut glyphs: Vec<(fontdue::Metrics, Vec<u8>)> = Vec::new();
+    let mut total_w: usize = 0;
+    let mut max_top: i32 = 0;
+    let mut min_ymin: i32 = 0;
+    let mut any_ink = false;
+    for ch in text.chars() {
+        let (m, bmp) = font.rasterize(ch, size);
+        total_w += adv(&m);
+        if m.width > 0 && m.height > 0 && !bmp.iter().all(|&a| a == 0) {
+            any_ink = true;
+            max_top = max_top.max(m.ymin + m.height as i32);
+            min_ymin = min_ymin.min(m.ymin);
+        }
+        glyphs.push((m, bmp));
+    }
+    if total_w == 0 || !any_ink {
+        return None;
+    }
+    // 2. Negatif sol yatak (italik taşma) kaydırılır.
+    let shift_x = glyphs
+        .iter()
+        .map(|(m, _)| m.xmin)
+        .min()
+        .unwrap_or(0)
+        .min(0)
+        .unsigned_abs() as usize;
+    total_w = total_w.saturating_add(shift_x);
+    let total_h = (max_top - min_ymin).max(1) as usize;
+    // 3. Blit (mürekkepsiz glifler yalnızca ilerletir).
+    let mut buffer = vec![0u8; total_w * total_h * 4];
+    let mut cursor_x = shift_x;
+    for (m, bmp) in &glyphs {
+        if m.width > 0 && m.height > 0 {
+            let gx = cursor_x as i32 + m.xmin;
+            let gy = max_top - (m.ymin + m.height as i32);
+            for row in 0..m.height {
+                for col in 0..m.width {
+                    let alpha = bmp[row * m.width + col];
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let bx = gx + col as i32;
+                    let by = gy + row as i32;
+                    if bx < 0 || by < 0 || bx >= total_w as i32 || by >= total_h as i32 {
+                        continue;
+                    }
+                    let idx = (by as usize * total_w + bx as usize) * 4;
+                    buffer[idx] = color.0;
+                    buffer[idx + 1] = color.1;
+                    buffer[idx + 2] = color.2;
+                    buffer[idx + 3] = alpha;
+                }
+            }
+        }
+        cursor_x += adv(m);
+    }
+    Some(LaidText { buffer, w: total_w, h: total_h })
+}
+
 /// Metni canvas uzerine cizer. Basarisiz olursa false.
 pub fn draw_text(
     canvas: &mut Canvas<Window>,
@@ -117,56 +193,20 @@ pub fn draw_text(
         Some(f) => f,
         None => return false,
     };
-    // Measure total width — ilerleme (advance) ile: boşluk gibi bit eşlemsiz
-    // glifler (advance>0, bitmap=0) yoksa kelimeler bitişir (upstream parity).
-    let adv = |m: &fontdue::Metrics| (m.advance_width.ceil() as usize).max(1);
-    let mut total_w: usize = 0;
-    let mut max_h: usize = 0;
-    for ch in text.chars() {
-        let (metrics, _) = font.rasterize(ch, size);
-        total_w += adv(&metrics);
-        if metrics.height > max_h {
-            max_h = metrics.height;
-        }
-    }
-    if total_w == 0 || max_h == 0 {
-        return false;
-    }
-    // Create RGBA buffer
-    let mut buffer = vec![0u8; total_w * max_h * 4];
-    let mut cursor_x = 0usize;
-    for ch in text.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, size);
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let alpha = bitmap[row * metrics.width + col];
-                if alpha == 0 {
-                    continue;
-                }
-                let bx = cursor_x + col;
-                let by = row;
-                if bx >= total_w || by >= max_h {
-                    continue;
-                }
-                let idx = (by * total_w + bx) * 4;
-                buffer[idx] = color.0;
-                buffer[idx + 1] = color.1;
-                buffer[idx + 2] = color.2;
-                buffer[idx + 3] = alpha;
-            }
-        }
-        cursor_x += adv(&metrics);
-    }
+    let laid = match layout_text(font, text, size, color) {
+        Some(l) => l,
+        None => return false,
+    };
     // Create texture from buffer
-    let mut texture = match texture_creator.create_texture_static(PixelFormatEnum::RGBA32, total_w as u32, max_h as u32) {
+    let mut texture = match texture_creator.create_texture_static(PixelFormatEnum::RGBA32, laid.w as u32, laid.h as u32) {
         Ok(t) => t,
         Err(_) => return false,
     };
-    if texture.update(None, &buffer, (total_w * 4) as usize).is_err() {
+    if texture.update(None, &laid.buffer, (laid.w * 4) as usize).is_err() {
         return false;
     }
     texture.set_blend_mode(sdl2::render::BlendMode::Blend);
-    let dst = Rect::new(x, y, total_w as u32, max_h as u32);
+    let dst = Rect::new(x, y, laid.w as u32, laid.h as u32);
     let _ = canvas.copy(&texture, None, Some(dst));
     true
 }
@@ -188,54 +228,21 @@ pub fn draw_text_centered(
         Some(f) => f,
         None => return false,
     };
-    let adv = |m: &fontdue::Metrics| (m.advance_width.ceil() as usize).max(1);
-    let mut total_w: usize = 0;
-    let mut max_h: usize = 0;
-    for ch in text.chars() {
-        let (metrics, _) = font.rasterize(ch, size);
-        total_w += adv(&metrics);
-        if metrics.height > max_h {
-            max_h = metrics.height;
-        }
-    }
-    if total_w == 0 || max_h == 0 {
-        return false;
-    }
-    let mut buffer = vec![0u8; total_w * max_h * 4];
-    let mut cursor_x = 0usize;
-    for ch in text.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, size);
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let alpha = bitmap[row * metrics.width + col];
-                if alpha == 0 {
-                    continue;
-                }
-                let bx = cursor_x + col;
-                let by = row;
-                if bx >= total_w || by >= max_h {
-                    continue;
-                }
-                let idx = (by * total_w + bx) * 4;
-                buffer[idx] = color.0;
-                buffer[idx + 1] = color.1;
-                buffer[idx + 2] = color.2;
-                buffer[idx + 3] = alpha;
-            }
-        }
-        cursor_x += adv(&metrics);
-    }
-    let mut texture = match texture_creator.create_texture_static(PixelFormatEnum::RGBA32, total_w as u32, max_h as u32) {
+    let laid = match layout_text(font, text, size, color) {
+        Some(l) => l,
+        None => return false,
+    };
+    let mut texture = match texture_creator.create_texture_static(PixelFormatEnum::RGBA32, laid.w as u32, laid.h as u32) {
         Ok(t) => t,
         Err(_) => return false,
     };
-    if texture.update(None, &buffer, (total_w * 4) as usize).is_err() {
+    if texture.update(None, &laid.buffer, (laid.w * 4) as usize).is_err() {
         return false;
     }
     texture.set_blend_mode(sdl2::render::BlendMode::Blend);
-    let x = rect.x() + ((rect.width() as i32 - total_w as i32) / 2).max(0);
-    let y = rect.y() + ((rect.height() as i32 - max_h as i32) / 2).max(0);
-    let dst = Rect::new(x, y, total_w as u32, max_h as u32);
+    let x = rect.x() + ((rect.width() as i32 - laid.w as i32) / 2).max(0);
+    let y = rect.y() + ((rect.height() as i32 - laid.h as i32) / 2).max(0);
+    let dst = Rect::new(x, y, laid.w as u32, laid.h as u32);
     let _ = canvas.copy(&texture, None, Some(dst));
     true
 }
@@ -265,6 +272,21 @@ mod tests {
         let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).unwrap();
         let (m, _) = font.rasterize(' ', 16.0);
         assert!(m.advance_width > 1.0, "boşluk ilerlemeli: {}", m.advance_width);
+    }
+
+    #[test]
+    fn layout_baseline_descenders_extend_height() {
+        // `g` inişli: "Ag" kutusu "A"dan yüksek olmalı (taban hizası korunur).
+        let font = load_font().expect("test asset fontu bulunmalı");
+        let a = layout_text(font, "A", 16.0, (255, 255, 255, 255)).unwrap();
+        let ag = layout_text(font, "Ag", 16.0, (255, 255, 255, 255)).unwrap();
+        assert!(ag.h > a.h, "A:{} Ag:{}", a.h, ag.h);
+        // Boşluk genişletir ama mürekkep eklemez.
+        let ab = layout_text(font, "ab", 16.0, (255, 255, 255, 255)).unwrap();
+        let aspb = layout_text(font, "a b", 16.0, (255, 255, 255, 255)).unwrap();
+        assert!(aspb.w > ab.w, "ab:{} 'a b':{}", ab.w, aspb.w);
+        // Yalnız boşluk → None (çizilecek mürekkep yok).
+        assert!(layout_text(font, "   ", 16.0, (255, 255, 255, 255)).is_none());
     }
 
     #[test]
