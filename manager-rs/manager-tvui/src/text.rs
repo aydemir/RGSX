@@ -85,6 +85,19 @@ fn load_font_bytes() -> Option<Vec<u8>> {
         .clone()
 }
 
+/// Parse edilmiş font (pahalı `from_bytes` kare başına DEĞİL, bir kez).
+/// `fontdue::Font` `Send+Sync` ise `OnceLock`'ta taşınır.
+fn load_font() -> Option<&'static fontdue::Font> {
+    static CACHE: OnceLock<Option<fontdue::Font>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            load_font_bytes().and_then(|b| {
+                fontdue::Font::from_bytes(b, fontdue::FontSettings::default()).ok()
+            })
+        })
+        .as_ref()
+}
+
 /// Metni canvas uzerine cizer. Basarisiz olursa false.
 pub fn draw_text(
     canvas: &mut Canvas<Window>,
@@ -100,13 +113,9 @@ pub fn draw_text(
         return false;
     }
     let size = scaled_size(base_size, font_scale);
-    let font_bytes = match load_font_bytes() {
-        Some(b) => b,
+    let font = match load_font() {
+        Some(f) => f,
         None => return false,
-    };
-    let font = match fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()) {
-        Ok(f) => f,
-        Err(_) => return false,
     };
     // Measure total width — ilerleme (advance) ile: boşluk gibi bit eşlemsiz
     // glifler (advance>0, bitmap=0) yoksa kelimeler bitişir (upstream parity).
@@ -175,13 +184,9 @@ pub fn draw_text_centered(
         return false;
     }
     let size = scaled_size(base_size, font_scale);
-    let font_bytes = match load_font_bytes() {
-        Some(b) => b,
+    let font = match load_font() {
+        Some(f) => f,
         None => return false,
-    };
-    let font = match fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()) {
-        Ok(f) => f,
-        Err(_) => return false,
     };
     let adv = |m: &fontdue::Metrics| (m.advance_width.ceil() as usize).max(1);
     let mut total_w: usize = 0;

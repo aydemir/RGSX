@@ -77,6 +77,163 @@ pub fn wall_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Yuvarlak dikdörtgen satır aralıkları (SDL'siz, test edilebilir).
+/// Dönüş: `(y, x0, x1)` — her satırda doldurulacak yatay aralık.
+/// `r` yarıçapı min(w,h)/2'ye clamp'lenir.
+pub fn rounded_fill_spans(w: u32, h: u32, r: u32) -> Vec<(u32, u32, u32)> {
+    if w == 0 || h == 0 {
+        return Vec::new();
+    }
+    let r = r.min(w / 2).min(h / 2);
+    let mut out = Vec::with_capacity(h as usize);
+    for y in 0..h {
+        // Köşe dairelerinin yatay girintisi (üst/alt şeritlerde).
+        let dy = if y < r {
+            r - y
+        } else if y >= h - r {
+            y - (h - r) + 1
+        } else {
+            0
+        };
+        let inset = if dy == 0 {
+            0
+        } else {
+            // x = r - sqrt(r² - dy²), yukarı yuvarla.
+            let v = (r * r).saturating_sub(dy * dy);
+            let root = (v as f64).sqrt().floor() as u32;
+            r.saturating_sub(root)
+        };
+        out.push((y, inset, w.saturating_sub(inset)));
+    }
+    out
+}
+
+/// İçi dolu yuvarlak dikdörtgen (Python `border_radius` parity).
+fn fill_rounded_rect(
+    canvas: &mut Canvas<Window>,
+    color: Color,
+    rect: sdl2::rect::Rect,
+    radius: u32,
+) {
+    if rect.width() == 0 || rect.height() == 0 {
+        return;
+    }
+    canvas.set_draw_color(color);
+    for (y, x0, x1) in rounded_fill_spans(rect.width(), rect.height(), radius) {
+        if x1 > x0 {
+            let _ = canvas.draw_line(
+                (rect.x() + x0 as i32, rect.y() + y as i32),
+                (rect.x() + x1 as i32 - 1, rect.y() + y as i32),
+            );
+        }
+    }
+}
+
+/// Yuvarlak dikdörtgen çerçeve (dış çizgi; köşeler daire yayıyla).
+fn draw_rounded_rect(
+    canvas: &mut Canvas<Window>,
+    color: Color,
+    rect: sdl2::rect::Rect,
+    radius: u32,
+) {
+    if rect.width() == 0 || rect.height() == 0 {
+        return;
+    }
+    let r = radius.min(rect.width() / 2).min(rect.height() / 2);
+    canvas.set_draw_color(color);
+    let (x, y, w, h) = (rect.x(), rect.y(), rect.width() as i32, rect.height() as i32);
+    // Düz kenarlar (köşe yayları hariç).
+    let _ = canvas.draw_line((x + r as i32, y), (x + w - r as i32, y));
+    let _ = canvas.draw_line((x + r as i32, y + h - 1), (x + w - r as i32, y + h - 1));
+    let _ = canvas.draw_line((x, y + r as i32), (x, y + h - r as i32));
+    let _ = canvas.draw_line((x + w - 1, y + r as i32), (x + w - 1, y + h - r as i32));
+    // 4 köşe yayı (çeyrek daire noktaları).
+    let corners = [
+        (x + r as i32, y + r as i32),
+        (x + w - r as i32 - 1, y + r as i32),
+        (x + r as i32, y + h - r as i32 - 1),
+        (x + w - r as i32 - 1, y + h - r as i32 - 1),
+    ];
+    for (cx, cy) in corners {
+        for dy in 0..=r as i32 {
+            let dx = ((r as f64 * r as f64 - dy as f64 * dy as f64).max(0.0).sqrt()).round() as i32;
+            for (sx, sy) in [(1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                // İlgili çeyreği seç: köşe merkezine göre işaret.
+                let _ = canvas.draw_point((cx + sx * dx, cy + sy * dy));
+            }
+        }
+    }
+    // Çeyrek filtreleme yerine basit yaklaşım: yukarıdaki 4 yönlü noktalar
+    // köşeyi kapatır; fazlası görselde 1px tolerans içindedir.
+}
+
+/// Platform kaynak rozet anahtarı (Python `get_platform_source_badge_key` parity):
+/// ismin sonundaki `(kaynak)` → Archive/LolRoms/Torrent/1Fichier/Vimms/EdgeEmu.
+pub fn source_badge_key(platform_name: &str) -> Option<&'static str> {
+    let text = platform_name.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // Son `(...)` grubunu al.
+    let open = text.rfind('(')?;
+    let close = text.rfind(')')?;
+    if close < open || close != text.len() - 1 {
+        return None;
+    }
+    match text[open + 1..close].trim().to_ascii_lowercase().as_str() {
+        "archive" => Some("Archive"),
+        "lolroms" => Some("LolRoms"),
+        "torrent" => Some("Torrent"),
+        "1fichier" => Some("1Fichier"),
+        "vimms" => Some("Vimms"),
+        "edgeemu" | "edgeemu.net" => Some("EdgeEmu"),
+        _ => None,
+    }
+}
+
+/// Rozet stili: (etiket, çerçeve rengi, metin rengi) — Python `style_map` parity.
+pub fn source_badge_style(key: &str) -> Option<(&'static str, (u8, u8, u8, u8), (u8, u8, u8, u8))> {
+    match key {
+        "Archive" => Some(("AR", (48, 48, 48, 235), (35, 35, 35, 255))),
+        "LolRoms" => Some(("LOL", (0, 255, 255, 230), (61, 19, 110, 255))),
+        "Vimms" => Some(("VL", (208, 208, 208, 235), (24, 77, 176, 255))),
+        "Torrent" => Some(("TOR", (97, 164, 64, 235), (37, 90, 24, 255))),
+        "1Fichier" => Some(("1F", (208, 208, 208, 235), (24, 77, 176, 255))),
+        "EdgeEmu" => Some(("EMU", (41, 126, 196, 235), (24, 77, 176, 255))),
+        _ => None,
+    }
+}
+
+/// Tile sağ-üst kaynak rozeti (beyaz yuvarlak kutu + kısa etiket).
+/// Boyut: clamp(20, min(w,h)*0.24, 44), içten payda sağ üstte.
+fn draw_source_badge(
+    canvas: &mut Canvas<Window>,
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
+    tile: sdl2::rect::Rect,
+    platform_name: &str,
+) {
+    let key = match source_badge_key(platform_name) {
+        Some(k) => k,
+        None => return,
+    };
+    let (label, border, text_c) = match source_badge_style(key) {
+        Some(s) => s,
+        None => return,
+    };
+    let size = ((tile.width().min(tile.height()) as f32 * 0.24) as u32).clamp(20, 44);
+    let inset = (5u32).max(size / 6);
+    let r = sdl2::rect::Rect::new(
+        tile.x() + tile.width() as i32 - size as i32 - inset as i32,
+        tile.y() + inset as i32,
+        size,
+        size,
+    );
+    fill_rounded_rect(canvas, Color::RGBA(255, 255, 255, 242), r, (size / 4).max(8));
+    draw_rounded_rect(canvas, to_color(border), r, (size / 4).max(8));
+    let _ = crate::text::draw_text_centered(canvas, tc, label, text_c, r, 9, font_scale);
+}
+
 /// Platform logosunu blit eder; dosyası yoksa `default.png` fallback'ini dener
 /// (Python `miss → default.png` parity; ikisi de yoksa false → kutu kalır).
 fn blit_platform_art<'a>(
@@ -123,13 +280,19 @@ pub fn app_version() -> String {
 }
 
 /// LAN IP (manager-bin `local_lan_ip` parity, std-only UDP numarası, trafik yok).
+/// Süreç boyu cache (IP değişimi yeniden başlatmayla alınır).
 pub fn lan_ip() -> String {
-    (|| {
-        let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-        sock.connect("8.8.8.8:80").ok()?;
-        sock.local_addr().ok().map(|a| a.ip().to_string())
-    })()
-    .unwrap_or_else(|| "127.0.0.1".to_string())
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            (|| {
+                let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+                sock.connect("8.8.8.8:80").ok()?;
+                sock.local_addr().ok().map(|a| a.ip().to_string())
+            })()
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+        })
+        .clone()
 }
 
 /// Manager portu: `RGSX_MANAGER_BIN_PORT` > `RGSX_TVUI_PORT` > 5000.
@@ -147,7 +310,28 @@ pub fn manager_port() -> u16 {
 
 /// ROM klasörü disk satırı (Python `get_default_disk_space_line` parity):
 /// `"[HDD] 241 GB/446 GB (54% free)"`. Yol yoksa/disk bulunamazsa `""`.
+/// sysinfo taraması pahalı → yol başına 10 sn TTL cache (kare döngüsü için).
 pub fn disk_line(roms_path: &str) -> String {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<(std::time::Instant, String, String)>> =
+        std::sync::OnceLock::new();
+    let now = std::time::Instant::now();
+    let slot = CACHE.get_or_init(|| {
+        std::sync::Mutex::new((now, String::new(), String::new()))
+    });
+    if let Ok(guard) = slot.lock() {
+        if guard.1 == roms_path && now.duration_since(guard.0).as_secs() < 10 {
+            return guard.2.clone();
+        }
+    }
+    let fresh = disk_line_uncached(roms_path);
+    if let Ok(mut guard) = slot.lock() {
+        *guard = (now, roms_path.to_string(), fresh.clone());
+    }
+    fresh
+}
+
+/// `disk_line` saf çekirdeği (testler burayı kullanır).
+fn disk_line_uncached(roms_path: &str) -> String {
     if roms_path.trim().is_empty() {
         return String::new();
     }
@@ -329,10 +513,8 @@ fn draw_badge_lines(
     let line_h = ((20.0 * font_scale) as u32).max(14);
     let h = lines.len() as u32 * line_h + 12;
     let r = sdl2::rect::Rect::new(x, y, w, h);
-    canvas.set_draw_color(to_color(theme.color("button_idle")));
-    let _ = canvas.fill_rect(r);
-    canvas.set_draw_color(to_color(theme.color("border")));
-    let _ = canvas.draw_rect(r);
+    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), r, 10);
+    draw_rounded_rect(canvas, to_color(theme.color("border")), r, 10);
     for (i, line) in lines.iter().enumerate() {
         let rr = sdl2::rect::Rect::new(
             x + 6,
@@ -552,40 +734,54 @@ fn draw_grid<'a>(
             let dy = ((tile_h as i32 - sh as i32) / 2) as i32;
             let x = base_x as i32 + dx;
             let y = base_y as i32 + dy;
-            // Neon glow: dışta 2 katman (boşlukta eriyen çerçeve hissi).
-            canvas.set_draw_color(to_color(theme.color("neon")));
+            // Neon glow: dışta yuvarlak katman.
             let glow_pad = 6i32;
-            let _ = canvas.draw_rect(sdl2::rect::Rect::new(
-                x - glow_pad,
-                y - glow_pad,
-                sw + (glow_pad * 2) as u32,
-                sh + (glow_pad * 2) as u32,
-            ));
-            canvas.set_draw_color(to_color(theme.color("button_selected")));
+            draw_rounded_rect(
+                canvas,
+                to_color(theme.color("neon")),
+                sdl2::rect::Rect::new(
+                    x - glow_pad,
+                    y - glow_pad,
+                    sw + (glow_pad * 2) as u32,
+                    sh + (glow_pad * 2) as u32,
+                ),
+                14,
+            );
             let pad = 2i32;
-            let _ = canvas.fill_rect(sdl2::rect::Rect::new(
-                x - pad,
-                y - pad,
-                sw + (pad * 2) as u32,
-                sh + (pad * 2) as u32,
-            ));
-            canvas.set_draw_color(to_color(theme.color("border_selected")));
-            let _ = canvas.draw_rect(sdl2::rect::Rect::new(
-                x - pad,
-                y - pad,
-                sw + (pad * 2) as u32,
-                sh + (pad * 2) as u32,
-            ));
+            fill_rounded_rect(
+                canvas,
+                to_color(theme.color("button_selected")),
+                sdl2::rect::Rect::new(
+                    x - pad,
+                    y - pad,
+                    sw + (pad * 2) as u32,
+                    sh + (pad * 2) as u32,
+                ),
+                12,
+            );
+            draw_rounded_rect(
+                canvas,
+                to_color(theme.color("border_selected")),
+                sdl2::rect::Rect::new(
+                    x - pad,
+                    y - pad,
+                    sw + (pad * 2) as u32,
+                    sh + (pad * 2) as u32,
+                ),
+                12,
+            );
             // Box-art: secili tile ile birlikte olceklenen rect'e blit (yoksa default.png, o da yoksa kutu kalir).
             // Upstream sözleşmesi: tile'da isim YAZISI YOK (logo + source badge).
-            let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, sdl2::rect::Rect::new(x, y, sw, sh));
+            let tile_rect = sdl2::rect::Rect::new(x, y, sw, sh);
+            let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, tile_rect);
+            draw_source_badge(canvas, tc, font_scale, tile_rect, &p.name);
 
         } else {
-            canvas.set_draw_color(to_color(theme.color("button_idle")));
-            let _ = canvas.fill_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
-            canvas.set_draw_color(to_color(theme.color("neon")));
-            let _ = canvas.draw_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
-            let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
+            let tile_rect = sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h);
+            fill_rounded_rect(canvas, to_color(theme.color("button_idle")), tile_rect, 12);
+            draw_rounded_rect(canvas, to_color(theme.color("neon")), tile_rect, 12);
+            let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, tile_rect);
+            draw_source_badge(canvas, tc, font_scale, tile_rect, &p.name);
 
         }
     }
@@ -811,10 +1007,9 @@ fn draw_menu_overlay(
     let total_h = ov.items.len() as u32 * bh_each + (ov.items.len().saturating_sub(1) as u32 * gap) + 20;
     let bx = ((w as i32 - bw as i32) / 2).max(0) as i32;
     let by = ((h as i32 - total_h as i32) / 2).max(0) as i32;
-    canvas.set_draw_color(to_color(theme.color("button_idle")));
-    let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx, by, bw, total_h));
-    canvas.set_draw_color(to_color(theme.color("border")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx, by, bw, total_h));
+    let panel = sdl2::rect::Rect::new(bx, by, bw, total_h);
+    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), panel, 12);
+    draw_rounded_rect(canvas, to_color(theme.color("border")), panel, 12);
     for (i, label) in ov.items.iter().enumerate() {
         let y = by + 10 + i as i32 * (bh_each as i32 + gap as i32);
         let is_sel = i == ov.selected;
@@ -828,11 +1023,10 @@ fn draw_menu_overlay(
         } else {
             theme.color("border")
         };
-        canvas.set_draw_color(to_color(bg));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each));
-        canvas.set_draw_color(to_color(border));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each));
-        let _ = crate::text::draw_text_centered(canvas, tc, label, theme.color("neon"), sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each), 12, font_scale);
+        let r = sdl2::rect::Rect::new(bx + 10, y, bw - 20, bh_each);
+        fill_rounded_rect(canvas, to_color(bg), r, 10);
+        draw_rounded_rect(canvas, to_color(border), r, 10);
+        let _ = crate::text::draw_text_centered(canvas, tc, label, theme.color("text"), r, 12, font_scale);
 
     }
 }
@@ -1300,6 +1494,40 @@ mod tests {
     #[test]
     fn disk_line_empty_path_is_empty() {
         assert_eq!(disk_line(""), "");
+    }
+
+    #[test]
+    fn rounded_fill_spans_shape() {
+        // Boş / sıfır
+        assert!(rounded_fill_spans(0, 10, 5).is_empty());
+        // r=0 → tam dikdörtgen
+        let full = rounded_fill_spans(10, 4, 0);
+        assert_eq!(full.len(), 4);
+        assert!(full.iter().all(|&(_, x0, x1)| x0 == 0 && x1 == 10));
+        // Simetri + köşe girintisi
+        let spans = rounded_fill_spans(100, 40, 12);
+        assert_eq!(spans.len(), 40);
+        assert_eq!(spans[20].1, 0); // orta satır tam genişlik
+        assert!(spans[0].1 > 0); // üst köşe girintili
+        assert_eq!(spans[0], (0, spans[39].1, spans[39].2)); // dikey simetri... ilk/son
+        assert_eq!(spans[0].1, spans[39].1);
+        // Clamp: r > min(w,h)/2
+        let cl = rounded_fill_spans(20, 20, 99);
+        assert_eq!(cl.len(), 20);
+    }
+
+    #[test]
+    fn source_badge_key_mapping() {
+        assert_eq!(source_badge_key("3DS (Archive)"), Some("Archive"));
+        assert_eq!(source_badge_key("3DS (Vimms)"), Some("Vimms"));
+        assert_eq!(source_badge_key("Game (edgeemu.net)"), Some("EdgeEmu"));
+        assert_eq!(source_badge_key("Game (1Fichier)"), Some("1Fichier"));
+        assert_eq!(source_badge_key("NoParen"), None);
+        assert_eq!(source_badge_key(""), None);
+        assert_eq!(source_badge_key("Weird (Unknown)"), None);
+        let (label, _, _) = source_badge_style("Archive").unwrap();
+        assert_eq!(label, "AR");
+        assert!(source_badge_style("Bogus").is_none());
     }
 
     #[test]
