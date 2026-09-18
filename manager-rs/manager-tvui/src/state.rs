@@ -3,7 +3,7 @@
 //! `tvui.py` `config.menu_state` dispatch'inin tip-güvenli Rust karşılığı.
 //! SDL yalnız piksel işi yapar; karar/test edilebilir her şey burada, SDL'siz.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::accessibility::Accessibility;
@@ -62,6 +62,9 @@ pub struct TvuiScreen {
     pub visible_games: usize,
     /// Faz 4: canlı progress haritası (net.progress ile senkron).
     pub progress: HashMap<String, serde_json::Value>,
+    /// WebUI parity (`gameStatuses`): indirilen oyun anahtarları
+    /// (`net.downloaded` ile senkron; satır `[>]` marker'ı).
+    pub downloaded: HashSet<String>,
     /// Faz 5: platform seçim transition'ı (scale+alpha, theme.json ile).
     pub transition: Option<Transition>,
     /// TASK-012i: menü overlay (pause/display/filter/sort/search).
@@ -93,6 +96,7 @@ impl Default for TvuiScreen {
             selected_game: 0,
             visible_games: 15,
             progress: HashMap::new(),
+            downloaded: HashSet::new(),
             transition: None,
             overlay: None,
             filters: HashMap::new(),
@@ -154,11 +158,18 @@ impl TvuiScreen {
         if !self.net.progress.is_empty() {
             self.progress = self.net.progress.clone();
         }
+        // İndirilen anahtarları yalnız taze çekme varsa kopyala (hata halinde
+        // eski platform verisi korunur; `statuses_ready` boş/hatayı ayırt eder).
+        if self.net.statuses_ready {
+            self.downloaded = self.net.downloaded.clone();
+        }
     }
 
     /// Filtrelenmiş + sıralanmış oyun listesi (display/menus.py parity, SDL'siz).
     /// `filters` map'indeki `filter_usa` gibi anahtarlar `exclude` ise bölge içeren oyun gizlenir.
     /// `sort_mode` `name_asc/desc` veya `size_asc/desc` (size parse sayısal).
+    /// Not: `draw_game_list` henüz ham `games` sırasını çizer (katalog sırası);
+    /// bu fonksiyon overlay filtre menüsü + ileride liste çizimi için hazırdır.
     pub fn filtered_games(&self) -> Vec<GameRow> {
         let mut list = self.games.clone();
         // TASK-012j: search_query ile alt dize filtresi (controls/search.py filter_games_by_search_query parity)
@@ -246,6 +257,64 @@ impl TvuiScreen {
     pub fn close_browser(&mut self) {
         self.browser = None;
     }
+}
+
+/// WebUI parity (`catalogStatus`, `App.vue:382`): satır durum göstergesi.
+/// Öncelik: indirildi `[>]` (yeşil) > aktif `[~] %` (sarı) > başarısız `[X]`
+/// (kırmızı) > yok. `downloaded` anahtarları `game_stem`/küçük harf formundadır;
+/// `failed` progress `status` metninden okunur (`FAILED[_PERMANENT]`/`ERROR`/`ERREUR`).
+/// Dönüş: `Some("[>]")` / `Some("[~] 55%")` / `Some("[X]")` ya da `None`.
+pub fn game_marker(
+    game_name: &str,
+    progress: Option<&serde_json::Value>,
+    downloaded: &HashSet<String>,
+) -> Option<String> {
+    let stem = crate::net::game_stem(game_name);
+    if downloaded.contains(&stem) || downloaded.contains(&game_name.to_lowercase()) {
+        return Some("[>]".to_string());
+    }
+    if let Some(marker) = active_download_marker(progress) {
+        return Some(marker);
+    }
+    if let Some(v) = progress {
+        let code = v
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if matches!(
+            code.as_str(),
+            "FAILED" | "FAILED_PERMANENT" | "ERROR" | "ERREUR"
+        ) {
+            return Some("[X]".to_string());
+        }
+    }
+    None
+}
+
+/// WebUI parity (`catalogStatus` aktif dalı, `App.vue`):
+/// yalnız aktif indirme durumlarında satır marker'ı üretir —
+/// kuyrukta bekleyen (`Queued`) boş bar illüzyonu vermez.
+/// Dönüş: `Some("[~] 55%")` ya da `None` (marker yok).
+pub fn active_download_marker(p: Option<&serde_json::Value>) -> Option<String> {
+    const ACTIVE: [&str; 5] = [
+        "Downloading",
+        "Extracting",
+        "Connecting",
+        "Verifying",
+        "Seeding",
+    ];
+    let v = p?;
+    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("");
+    if !ACTIVE.contains(&status) {
+        return None;
+    }
+    let pct = v
+        .get("progress")
+        .and_then(|x| x.as_f64())
+        .map(|f| f.clamp(0.0, 100.0) as i32)
+        .unwrap_or(0);
+    Some(format!("[~] {pct}%"))
 }
 
 /// SAF reducer: mevcut screen + semantik tuş → (menu geçişi + opsiyonel UiAction).
@@ -571,41 +640,54 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             _ => None,
         },
         MenuState::GameList => match key {
-            // Python parity (controls/handlers.py): Up/Down wrap'li ±1,
-            // Left≡PageUp (−visible_games), Right≡PageDown (+visible_games, clamp).
+            // Python parity (controls/handlers.py) + WebUI `filteredGames` parity:
+            // gezinme HER ZAMAN görünen (filtreli+sıralı) listededir — Up/Down
+            // wrap'li ±1, Left≡PageUp (−visible_games), Right≡PageDown (+visible_games, clamp).
             UiKey::NavUp => {
-                if !screen.games.is_empty() {
-                    let n = screen.games.len();
-                    screen.selected_game = (screen.selected_game + n - 1) % n;
+                let n = screen.filtered_games().len();
+                if n > 0 {
+                    screen.selected_game =
+                        (screen.selected_game.min(n - 1) + n - 1) % n;
                 }
                 None
             }
             UiKey::NavDown => {
-                if !screen.games.is_empty() {
-                    screen.selected_game =
-                        (screen.selected_game + 1) % screen.games.len();
+                let n = screen.filtered_games().len();
+                if n > 0 {
+                    screen.selected_game = (screen.selected_game.min(n - 1) + 1) % n;
                 }
                 None
             }
             UiKey::NavLeft | UiKey::PageUp => {
                 let step = screen.visible_games;
                 screen.selected_game = screen.selected_game.saturating_sub(step);
+                let n = screen.filtered_games().len();
+                if n > 0 {
+                    screen.selected_game = screen.selected_game.min(n - 1);
+                }
                 None
             }
             UiKey::NavRight | UiKey::PageDown => {
-                if !screen.games.is_empty() {
+                let n = screen.filtered_games().len();
+                if n > 0 {
                     let step = screen.visible_games;
                     screen.selected_game =
-                        (screen.selected_game + step).min(screen.games.len() - 1);
+                        (screen.selected_game + step).min(n - 1);
                 }
                 None
             }
-            UiKey::Confirm => {
-                // Oyunu indirme tetikle — Progress'e geç (SSE progress akışı) + download action
-                if screen.games.is_empty() {
+            UiKey::Confirm | UiKey::Queue => {
+                // WebUI parity (`downloadGame`): tek-buton indirme —
+                // Enter ve X aynı `POST /api/download {url, platform, game_name}`
+                // aksiyonunu üretir. `platform` görünen ad (platform_name);
+                // backend `platform_folder_for` ile klasöre eşler.
+                // Progress'e geçilir (TVUI 10-foot geri bildirimi; WebUI'de
+                // toast + satır marker'ıdır).
+                let list = screen.filtered_games();
+                if list.is_empty() {
                     return None;
                 }
-                let g = &screen.games[screen.selected_game];
+                let g = &list[screen.selected_game.min(list.len() - 1)];
                 let plat = screen
                     .platforms
                     .get(screen.selected_platform)
@@ -778,11 +860,13 @@ mod tests {
     fn gamelist_left_right_alias_page() {
         // Python parity: Left≡PageUp(−visible_games=15), Right≡PageDown(+15);
         // Up/Down wrap'li. 20 oyunla adım gerçekten ayırt edilir (10 değil).
+        // Adlar sıfır-dolgulu: `filtered_games` (name_asc) sırası ekleme
+        // sırasıyla aynı kalır (sıralama-stabil test).
         let mut s = TvuiScreen::default();
         s.menu = MenuState::GameList;
         s.games = (0..20)
             .map(|i| GameRow {
-                name: format!("G{i}"),
+                name: format!("G{i:02}"),
                 size: "10M".into(),
                 url: format!("http://x/{i}"),
                 ext: String::new(),
@@ -802,6 +886,30 @@ mod tests {
         assert_eq!(s.selected_game, 19); // wrap
         reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(1000));
         assert_eq!(s.selected_game, 0); // wrap
+    }
+
+    #[test]
+    fn gamelist_nav_and_confirm_follow_filtered_list() {
+        // WebUI parity: filtreliyken gezinme + Confirm görünen listededir.
+        let mut s = TvuiScreen::default();
+        s.menu = MenuState::GameList;
+        s.games = vec![
+            GameRow { name: "Zelda (Europe)".into(), size: "1".into(), url: "http://x/z".into(), ext: String::new() },
+            GameRow { name: "Mario (USA)".into(), size: "1".into(), url: "http://x/m".into(), ext: String::new() },
+            GameRow { name: "Mario Kart (USA)".into(), size: "1".into(), url: "http://x/mk".into(), ext: String::new() },
+        ];
+        s.search_query = "mario".into();
+        // Filtreli: Mario, Mario Kart (name_asc sıralı).
+        assert_eq!(s.filtered_games().len(), 2);
+        reduce(&mut s, UiKey::NavDown, now());
+        assert_eq!(s.selected_game, 1);
+        let a = reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(200));
+        match a {
+            Some(UiAction::DownloadGame { game_name, .. }) => {
+                assert_eq!(game_name, "Mario Kart (USA)");
+            }
+            other => panic!("filtreli Confirm görünen oyunu indirmeli, {other:?}"),
+        }
     }
 
     #[test]
@@ -1002,5 +1110,93 @@ mod tests {
         assert_eq!(s.a11y.scaled(100), 200);
         assert_eq!(s.a11y.scaled_footer(100), 70);
         assert_ne!(s.a11y.font_scale(), s.a11y.footer_font_scale());
+    }
+
+    #[test]
+    fn queue_key_aliases_confirm_webui_single_button() {
+        // WebUI parity: X (Queue) ve Enter (Confirm) aynı DownloadGame aksiyonu.
+        let mut s = TvuiScreen::default();
+        s.menu = MenuState::GameList;
+        s.platforms = vec![crate::net::PlatformTile {
+            name: "SNES".into(),
+            folder: "snes".into(),
+            image: "snes.png".into(),
+            games_count: 1,
+        }];
+        s.games = vec![GameRow {
+            name: "Zelda.zip".into(),
+            size: "10M".into(),
+            url: "http://x/zelda".into(),
+            ext: ".zip".into(),
+        }];
+        let a = reduce(&mut s, UiKey::Queue, now());
+        assert_eq!(s.menu, MenuState::Progress);
+        match a {
+            Some(UiAction::DownloadGame { url, platform, game_name }) => {
+                assert_eq!(url, "http://x/zelda");
+                assert_eq!(platform, "SNES");
+                assert_eq!(game_name, "Zelda.zip");
+            }
+            other => panic!("Queue DownloadGame üretmeli, {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_download_marker_only_when_active() {
+        let dl = serde_json::json!({"progress": 55.0, "status": "Downloading"});
+        assert_eq!(
+            active_download_marker(Some(&dl)),
+            Some("[~] 55%".to_string())
+        );
+        let queued = serde_json::json!({"progress": 0.0, "status": "Queued"});
+        assert_eq!(active_download_marker(Some(&queued)), None);
+        let done = serde_json::json!({"progress": 100.0, "status": "Download_OK"});
+        assert_eq!(active_download_marker(Some(&done)), None);
+        assert_eq!(active_download_marker(None), None);
+    }
+
+    #[test]
+    fn game_marker_priority_downloaded_over_active_over_failed() {
+        let empty: HashSet<String> = HashSet::new();
+        let active = serde_json::json!({"progress": 55.0, "status": "Downloading"});
+        let failed = serde_json::json!({"progress": 10.0, "status": "FAILED"});
+        // Aktif → sarı.
+        assert_eq!(
+            game_marker("Sonic.zip", Some(&active), &empty),
+            Some("[~] 55%".to_string())
+        );
+        // Başarısız → kırmızı.
+        assert_eq!(
+            game_marker("Sonic.zip", Some(&failed), &empty),
+            Some("[X]".to_string())
+        );
+        // İndirildi her şeyi ezer (yeşil öncelik, WebUI parity).
+        let mut dl = HashSet::new();
+        dl.insert("sonic".to_string());
+        assert_eq!(
+            game_marker("Sonic.zip", Some(&active), &dl),
+            Some("[>]".to_string())
+        );
+        assert_eq!(
+            game_marker("Sonic.zip", Some(&failed), &dl),
+            Some("[>]".to_string())
+        );
+        // Hiçbiri → marker yok.
+        assert_eq!(game_marker("Other.zip", None, &empty), None);
+    }
+
+    #[test]
+    fn sync_from_net_copies_downloaded_only_when_fresh() {
+        // Taze çekme varsa kopyalanır.
+        let mut s = TvuiScreen::default();
+        s.net.statuses_ready = true;
+        s.net.downloaded.insert("sonic".to_string());
+        s.sync_from_net();
+        assert!(s.downloaded.contains("sonic"));
+        // Taze değilse eski veri korunur (hata halinde wipe yok).
+        let mut s2 = TvuiScreen::default();
+        s2.downloaded.insert("zelda".to_string());
+        s2.sync_from_net();
+        assert!(s2.downloaded.contains("zelda"));
     }
 }

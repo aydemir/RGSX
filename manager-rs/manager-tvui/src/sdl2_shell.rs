@@ -609,9 +609,43 @@ fn draw_background<'a>(
     (w, h)
 }
 
+/// Loading metinleri — SDL'siz, test edilebilir.
+/// `(başlık, alt_satır)`: başlık stage'i gösterir (boşsa "Yükleniyor"),
+/// alt satır yüzde + stage.
+pub fn loading_texts(pct_0_100: i64, stage: &str, error: Option<&str>) -> (String, String) {
+    if let Some(err) = error {
+        let short: String = err.chars().take(60).collect();
+        return (
+            "Hata".to_string(),
+            format!("{short} ({}%)", pct_0_100.clamp(0, 100)),
+        );
+    }
+    let title = if stage.trim().is_empty() {
+        "Yükleniyor".to_string()
+    } else {
+        stage.chars().take(48).collect()
+    };
+    (title, format!("{}%", pct_0_100.clamp(0, 100)))
+}
+
+/// Loading panel geometrisi — SDL'siz (bar + panel rect).
+/// Dönüş: `(panel_x, panel_y, panel_w, panel_h, bar_x, bar_y, bar_w, bar_h)`.
+pub fn loading_layout(w: u32, h: u32) -> (i32, i32, u32, u32, i32, i32, u32, u32) {
+    let bar_w = ((w as i32) * 60 / 100).max(40) as u32;
+    let bar_h: u32 = 24;
+    let x = ((w as i32 - bar_w as i32) / 2).max(0);
+    let y = (h as i32 / 2).max(0);
+    let pad: i32 = 20;
+    let px = (x - pad).max(0);
+    let py = (y - 52).max(0);
+    let pw = bar_w + (pad * 2) as u32;
+    let ph: u32 = 110;
+    (px, py, pw, ph, x, y, bar_w, bar_h)
+}
+
 /// Açılış loading bar'ı: SSE `catalog_update` ilerlemesini `state`'ten okur.
-/// `ready` oluncaya kadar (ya da hata varsa) ekranın ortasında çubuk çizer.
-/// Hata varsa belirgin kırmızı çerçeve çizer (metin yok — TTF erte).
+/// `ready` oluncaya kadar ortada yuvarlak panel + bar çizer; stage başlıkta,
+/// yüzde alt satırda. Hata varsa kırmızı panel + hata metni.
 fn draw_loading(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -620,37 +654,63 @@ fn draw_loading(
     tc: &TextureCreator<WindowContext>,
     font_scale: f32,
 ) {
-    let (pct, error) = {
+    let (pct_raw, stage, error) = {
         let s = tvui_lock(state);
-        (s.pct.clamp(0, 100) as f32 / 100.0, s.error.clone())
+        (s.pct.clamp(0, 100), s.stage.clone(), s.error.clone())
     };
-    let bar_w = ((w as i32) * 60 / 100).max(40) as u32;
-    let bar_h: u32 = 24;
-    let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
-    let y = (h as i32 / 2).max(0) as i32;
-
-    if let Some(err) = &error {
+    let pct = pct_raw as f32 / 100.0;
+    let (px, py, pw, ph, x, y, bar_w, bar_h) = loading_layout(w, h);
+    let panel = sdl2::rect::Rect::new(px, py, pw, ph);
+    let is_err = error.is_some();
+    let border_key = if is_err { "error_text" } else { "border" };
+    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), panel, 12);
+    draw_rounded_rect(canvas, to_color(theme.color(border_key)), panel, 12);
+    if is_err {
         canvas.set_draw_color(to_color(theme.color("error_text")));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, (y - 40).max(0) as i32, w, 6));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
-        // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
-            let msg = format!("{} ({}%)", err.chars().take(60).collect::<String>(), (pct * 100.0) as i32);
-            let _ = crate::text::draw_text_centered(canvas, tc, &msg, theme.color("error_text"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 28), 13, font_scale);
-
-        return;
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, (y - 40).max(0), w, 6));
     }
-
-    canvas.set_draw_color(to_color(theme.color("button_idle")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
-    let fill_w = (bar_w as f32 * pct) as i32;
+    let (title, sub) = loading_texts(pct_raw, &stage, error.as_deref());
+    let title_c = if is_err {
+        theme.color("error_text")
+    } else {
+        theme.color("text")
+    };
+    let _ = crate::text::draw_text_centered(
+        canvas,
+        tc,
+        &title,
+        title_c,
+        sdl2::rect::Rect::new(px, py + 10, pw, 26),
+        14,
+        font_scale,
+    );
+    let bar_rect = sdl2::rect::Rect::new(x, y, bar_w, bar_h);
+    draw_rounded_rect(canvas, to_color(theme.color("border")), bar_rect, 8);
+    let fill_w = (bar_w as f32 * pct) as u32;
     if fill_w > 0 {
-        canvas.set_draw_color(to_color(theme.color("neon")));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w as u32, bar_h));
+        let inner = sdl2::rect::Rect::new(x + 2, y + 2, fill_w.saturating_sub(4).min(bar_w.saturating_sub(4)), bar_h.saturating_sub(4));
+        if inner.width() > 0 && inner.height() > 0 {
+            fill_rounded_rect(
+                canvas,
+                to_color(theme.color(if is_err { "error_text" } else { "neon" })),
+                inner,
+                6,
+            );
+        }
     }
-    // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
-        let msg = format!("{}%", (pct * 100.0) as i32);
-        let _ = crate::text::draw_text_centered(canvas, tc, &msg, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 14, font_scale);
-
+    let _ = crate::text::draw_text_centered(
+        canvas,
+        tc,
+        &sub,
+        if is_err {
+            theme.color("error_text")
+        } else {
+            theme.color("neon")
+        },
+        sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24),
+        13,
+        font_scale,
+    );
 }
 
 /// `ready` sonrası platform grid'i: `/api/platforms`'tan gelen `state.platforms`
@@ -847,13 +907,17 @@ fn draw_game_list(
     let footer_top = h.saturating_sub(40) as i32;
     let avail_h = (footer_top - (top + head_h as i32 + 8)).max(0) as u32;
     let visible = ((avail_h / (row_h + gap)) as usize).max(1);
-    let total = screen.games.len();
-    let start = screen.selected_game.saturating_sub(visible / 2).min(total.saturating_sub(visible));
+    // WebUI `filteredGames` parity: çizim + seçim aynı görünen listededir
+    // (reducer ile aynı kaynak — highlight/Confirm tutarlı).
+    let shown = screen.filtered_games();
+    let sel = screen.selected_game.min(shown.len().saturating_sub(1));
+    let total = shown.len();
+    let start = sel.saturating_sub(visible / 2).min(total.saturating_sub(visible));
     let end = (start + visible).min(total);
     let mut y = top + head_h as i32 + 8;
-    for (idx, g) in screen.games[start..end].iter().enumerate() {
+    for (idx, g) in shown[start..end].iter().enumerate() {
         let abs_idx = start + idx;
-        let is_sel = abs_idx == screen.selected_game;
+        let is_sel = abs_idx == sel;
         let row_rect = sdl2::rect::Rect::new(x0, y, list_w, row_h);
         if is_sel {
             // Upstream `fond_lignes` (0,255,0) yeşil dolgu + koyu metin.
@@ -861,17 +925,32 @@ fn draw_game_list(
             let _ = canvas.fill_rect(row_rect);
         }
         if let Some(p) = screen.progress.get(&g.url) {
-            if let Some(pct) = p.get("progress").and_then(|v| v.as_f64()) {
-                let fill_w = (list_w as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
-                if fill_w > 0 {
-                    canvas.set_draw_color(to_color(theme.color("neon")));
-                    let _ = canvas.fill_rect(sdl2::rect::Rect::new(x0, y, fill_w, 4));
+            // WebUI parity (`queuePct`): yalnız aktif durumlarda bar —
+            // `Queued` bekleyenler boş bar illüzyonu vermez.
+            let active = matches!(
+                p.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                "Downloading" | "Extracting" | "Connecting" | "Verifying" | "Seeding"
+            );
+            if active {
+                if let Some(pct) = p.get("progress").and_then(|v| v.as_f64()) {
+                    let fill_w = (list_w as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
+                    if fill_w > 0 {
+                        canvas.set_draw_color(to_color(theme.color("neon")));
+                        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x0, y, fill_w, 4));
+                    }
                 }
             }
         }
         let row_text = if is_sel { (10, 25, 10, 255) } else { text_c };
+        // WebUI parity (`catalogStatus`): `[>]` indirildi / `[~] %` aktif /
+        // `[X]` başarısız — öncelik indirilen > aktif > başarısız.
+        let marker = crate::state::game_marker(&g.name, screen.progress.get(&g.url), &screen.downloaded);
         // Upstream: Name kolonunda uzantı YOK (Ext ayrı kolonda).
         let bare = g.name.strip_suffix(g.ext.as_str()).unwrap_or(g.name.as_str());
+        let bare = match &marker {
+            Some(m) => format!("{m} {bare}"),
+            None => bare.to_string(),
+        };
         let max_name = ((name_w.saturating_sub(16)) / 7).max(10) as usize;
         let name_disp = if bare.chars().count() > max_name {
             bare.chars().take(max_name.saturating_sub(3)).collect::<String>() + "..."
@@ -897,44 +976,106 @@ fn draw_game_list(
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(track_x, thumb_y, 6, thumb_h.max(12)));
     }
 }
-/// Footer — tek satır kontrol ipuçları (Python `draw_controls` parity).
-/// Format: `[H] : History / Downloads  [F] : Filter/Search ...` (beyaz metin,
-/// kutusuz). Metinler `t()` ile yerelleşir (upstream default EN).
-fn footer_line(menu: &MenuState) -> String {
+/// Footer öğesi — gamepad/keycap parity için yapısal form.
+/// `cap` tuş başlığı (H/F/Enter/Esc), `label` yerelleşmiş eylem.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FooterItem {
+    pub cap: String,
+    pub label: String,
+}
+
+/// SDL'siz footer öğeleri (Python `render_combined_footer_controls` parity).
+/// Çizim `draw_footer`'da keycap rozeti + etiket olarak dizilir;
+/// `footer_line` geriye uyumluluk için aynı veriden tek satır üretir.
+pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
     use crate::i18n::tcached as t;
-    let item = |cap: &str, label: String| format!("[{cap}] : {label}");
+    let item = |cap: &str, label: String| FooterItem {
+        cap: cap.to_string(),
+        label,
+    };
     match menu {
-        MenuState::PlatformGrid => [
+        MenuState::PlatformGrid => vec![
             item("H", t("controls_action_history")),
             item("F", t("controls_filter_search")),
             item("Enter", t("controls_confirm_select")),
             item("Enter", t("controls_longpress_confirm")),
             item("AltGR", t("controls_action_start")),
-        ]
-        .join("  "),
-        MenuState::GameList => [
+        ],
+        MenuState::GameList => vec![
             item("Enter", t("controls_confirm_select")),
             item("X", t("controls_action_queue")),
-            format!("[Page+][Page-] : {}", t("controls_pages")),
+            FooterItem {
+                cap: "[Page+][Page-]".to_string(),
+                label: t("controls_pages"),
+            },
             item("F", t("controls_filter_search")),
             item("H", t("controls_action_history")),
-        ]
-        .join("  "),
-        MenuState::Loading => "[R] : Retry  [Enter] : Offline".to_string(),
-        MenuState::Error(_) => format!(
-            "[R] : Retry  [Enter] : Offline  [Esc] : {}",
-            t("controls_cancel_back")
-        ),
-        MenuState::Progress => format!("[Esc] : {}", t("controls_cancel_back")),
-        MenuState::ConfirmExit => format!(
-            "[Enter] : {}  [Esc] : {}",
-            t("controls_confirm_select"),
-            t("controls_cancel_back")
-        ),
+        ],
+        MenuState::Loading => vec![
+            item("R", "Retry".to_string()),
+            item("Enter", "Offline".to_string()),
+        ],
+        MenuState::Error(_) => vec![
+            item("R", "Retry".to_string()),
+            item("Enter", "Offline".to_string()),
+            item("Esc", t("controls_cancel_back")),
+        ],
+        MenuState::Progress => vec![item("Esc", t("controls_cancel_back"))],
+        MenuState::ConfirmExit => vec![
+            item("Enter", t("controls_confirm_select")),
+            item("Esc", t("controls_cancel_back")),
+        ],
     }
 }
 
-/// Footer satırını alta çizer (kabusuz, sola yaslı). Genişliği aşarsa kırpar.
+/// Footer yerleşimi — SDL'siz, test edilebilir.
+/// Her öğe `cap rozeti + etiket` genişliğiyle yan yana dizilir; genişliği
+/// aşan kuyruk öğeler atılır (sonuna "..." değil, başa sığanlar korunur —
+/// upstream'de ilk aksiyonlar en kritik). Dönüş: ekrana sığan dilim.
+pub fn footer_layout(
+    w: u32,
+    font_scale: f32,
+    items: &[FooterItem],
+) -> Vec<FooterItem> {
+    if items.is_empty() || w < 60 {
+        return Vec::new();
+    }
+    let avail = w.saturating_sub(40) as f32;
+    let mut used = 0.0f32;
+    let mut out = Vec::new();
+    for it in items {
+        // Kaba metrik: cap ~8px/karakter + 16px rozet padding, label ~7px/karakter + 10px gap.
+        // 14px DejaVu ortalaması + font_scale (draw_footer ile aynı formül).
+        let cap_w = (it.cap.chars().count() as f32 * 8.0 + 16.0) * font_scale;
+        let label_w = (it.label.chars().count() as f32 * 7.0 + 10.0) * font_scale;
+        let need = cap_w + label_w + 18.0 * font_scale; // öğeler arası boşluk
+        if used + need > avail && !out.is_empty() {
+            break;
+        }
+        used += need;
+        out.push(it.clone());
+    }
+    if out.is_empty() {
+        // En dar ekranda bile ilk öğenin cap'i görünsün.
+        out.push(items[0].clone());
+    }
+    out
+}
+
+/// Footer — tek satır kontrol ipuçları (Python `draw_controls` parity).
+/// Format: `[H] : History / Downloads  [F] : Filter/Search ...` (beyaz metin,
+/// kutusuz). Metinler `t()` ile yerelleşir (upstream default EN).
+fn footer_line(menu: &MenuState) -> String {
+    footer_items(menu)
+        .iter()
+        .map(|it| format!("[{}] : {}", it.cap.trim_matches(|c| c == '[' || c == ']'), it.label))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
+/// Footer satırını alta çizer — gamepad/keycap rozetleri + etiket.
+/// Her `cap` yuvarlak rozette (button_idle dolgu + border çerçeve), etiket
+/// beyaz metin. Dar ekranda `footer_layout` kuyruğu atar (ilk aksiyon korunur).
 fn draw_footer(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -943,27 +1084,68 @@ fn draw_footer(
     tc: &TextureCreator<WindowContext>,
     font_scale: f32,
 ) {
-    let mut line = footer_line(&screen.menu);
-    // Kaba sığdırma: ~7px/karakter (14px DejaVu ortalaması).
-    let max_chars = ((w.saturating_sub(40)) / 7).max(20) as usize;
-    if line.chars().count() > max_chars {
-        line = line.chars().take(max_chars.saturating_sub(3)).collect::<String>() + "...";
+    let items = footer_layout(w, font_scale, &footer_items(&screen.menu));
+    if items.is_empty() {
+        return;
     }
     let bh: u32 = 30;
     let y = h.saturating_sub(bh) as i32;
-    let _ = crate::text::draw_text(
-        canvas,
-        tc,
-        &line,
-        theme.color("text"),
-        20,
-        y,
-        14,
-        font_scale,
-    );
+    let mut x = 20i32;
+    for it in &items {
+        // Keycap rozeti: metrik ile aynı formül (çizim/yerleşim tutarlı).
+        let cap_w = ((it.cap.chars().count() as f32 * 8.0 + 16.0) * font_scale) as u32;
+        let cap_h: u32 = 22;
+        let cap_rect = sdl2::rect::Rect::new(x, y + ((bh as i32 - cap_h as i32) / 2).max(0), cap_w.max(24), cap_h);
+        fill_rounded_rect(canvas, to_color(theme.color("button_idle")), cap_rect, 6);
+        draw_rounded_rect(canvas, to_color(theme.color("border")), cap_rect, 6);
+        let _ = crate::text::draw_text_centered(
+            canvas,
+            tc,
+            &it.cap,
+            theme.color("text"),
+            cap_rect,
+            11,
+            font_scale,
+        );
+        x += cap_rect.width() as i32 + 6;
+        let label_w = ((it.label.chars().count() as f32 * 7.0 + 8.0) * font_scale) as u32;
+        let _ = crate::text::draw_text(
+            canvas,
+            tc,
+            &it.label,
+            theme.color("text"),
+            x,
+            y + 4,
+            13,
+            font_scale,
+        );
+        x += label_w as i32 + (18.0 * font_scale) as i32;
+        if x > w as i32 - 20 {
+            break;
+        }
+    }
+}
+
+/// Progress metni — SDL'siz, test edilebilir.
+/// `progress` 0-100, `status` boş olabilir (SSE `status` alanı).
+/// Dönüş: `(başlık, alt_satır)` — başlık oyun adı, alt satır `% + status`.
+pub fn progress_texts(game_name: &str, progress_0_100: f64, status: &str) -> (String, String) {
+    let pct = progress_0_100.clamp(0.0, 100.0) as i32;
+    let title: String = if game_name.trim().is_empty() {
+        "indirme bekleniyor...".to_string()
+    } else {
+        game_name.chars().take(48).collect()
+    };
+    let sub = if status.trim().is_empty() {
+        format!("{pct}%")
+    } else {
+        format!("{pct}% - {}", status.chars().take(32).collect::<String>())
+    };
+    (title, sub)
 }
 
 /// Faz 4: progress ekranı — seçili oyunun indirme ilerlemesi (SSE progress map).
+/// Yuvarlak panel + başlık (oyun adı) + bar + alt satır (`% - status`).
 fn draw_progress_screen(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -976,26 +1158,62 @@ fn draw_progress_screen(
     let bar_h: u32 = 28;
     let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
     let y = (h as i32 / 2).max(0) as i32;
-    canvas.set_draw_color(to_color(theme.color("button_idle")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
+    let pad: i32 = 20;
+    let panel = sdl2::rect::Rect::new(
+        (x - pad).max(0),
+        (y - 52).max(0),
+        bar_w + (pad * 2) as u32,
+        118,
+    );
+    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), panel, 12);
+    draw_rounded_rect(canvas, to_color(theme.color("border")), panel, 12);
     if let Some(g) = screen.games.get(screen.selected_game) {
         if let Some(p) = screen.progress.get(&g.url) {
-            let pct = p.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 100.0) as f32 / 100.0;
+            let pct_raw = p.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 100.0);
+            let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let pct = pct_raw as f32 / 100.0;
+            let (title, sub) = progress_texts(&g.name, pct_raw, status);
+            let _ = crate::text::draw_text_centered(
+                canvas,
+                tc,
+                &title,
+                theme.color("text"),
+                sdl2::rect::Rect::new(panel.x(), panel.y() + 10, panel.width(), 26),
+                13,
+                font_scale,
+            );
+            let bar_rect = sdl2::rect::Rect::new(x, y, bar_w, bar_h);
+            draw_rounded_rect(canvas, to_color(theme.color("border")), bar_rect, 8);
             let fill_w = (bar_w as f32 * pct) as u32;
-            if fill_w > 0 {
-                canvas.set_draw_color(to_color(theme.color("neon")));
-                let _ = canvas.fill_rect(sdl2::rect::Rect::new(x, y, fill_w, bar_h));
+            if fill_w > 4 {
+                let inner = sdl2::rect::Rect::new(
+                    x + 2,
+                    y + 2,
+                    fill_w.saturating_sub(4).min(bar_w.saturating_sub(4)),
+                    bar_h.saturating_sub(4),
+                );
+                if inner.width() > 0 && inner.height() > 0 {
+                    fill_rounded_rect(canvas, to_color(theme.color("neon")), inner, 6);
+                }
             }
-            // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
-                let pct_txt = format!("{}% - {}", (pct * 100.0) as i32, g.name.chars().take(40).collect::<String>());
-                let _ = crate::text::draw_text_centered(canvas, tc, &pct_txt, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
+            let _ = crate::text::draw_text_centered(canvas, tc, &sub, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
 
             return;
         }
     }
-    canvas.set_draw_color(to_color(theme.color("neon")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bar_w, bar_h));
-    let _ = crate::text::draw_text_centered(canvas, tc, "indirme bekleniyor...", theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
+    let (title, sub) = progress_texts("", 0.0, "");
+    let _ = crate::text::draw_text_centered(
+        canvas,
+        tc,
+        &title,
+        theme.color("text"),
+        sdl2::rect::Rect::new(panel.x(), panel.y() + 10, panel.width(), 26),
+        13,
+        font_scale,
+    );
+    let bar_rect = sdl2::rect::Rect::new(x, y, bar_w, bar_h);
+    draw_rounded_rect(canvas, to_color(theme.color("neon")), bar_rect, 8);
+    let _ = crate::text::draw_text_centered(canvas, tc, &sub, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
 
 }
 
@@ -1317,7 +1535,8 @@ pub fn run_native_shell(
                             continue;
                         }
                     }
-                    // Nav/page/Back/Menu → state reducer (Faz 3+4+012i)
+                    // Nav/page/Back/Menu/Queue → state reducer (Faz 3+4+012i)
+                    // WebUI parity: X tek-buton indirmenin ikinci tetikleyicisidir.
                     let nav_key = match kc {
                         Keycode::Up => Some(UiKey::NavUp),
                         Keycode::Down => Some(UiKey::NavDown),
@@ -1328,6 +1547,7 @@ pub fn run_native_shell(
                         Keycode::Backspace => Some(UiKey::Back),
                         Keycode::M => Some(UiKey::Menu),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
+                        Keycode::X => Some(UiKey::Queue),
                         _ => None,
                     };
                     if let Some(k) = nav_key {
@@ -1348,8 +1568,16 @@ pub fn run_native_shell(
                             if !plat.is_empty() {
                                 let st = Arc::clone(state);
                                 std::thread::spawn(move || {
+                                    // WebUI `selectPlatform` parity: oyunlar +
+                                    // indirilen durumları birlikte çekilir.
                                     let games = crate::net::fetch_games(tvui_lock(&st).port, &plat);
-                                    tvui_lock(&st).games = games;
+                                    let statuses = crate::net::fetch_game_statuses(tvui_lock(&st).port);
+                                    let mut s = tvui_lock(&st);
+                                    s.games = games;
+                                    if let Some(dl) = statuses {
+                                        s.downloaded = dl;
+                                        s.statuses_ready = true;
+                                    }
                                 });
                             }
                         }
@@ -1388,7 +1616,8 @@ pub fn run_native_shell(
                 MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
             }
             draw_header(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
-            draw_footer(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
+            let footer_scale = screen.a11y.footer_font_scale().max(0.5).min(3.0);
+            draw_footer(&mut canvas, theme, &screen, dims, &texture_creator, footer_scale);
             // TASK-012i: overlay varsa üstte çiz (pause/display/filter)
             if screen.overlay.is_some() {
                 draw_menu_overlay(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
@@ -1566,5 +1795,54 @@ mod tests {
         assert!((selection_pulse_scale(0) - selection_pulse_scale(600)).abs() < 1e-6);
         assert!((selection_pulse_scale(150) - 1.20).abs() < 1e-6); // tepe
         assert!((selection_pulse_scale(450) - 1.10).abs() < 1e-6); // çukur
+    }
+
+    #[test]
+    fn footer_items_structured_per_menu() {
+        let grid = footer_items(&MenuState::PlatformGrid);
+        assert_eq!(grid.len(), 5);
+        assert_eq!(grid[0].cap, "H");
+        assert_eq!(footer_items(&MenuState::Progress).len(), 1);
+        assert_eq!(footer_items(&MenuState::Progress)[0].cap, "Esc");
+        // footer_line aynı veriden türemeli (geri uyumluluk).
+        let line = footer_line(&MenuState::Progress);
+        assert!(line.contains("[Esc] :"));
+    }
+
+    #[test]
+    fn footer_layout_truncates_tail_on_narrow() {
+        let items = footer_items(&MenuState::PlatformGrid);
+        let wide = footer_layout(1600, 1.0, &items);
+        assert_eq!(wide.len(), items.len());
+        let narrow = footer_layout(320, 1.0, &items);
+        assert!(!narrow.is_empty());
+        assert!(narrow.len() < items.len());
+        assert_eq!(narrow[0].cap, items[0].cap); // ilk aksiyon korunur
+    }
+
+    #[test]
+    fn loading_texts_show_stage_and_pct() {
+        let (title, sub) = loading_texts(42, "download", None);
+        assert_eq!(title, "download");
+        assert_eq!(sub, "42%");
+        let (t2, _) = loading_texts(0, "", None);
+        assert_eq!(t2, "Yükleniyor");
+        let (te, se) = loading_texts(7, "", Some("boom"));
+        assert_eq!(te, "Hata");
+        assert!(se.contains("boom") && se.contains("7%"));
+        let (px, py, pw, ph, bx, by, bw, bh) = loading_layout(1280, 720);
+        assert!(pw > bw && ph > bh && px >= 0 && py >= 0);
+        assert_eq!((bx, by), ((1280i32 - bw as i32) / 2, 720 / 2));
+        let _ = (px, py);
+    }
+
+    #[test]
+    fn progress_texts_show_status() {
+        let (title, sub) = progress_texts("Sonic", 55.0, "downloading");
+        assert_eq!(title, "Sonic");
+        assert!(sub.contains("55%") && sub.contains("downloading"));
+        let (t2, s2) = progress_texts("", 0.0, "");
+        assert!(t2.contains("bekleniyor"));
+        assert_eq!(s2, "0%");
     }
 }

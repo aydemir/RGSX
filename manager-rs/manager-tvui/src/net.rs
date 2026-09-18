@@ -4,7 +4,7 @@
 //! paylasilan `TvuiState`'e yazar. SDL2 dongusu bunu okuyup loading bar'ini cizer.
 //! Senkron olmasi bilincli: SDL2 event loop tek thread, async/tokio agirligi gereksiz.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -66,6 +66,13 @@ pub struct TvuiState {
     pub games: Vec<GameRow>,
     /// Faz 4: canlı ilerleme haritası (`progress` SSE: url → {progress,status}).
     pub progress: HashMap<String, serde_json::Value>,
+    /// WebUI parity (`gameStatuses`): `/api/game-status`'tan indirilen oyun
+    /// anahtarları (`stem` + küçük harf, `App.vue:stem` ile aynı formül).
+    /// Platform seçiminde bir kez çekilir; satır `[>]` marker'ı buradan gelir.
+    pub downloaded: HashSet<String>,
+    /// `downloaded` en az bir kez başarıyla çekildiyse true (boş küme ile
+    /// çekme-hatası ayırt edilir — hatada eski veri korunur).
+    pub statuses_ready: bool,
     /// TASK-012m — manager self-update mevcutsa versiyon (placeholder prompt için).
     pub update_available: Option<String>,
     /// TASK-012m Faz 5 — self-update akış aşaması:
@@ -265,6 +272,57 @@ pub fn fetch_games(port: u16, platform: &str) -> Vec<GameRow> {
     }
 }
 
+/// WebUI parity (`App.vue:stem`): karşılaştırma anahtarı — küçük harf +
+/// uzantısız. `failedNames`/`gameStatusOf` ile aynı eşleşme.
+pub fn game_stem(name: &str) -> String {
+    let lower = name.to_lowercase();
+    match lower.rsplit_once('.') {
+        Some((stem, _)) => stem.to_string(),
+        None => lower,
+    }
+}
+
+/// `/api/game-status` yanıtını (`{statuses: {key: {status, ...}}}`) indirilen
+/// anahtar kümesine çözer. Yalnız `status == "downloaded"` alınır; her anahtar
+/// hem `stem` hem düz küçük harfle eklenir (WebUI çift anahtar parity).
+pub fn parse_game_statuses(v: &serde_json::Value) -> HashSet<String> {
+    let mut out = HashSet::new();
+    if let Some(map) = v.get("statuses").and_then(|s| s.as_object()) {
+        for (key, val) in map {
+            let is_dl = val
+                .get("status")
+                .and_then(|s| s.as_str())
+                .map(|s| s.eq_ignore_ascii_case("downloaded"))
+                .unwrap_or(false);
+            if is_dl {
+                let name = val
+                    .get("name")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or(key.as_str());
+                out.insert(game_stem(name));
+                out.insert(name.to_lowercase());
+                out.insert(game_stem(key));
+                out.insert(key.to_lowercase());
+            }
+        }
+    }
+    out
+}
+
+/// Platform seçiminde `/api/game-status` çeker (WebUI `selectPlatform`
+/// `Promise.all` parity). Hata → `None` (çağıran eski veriyi korur).
+pub fn fetch_game_statuses(port: u16) -> Option<HashSet<String>> {
+    let url = format!("http://127.0.0.1:{port}/api/game-status");
+    match api_agent().get(&url).call() {
+        Ok(r) => r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .map(|v| parse_game_statuses(&v)),
+        Err(_) => None,
+    }
+}
+
 /// Faz 4: `progress` SSE olayını (`{progress:{url:{progress,status}}}`) uygular.
 fn apply_progress(state: &SharedTvuiState, data: &serde_json::Value) {
     let Some(map) = data.get("progress").and_then(|v| v.as_object()) else {
@@ -296,10 +354,13 @@ pub enum UiAction {
 /// Fiziksel tuşların (`Keycode`) shell tarafından çevrildiği semantik tuşlar.
 /// TASK-012h Faz 1: grid nav/page tuşları eklendi (state.rs reducer tüketicisi).
 /// TASK-012i: Menu (pause) eklendi.
+/// WebUI parity: `Queue` (X) tek-buton indirme ile aynıdır — `⬇️`/`➕`
+/// birleşmesi gibi Enter ile aynı `DownloadGame` aksiyonunu üretir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiKey {
     Retry,
     Confirm,
+    Queue,
     CancelUpdate,
     NavUp,
     NavDown,
@@ -1180,6 +1241,31 @@ mod tests {
         assert_eq!(games.len(), 2);
         assert_eq!(games[0].ext, ".zip");
         assert_eq!(games[1].ext, "");
+    }
+
+    #[test]
+    fn game_stem_matches_webui() {
+        // WebUI `stem`: küçük harf + uzantısız.
+        assert_eq!(game_stem("Sonic.ZIP"), "sonic");
+        assert_eq!(game_stem("NoExt"), "noext");
+        assert_eq!(game_stem("Game.BIN"), "game");
+    }
+
+    #[test]
+    fn parse_game_statuses_collects_downloaded() {
+        let v = serde_json::json!({"statuses": {
+            "sonic": {"status": "downloaded", "platform": "snes", "name": "Sonic.zip"},
+            "zelda": {"status": "available", "platform": "snes", "name": "Zelda.zip"},
+            "mario": {"status": "DOWNLOADED", "platform": "nes", "name": "Mario.zip"},
+        }});
+        let dl = parse_game_statuses(&v);
+        assert!(dl.contains("sonic"));
+        assert!(dl.contains("sonic.zip"));
+        assert!(dl.contains("mario"));
+        assert!(!dl.contains("zelda"));
+        assert!(!dl.contains("zelda.zip"));
+        // Boş/şekilsiz yanıt → boş küme (çökme yok).
+        assert!(parse_game_statuses(&serde_json::json!({})).is_empty());
     }
 
     #[test]
