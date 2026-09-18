@@ -47,6 +47,8 @@ pub struct GameRow {
     pub name: String,
     pub size: String,
     pub url: String,
+    /// Dosya uzantısı (`.zip`, tablo Ext kolonu; addan türetilir).
+    pub ext: String,
 }
 
 /// TVUI acilis durumu (loading bar kaynagi). SDL2 dongusu ile SSE thread'i
@@ -218,16 +220,30 @@ fn fetch_platforms(port: u16) -> Vec<PlatformTile> {
     }
 }
 
+/// Dosya adından uzantıyı çıkarır (`.zip`, küçük harf; yoksa `""`).
+pub fn game_ext(name: &str) -> String {
+    name.rsplit('.')
+        .next()
+        .filter(|e| !e.is_empty() && *e != name && !e.contains(['/', '\\', ' ']))
+        .map(|e| format!(".{}", e.to_ascii_lowercase()))
+        .unwrap_or_default()
+}
+
 /// Faz 4: `/api/games/{platform}` yanıtını (`{games:[{name,size,url}]}`) listeye çözer.
 pub fn parse_games(v: &serde_json::Value) -> Vec<GameRow> {
     v.get("games")
         .and_then(|a| a.as_array())
         .map(|arr| {
             arr.iter()
-                .map(|g| GameRow {
-                    name: g.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    size: g.get("size").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    url: g.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                .map(|g| {
+                    let name = g.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let ext = game_ext(&name);
+                    GameRow {
+                        name,
+                        size: g.get("size").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        url: g.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        ext,
+                    }
                 })
                 .collect()
         })
@@ -1143,6 +1159,27 @@ mod tests {
         let mut orphan = TvuiState::default();
         orphan.update_restarting = true;
         assert!(expire_stale_restart_at(&mut orphan, now));
+    }
+
+    #[test]
+    fn game_ext_derives_lowercase_suffix() {
+        assert_eq!(game_ext("Acorn CD-ROM Aug 97 (UK).zip"), ".zip");
+        assert_eq!(game_ext("Game.BIN"), ".bin");
+        assert_eq!(game_ext("NoExtension"), "");
+        assert_eq!(game_ext("Defender (USA, Europe).bin"), ".bin");
+        assert_eq!(game_ext("Weird Name With Spaces"), "");
+    }
+
+    #[test]
+    fn parse_games_fills_ext() {
+        let v = serde_json::json!({"games": [
+            {"name": "Acorn CD-ROM Aug 97 (UK).zip", "size": "543.4M", "url": "http://x/1"},
+            {"name": "NoExt", "size": "1M", "url": "http://x/2"},
+        ]});
+        let games = parse_games(&v);
+        assert_eq!(games.len(), 2);
+        assert_eq!(games[0].ext, ".zip");
+        assert_eq!(games[1].ext, "");
     }
 
     #[test]

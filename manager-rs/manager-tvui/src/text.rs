@@ -108,17 +108,17 @@ pub fn draw_text(
         Ok(f) => f,
         Err(_) => return false,
     };
-    // Measure total width
+    // Measure total width — ilerleme (advance) ile: boşluk gibi bit eşlemsiz
+    // glifler (advance>0, bitmap=0) yoksa kelimeler bitişir (upstream parity).
+    let adv = |m: &fontdue::Metrics| (m.advance_width.ceil() as usize).max(1);
     let mut total_w: usize = 0;
     let mut max_h: usize = 0;
     for ch in text.chars() {
         let (metrics, _) = font.rasterize(ch, size);
-        total_w += metrics.width;
+        total_w += adv(&metrics);
         if metrics.height > max_h {
             max_h = metrics.height;
         }
-        // advance a bit
-        total_w += 1;
     }
     if total_w == 0 || max_h == 0 {
         return false;
@@ -146,7 +146,7 @@ pub fn draw_text(
                 buffer[idx + 3] = alpha;
             }
         }
-        cursor_x += metrics.width + 1;
+        cursor_x += adv(&metrics);
     }
     // Create texture from buffer
     let mut texture = match texture_creator.create_texture_static(PixelFormatEnum::RGBA32, total_w as u32, max_h as u32) {
@@ -183,11 +183,12 @@ pub fn draw_text_centered(
         Ok(f) => f,
         Err(_) => return false,
     };
+    let adv = |m: &fontdue::Metrics| (m.advance_width.ceil() as usize).max(1);
     let mut total_w: usize = 0;
     let mut max_h: usize = 0;
     for ch in text.chars() {
         let (metrics, _) = font.rasterize(ch, size);
-        total_w += metrics.width + 1;
+        total_w += adv(&metrics);
         if metrics.height > max_h {
             max_h = metrics.height;
         }
@@ -217,7 +218,7 @@ pub fn draw_text_centered(
                 buffer[idx + 3] = alpha;
             }
         }
-        cursor_x += metrics.width + 1;
+        cursor_x += adv(&metrics);
     }
     let mut texture = match texture_creator.create_texture_static(PixelFormatEnum::RGBA32, total_w as u32, max_h as u32) {
         Ok(t) => t,
@@ -249,6 +250,16 @@ mod tests {
         assert_eq!(scaled_size(12, 1.0), 12.0);
         assert_eq!(scaled_size(12, 1.5), 18.0);
         assert_eq!(scaled_size(11, 0.5), 8.0); // alt clamp
+    }
+
+    #[test]
+    fn space_has_positive_advance() {
+        // Sözleşme bulgusu: boşluk bit eşlemsiz ama ilerlemeli, yoksa
+        // "Page 1/13" → "Page1/13" diye bitişir.
+        let bytes = load_font_bytes().expect("test asset fontu bulunmalı");
+        let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).unwrap();
+        let (m, _) = font.rasterize(' ', 16.0);
+        assert!(m.advance_width > 1.0, "boşluk ilerlemeli: {}", m.advance_width);
     }
 
     #[test]

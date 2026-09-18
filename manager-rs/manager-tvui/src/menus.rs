@@ -27,7 +27,19 @@ pub struct MenuNav {
 impl MenuNav {
     pub fn new(kind: MenuKind, lang: &LangMap, fallback: &LangMap) -> Self {
         let keys = menu_keys(&kind);
-        let items = keys.iter().map(|k| t_with_fallback(k, lang, fallback)).collect();
+        let items = keys
+            .iter()
+            .map(|k| {
+                let s = t_with_fallback(k, lang, fallback);
+                // Anahtar çevrilemediyse ham key gösterme — İngilizce görünen ad
+                // (upstream `if _ else "Games"` deseni).
+                if s == *k {
+                    fallback_label(k).to_string()
+                } else {
+                    s
+                }
+            })
+            .collect();
         Self {
             kind,
             selected: 0,
@@ -69,6 +81,47 @@ fn menu_keys(kind: &MenuKind) -> Vec<&'static str> {
         MenuKind::GlobalSort => vec!["sort_name_asc", "sort_name_desc", "sort_size_asc", "sort_size_desc", "sort_back"],
         MenuKind::GlobalSearch => vec!["search_edit", "search_clear", "search_back"],
     }
+}
+
+/// Dil dosyasında karşılığı olmayan menü anahtarının İngilizce görünen adı.
+/// `t_with_fallback` ham key döndürürse bu devreye girer (upstream parity:
+/// çevrilemeyen metin İngilizce kalır, `snake_case` sızmaz).
+fn fallback_label(key: &str) -> String {
+    match key {
+        "pause_resume" => "Resume",
+        "pause_display" => "Display",
+        "pause_filter" => "Filter",
+        "pause_sort" => "Sort",
+        "pause_search" => "Search",
+        "pause_quit" => "Quit",
+        "display_theme" => "Theme",
+        "display_grid" => "Grid",
+        "display_font" => "Font",
+        "display_back" => "Back",
+        "filter_region" => "Region",
+        "filter_usa" => "USA",
+        "filter_europe" => "Europe",
+        "filter_japan" => "Japan",
+        "filter_other" => "Other",
+        "sort_size_asc" => "Size ↑",
+        "sort_back" => "Back",
+        "search_edit" => "Edit",
+        "search_clear" => "Clear",
+        "search_back" => "Back",
+        "folder_browser_new_folder" => "New folder",
+        "filter_advanced" => "Advanced",
+        "filter_reset" => "Reset",
+        "filter_back" => "Back",
+        "sort_name_asc" => "Name ↑",
+        "sort_name_desc" => "Name ↓",
+        "sort_size_desc" => "Size ↓",
+        "folder_browser_enter" => "Open",
+        "folder_browser_select" => "Select",
+        "folder_new_folder" => "New folder",
+        "folder_new_confirm" => "Confirm",
+        _ => key,
+    }
+    .to_string()
 }
 
 /// Pause menü aksiyonu (shell tarafından `apply_ui_action`'a çevrilir).
@@ -158,8 +211,31 @@ mod tests {
     #[test]
     fn display_menu_keys() {
         let nav = MenuNav::new(MenuKind::Display, &en(), &HashMap::new());
-        assert!(nav.items.contains(&"display_theme".to_string()));
-        assert!(nav.items.contains(&"display_back".to_string()));
+        assert!(nav.items.contains(&"Theme".to_string()));
+        assert!(nav.items.contains(&"Back".to_string()));
+    }
+
+    #[test]
+    fn no_raw_keys_leak_with_empty_maps() {
+        // Dil dosyası boşken bile snake_case sızmaz (İngilizce görünen ad).
+        for kind in [
+            MenuKind::Pause,
+            MenuKind::Display,
+            MenuKind::FilterMain,
+            MenuKind::FilterAdvanced,
+            MenuKind::GlobalSort,
+            MenuKind::GlobalSearch,
+        ] {
+            let nav = MenuNav::new(kind, &HashMap::new(), &HashMap::new());
+            for item in &nav.items {
+                assert!(
+                    !item.contains('_'),
+                    "ham key sızdı: {item}"
+                );
+            }
+        }
+        let pause = MenuNav::new(MenuKind::Pause, &HashMap::new(), &HashMap::new());
+        assert_eq!(pause.items[0], "Resume");
     }
 
     #[test]

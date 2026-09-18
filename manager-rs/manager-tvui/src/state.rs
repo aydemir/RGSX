@@ -43,6 +43,8 @@ pub struct GameRow {
     pub name: String,
     pub size: String,
     pub url: String,
+    /// Dosya uzantısı (`.zip`, tablo Ext kolonu; addan türetilir).
+    pub ext: String,
 }
 
 /// SDL'siz ekran state'i — `TvuiState` (SSE/loading) + menu + seçim + key-repeat.
@@ -142,6 +144,7 @@ impl TvuiScreen {
                     name: g.name.clone(),
                     size: g.size.clone(),
                     url: g.url.clone(),
+                    ext: g.ext.clone(),
                 })
                 .collect();
             if self.selected_game >= self.games.len() {
@@ -755,6 +758,7 @@ mod tests {
                 name: format!("G{i}"),
                 size: "10M".into(),
                 url: format!("http://x/{i}"),
+                ext: String::new(),
             })
             .collect();
         s.selected_game = 0;
@@ -781,6 +785,7 @@ mod tests {
                 name: format!("G{i}"),
                 size: "10M".into(),
                 url: format!("http://x/{i}"),
+                ext: String::new(),
             })
             .collect();
         assert_eq!(s.visible_games, 15); // config.py:494 parity
@@ -887,10 +892,10 @@ mod tests {
     fn filter_and_sort_games() {
         let mut s = TvuiScreen::default();
         s.games = vec![
-            GameRow { name: "Game A (USA)".into(), size: "100".into(), url: "a".into() },
-            GameRow { name: "Game B (Europe)".into(), size: "200".into(), url: "b".into() },
-            GameRow { name: "Game C (Japan)".into(), size: "50".into(), url: "c".into() },
-            GameRow { name: "Game D".into(), size: "300".into(), url: "d".into() },
+            GameRow { name: "Game A (USA)".into(), size: "100".into(), url: "a".into(), ext: String::new() },
+            GameRow { name: "Game B (Europe)".into(), size: "200".into(), url: "b".into(), ext: String::new() },
+            GameRow { name: "Game C (Japan)".into(), size: "50".into(), url: "c".into(), ext: String::new() },
+            GameRow { name: "Game D".into(), size: "300".into(), url: "d".into(), ext: String::new() },
         ];
         // USA exclude
         s.filters.insert("filter_usa".into(), "exclude".into());
@@ -942,9 +947,9 @@ mod tests {
     fn search_query_filters_games() {
         let mut s = TvuiScreen::default();
         s.games = vec![
-            GameRow { name: "Super Mario (USA)".into(), size: "10".into(), url: "a".into() },
-            GameRow { name: "Zelda (Europe)".into(), size: "20".into(), url: "b".into() },
-            GameRow { name: "Mario Kart".into(), size: "30".into(), url: "c".into() },
+            GameRow { name: "Super Mario (USA)".into(), size: "10".into(), url: "a".into(), ext: String::new() },
+            GameRow { name: "Zelda (Europe)".into(), size: "20".into(), url: "b".into(), ext: String::new() },
+            GameRow { name: "Mario Kart".into(), size: "30".into(), url: "c".into(), ext: String::new() },
         ];
         s.search_query = "mario".into();
         let filtered = s.filtered_games();

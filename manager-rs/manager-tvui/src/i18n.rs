@@ -37,6 +37,24 @@ pub fn detect_lang() -> String {
 
 /// `webui/languages` dizinini bulur (crate-relative + cwd fallback).
 fn languages_dir() -> PathBuf {
+    // Deploy: manager-bin `RGSX_LANGUAGES_FOLDER` set eder (rgsx_dir/languages).
+    if let Ok(env_dir) = std::env::var("RGSX_LANGUAGES_FOLDER") {
+        let p = PathBuf::from(env_dir);
+        if p.is_dir() {
+            return p;
+        }
+    }
+    // Deploy yanı: exe dizini + ataları (roms/ports/RGSX[/languages|webui/languages]).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for rel in ["languages", "webui/languages"] {
+                let p = dir.join(rel);
+                if p.is_dir() {
+                    return p;
+                }
+            }
+        }
+    }
     // cargo test'te cwd = manager-rs/manager-tvui
     let candidates = [
         PathBuf::from("../../webui/languages"),
@@ -86,7 +104,8 @@ pub fn t_with_fallback(key: &str, primary: &LangMap, fallback: &LangMap) -> Stri
     key.to_string()
 }
 
-/// Basit `t(key)` — `en` fallback'i otomatik yükler (coldd). Test dışı kullanım.
+/// Basit `t(key)` — `en` fallback'i otomatik yükler (cold; her çağrıda dosya okur).
+/// Kare döngüsünde KULLANMAYIN — `tcached()` kullanın.
 pub fn t(key: &str) -> String {
     let lang = detect_lang();
     let primary = load_lang(&lang);
@@ -95,6 +114,34 @@ pub fn t(key: &str) -> String {
     } else {
         let en = load_lang("en");
         t_with_fallback(key, &primary, &en)
+    }
+}
+
+struct CachedLang {
+    lang: String,
+    primary: LangMap,
+    en: LangMap,
+}
+
+static LANG_CACHE: std::sync::OnceLock<CachedLang> = std::sync::OnceLock::new();
+
+/// Kare-döngüsü güvenli çeviri: dil dosyaları süreçte BİR kez yüklenir.
+/// Not: dil değişimi yeniden başlatma gerektirir (upstream parity — dil ayarı boot'ta okunur).
+pub fn tcached(key: &str) -> String {
+    let c = LANG_CACHE.get_or_init(|| {
+        let lang = detect_lang();
+        let primary = load_lang(&lang);
+        let en = if lang == "en" {
+            LangMap::new()
+        } else {
+            load_lang("en")
+        };
+        CachedLang { lang, primary, en }
+    });
+    if c.lang == "en" {
+        c.primary.get(key).cloned().unwrap_or_else(|| key.to_string())
+    } else {
+        t_with_fallback(key, &c.primary, &c.en)
     }
 }
 

@@ -97,18 +97,19 @@ fn blit_platform_art<'a>(
     false
 }
 
-/// Header rozet çubuğu yüksekliği (grid `margin_top` buradan türetilir).
-pub const HEADER_H: u32 = 30;
+/// Sol rozet bloğu (3 satır) dahil toplam header yüksekliği: 8 + 3*22 + 12.
+/// Grid `margin_top` buradan türetilir.
+pub const HEADER_BLOCK_H: u32 = 86;
 
-/// Python `grid.format_disk_size_gb` parity: >=100 → tam, >=10 → 1 ondalık, else 2.
+/// Python `grid._format_disk_size_gb` parity: "241 GB" (boşluklu).
 pub fn format_disk_gb(size_bytes: u64) -> String {
     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
     if gb >= 100.0 {
-        format!("{gb:.0}GB")
+        format!("{gb:.0} GB")
     } else if gb >= 10.0 {
-        format!("{gb:.1}GB")
+        format!("{gb:.1} GB")
     } else {
-        format!("{gb:.2}GB")
+        format!("{gb:.2} GB")
     }
 }
 
@@ -144,8 +145,9 @@ pub fn manager_port() -> u16 {
         .unwrap_or(5000)
 }
 
-/// ROM klasörü disk satırı: `"349GB/446GB"`. Yol yoksa/disk bulunamazsa `""`.
-pub fn disk_free_total(roms_path: &str) -> String {
+/// ROM klasörü disk satırı (Python `get_default_disk_space_line` parity):
+/// `"[HDD] 241 GB/446 GB (54% free)"`. Yol yoksa/disk bulunamazsa `""`.
+pub fn disk_line(roms_path: &str) -> String {
     if roms_path.trim().is_empty() {
         return String::new();
     }
@@ -157,52 +159,78 @@ pub fn disk_free_total(roms_path: &str) -> String {
         .filter(|d| path.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().as_os_str().len());
     match best {
-        Some(d) => format!(
-            "{}/{}",
-            format_disk_gb(d.available_space()),
-            format_disk_gb(d.total_space())
-        ),
+        Some(d) => {
+            let total = d.total_space();
+            let free = d.available_space();
+            let pct = if total > 0 {
+                ((free as f64 / total as f64) * 100.0).round() as u64
+            } else {
+                0
+            };
+            let free_word = crate::i18n::tcached("disk_percent_free");
+            format!(
+                "[HDD] {}/{} ({}% {})",
+                format_disk_gb(free),
+                format_disk_gb(total),
+                pct,
+                free_word
+            )
+        }
         None => String::new(),
     }
 }
 
-/// Header üç rozet metni (SDL'siz, test edilebilir):
-/// sol `Sayfa p/t [HDD] free/total` (tek sayfada `Res: WxH`),
-/// orta `-- ad -- (n)`, sağ `vVer ip:port`.
+/// Header rozet metinleri (SDL'siz, test edilebilir; Python `draw_grid` header parity):
+/// sol satırlar `[Page p/t, disk, Res : WxH]`, orta `{ad}  ({n})`,
+/// sağ satırlar `[vVer, ip]`. Dil `t()` ile (upstream default EN).
 pub fn header_data(
     platform_name: &str,
     games_count: usize,
-    page: usize,
-    total_pages: usize,
+    page_text: Option<&str>,
+    games_word: Option<&str>,
     w: u32,
     h: u32,
     disk: &str,
     version: &str,
     ip: &str,
-    port: u16,
-) -> (String, String, String) {
-    let left = if total_pages > 1 {
-        let disk_part = if disk.is_empty() {
-            String::new()
-        } else {
-            format!(" [HDD] {disk}")
-        };
-        format!("Sayfa {}/{}{disk_part}", page + 1, total_pages)
-    } else if disk.is_empty() {
-        format!("Res: {w}x{h}")
-    } else {
-        format!("[HDD] {disk} Res: {w}x{h}")
-    };
+) -> (Vec<String>, String, Vec<String>) {
+    let mut left = Vec::new();
+    if let Some(p) = page_text {
+        if !p.is_empty() {
+            left.push(p.to_string());
+        }
+    }
+    if !disk.is_empty() {
+        left.push(disk.to_string());
+    }
+    left.push(format!("Res : {w}x{h}"));
     let name = if platform_name.trim().is_empty() {
         "RGSX"
     } else {
         platform_name.trim()
     };
-    let middle = format!("-- {name} -- ({games_count})");
-    let right = format!("v{version} {ip}:{port}");
+    let middle = match games_word {
+        Some(word) => format!("{name} ({games_count} {word})"),
+        None => format!("{name}  ({games_count})"),
+    };
+    let right = vec![format!("v{version}"), ip.to_string()];
     (left, middle, right)
 }
 
+/// `platform_page` yer tutuculu format (`Page {0}/{1}`), o anki dilden beslenir.
+fn format_page(page: usize, total_pages: usize) -> String {
+    format_page_with(&crate::i18n::tcached("platform_page"), page, total_pages)
+}
+
+/// Saf çekirdek (testler yerelden bağımsız burayı kullanır).
+fn format_page_with(pat: &str, page: usize, total_pages: usize) -> String {
+    if pat.contains("{0}") {
+        pat.replacen("{0}", &(page + 1).to_string(), 1)
+            .replacen("{1}", &total_pages.to_string(), 1)
+    } else {
+        format!("Page {}/{}", page + 1, total_pages)
+    }
+}
 /// Header çubuğu: sol/orta/sağ rozet (Python `grid.py` header parity).
 /// Orta rozet seçili platformu gösterir; `selected` yoksa "RGSX".
 fn draw_header(
@@ -213,11 +241,22 @@ fn draw_header(
     tc: &TextureCreator<WindowContext>,
     font_scale: f32,
 ) {
-    let (name, count) = screen
-        .platforms
-        .get(screen.selected_platform)
-        .map(|p| (p.name.as_str(), p.games_count))
-        .unwrap_or(("RGSX", 0));
+    let (name, count, games_word) = if matches!(screen.menu, MenuState::GameList) {
+        // Oyun listesi: orta rozet `{platform} ({n} games)` (Python parity).
+        let n = screen.platforms.get(screen.selected_platform);
+        (
+            n.map(|p| p.name.as_str()).unwrap_or("RGSX"),
+            screen.games.len(),
+            Some(crate::i18n::tcached("games")),
+        )
+    } else {
+        let (nm, cnt) = screen
+            .platforms
+            .get(screen.selected_platform)
+            .map(|p| (p.name.as_str(), p.games_count))
+            .unwrap_or(("RGSX", 0));
+        (nm, cnt, None)
+    };
     let total_pages = (screen.platforms.len() + GRID_PER_PAGE - 1) / GRID_PER_PAGE;
     let page = if screen.platforms.is_empty() {
         0
@@ -225,38 +264,85 @@ fn draw_header(
         screen.selected_platform.min(screen.platforms.len() - 1) / GRID_PER_PAGE
     };
     let roms = std::env::var("RGSX_ROMS_FOLDER").unwrap_or_default();
+    let page_text = if total_pages > 1 && matches!(screen.menu, MenuState::PlatformGrid) {
+        Some(format_page(page, total_pages))
+    } else {
+        None
+    };
     let (left, middle, right) = header_data(
         name,
         count,
-        page,
-        total_pages,
+        page_text.as_deref(),
+        games_word.as_deref(),
         w,
         h,
-        &disk_free_total(&roms),
+        &disk_line(&roms),
         &app_version(),
         &lan_ip(),
-        manager_port(),
     );
     let y = 8i32;
-    let bw_left: u32 = 300.min(w / 3);
-    let bw_mid: u32 = 360.min(w / 3);
-    let bw_right: u32 = 280.min(w / 3);
-    let boxes = [
-        (20i32, bw_left, left),
-        ((w as i32 - bw_mid as i32) / 2, bw_mid, middle),
-        (w as i32 - bw_right as i32 - 20, bw_right, right),
-    ];
-    for (x, bw, label) in boxes {
-        if bw == 0 || x < 0 {
-            continue;
-        }
-        let r = sdl2::rect::Rect::new(x, y, bw, HEADER_H);
-        canvas.set_draw_color(to_color(theme.color("button_idle")));
-        let _ = canvas.fill_rect(r);
-        canvas.set_draw_color(to_color(theme.color("border")));
-        let _ = canvas.draw_rect(r);
-        let _ = crate::text::draw_text_centered(canvas, tc, &label, theme.color("neon"), r, 11, font_scale);
+    let bw_left = (w * 24 / 100).clamp(200, 380);
+    let bw_mid = (w * 30 / 100).clamp(280, 470);
+    let bw_right = (w * 17 / 100).clamp(170, 280);
+    draw_badge_lines(canvas, theme, tc, font_scale, 20, y, bw_left, &left, 13);
+    let mid_h = draw_badge_lines(
+        canvas,
+        theme,
+        tc,
+        font_scale,
+        (w as i32 - bw_mid as i32) / 2,
+        y,
+        bw_mid,
+        std::slice::from_ref(&middle),
+        18,
+    );
+    let _ = mid_h;
+    draw_badge_lines(
+        canvas,
+        theme,
+        tc,
+        font_scale,
+        w as i32 - bw_right as i32 - 20,
+        y,
+        bw_right,
+        &right,
+        13,
+    );
+}
+
+/// Çok satırlı rozet kutusu (Python `draw_header_badge` parity): her satır ortalı,
+/// metin `text` rengi (beyaz). Dönüş: kutu yüksekliği.
+fn draw_badge_lines(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
+    x: i32,
+    y: i32,
+    w: u32,
+    lines: &[String],
+    base_size: u16,
+) -> u32 {
+    if lines.is_empty() || w == 0 || x < 0 {
+        return 0;
     }
+    let line_h = ((20.0 * font_scale) as u32).max(14);
+    let h = lines.len() as u32 * line_h + 12;
+    let r = sdl2::rect::Rect::new(x, y, w, h);
+    canvas.set_draw_color(to_color(theme.color("button_idle")));
+    let _ = canvas.fill_rect(r);
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_rect(r);
+    for (i, line) in lines.iter().enumerate() {
+        let rr = sdl2::rect::Rect::new(
+            x + 6,
+            y + 6 + i as i32 * line_h as i32,
+            w.saturating_sub(12),
+            line_h,
+        );
+        let _ = crate::text::draw_text_centered(canvas, tc, line, theme.color("text"), rr, base_size, font_scale);
+    }
+    h
 }
 
 fn to_color((r, g, b, a): (u8, u8, u8, u8)) -> Color {
@@ -419,7 +505,7 @@ fn draw_grid<'a>(
     let start = page * per;
     let end = (start + per).min(n);
     let margin_lr = ((w as f32 * 0.026) as u32).max(12);
-    let header_bottom = 8 + HEADER_H;
+    let header_bottom = 8 + HEADER_BLOCK_H;
     let clearance = ((h as f32 * 0.03) as u32).max(20);
     let margin_top = ((h as f32 * 0.14) as u32).max(header_bottom + clearance);
     let footer_gap = ((h as f32 * 0.018) as u32).max(12);
@@ -491,10 +577,8 @@ fn draw_grid<'a>(
                 sh + (pad * 2) as u32,
             ));
             // Box-art: secili tile ile birlikte olceklenen rect'e blit (yoksa default.png, o da yoksa kutu kalir).
+            // Upstream sözleşmesi: tile'da isim YAZISI YOK (logo + source badge).
             let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, sdl2::rect::Rect::new(x, y, sw, sh));
-            // Etiket: logoyu kapatmasın diye alt şeritte, küçük punto.
-            let label_h = 20u32.min(sh);
-            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(x, y + (sh - label_h) as i32, sw, label_h), 10, font_scale);
 
         } else {
             canvas.set_draw_color(to_color(theme.color("button_idle")));
@@ -502,14 +586,14 @@ fn draw_grid<'a>(
             canvas.set_draw_color(to_color(theme.color("neon")));
             let _ = canvas.draw_rect(sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
             let _ = blit_platform_art(art, canvas, tc, &theme.icons.path, &icon_path, sdl2::rect::Rect::new(base_x as i32, base_y as i32, tile_w, tile_h));
-            let label_h = 18u32.min(tile_h);
-            let _ = crate::text::draw_text_centered(canvas, tc, &p.name, theme.color("neon"), sdl2::rect::Rect::new(base_x as i32, base_y as i32 + (tile_h - label_h) as i32, tile_w, label_h), 9, font_scale);
 
         }
     }
 }
 
-/// Faz 4: oyun listesi (seçili platformun oyunları). Seçili satır `border_selected`.
+/// Faz 4: oyun listesi — tablo (Python `draw_game_list` parity):
+/// başlık `Name | Ext | Size`, satırlar kutusuz metin, seçili satır yeşil
+/// dolgu + koyu metin, taşmada sağda yeşil scrollbar.
 fn draw_game_list(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -518,6 +602,9 @@ fn draw_game_list(
     tc: &TextureCreator<WindowContext>,
     font_scale: f32,
 ) {
+    let text_c = theme.color("text");
+    let margin = ((w as f32 * 0.026) as u32).max(20);
+    let top = (8 + HEADER_BLOCK_H + 8) as i32;
     if screen.games.is_empty() {
         let bw = ((w as i32) * 60 / 100).max(40) as u32;
         let bh: u32 = 48;
@@ -525,56 +612,121 @@ fn draw_game_list(
         let y = (h as i32 / 2).max(0) as i32;
         canvas.set_draw_color(to_color(theme.color("button_idle")));
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bw, bh));
-        let _ = crate::text::draw_text_centered(canvas, tc, "oyun yok", theme.color("neon"), sdl2::rect::Rect::new(x, y, bw, bh), 12, font_scale);
+        let _ = crate::text::draw_text_centered(canvas, tc, &crate::i18n::tcached("game_no_games"), text_c, sdl2::rect::Rect::new(x, y, bw, bh), 12, font_scale);
 
         return;
     }
-    let row_h: u32 = 36;
+    // Kolonlar: Ext 80px, Size 130px sağda; Name kalanı.
+    let ext_w: u32 = 80;
+    let size_w: u32 = 130;
+    let list_w = w.saturating_sub(margin * 2);
+    let name_w = list_w.saturating_sub(ext_w + size_w + 32);
+    let x0 = margin as i32;
+    let ext_x = x0 + name_w as i32 + 16;
+    let size_x = x0 + list_w as i32 - size_w as i32;
+    // Başlık satırı + ayraç.
+    let head_h: u32 = 30;
+    let _ = crate::text::draw_text(canvas, tc, "Name", text_c, x0 + 8, top + 6, 13, font_scale);
+    let _ = crate::text::draw_text(canvas, tc, "Ext", text_c, ext_x, top + 6, 13, font_scale);
+    let _ = crate::text::draw_text(canvas, tc, "Size", text_c, size_x, top + 6, 13, font_scale);
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_line(
+        (x0, top + head_h as i32),
+        (x0 + list_w as i32, top + head_h as i32),
+    );
+    let row_h: u32 = 32;
     let gap: u32 = 4;
-    let margin: u32 = 40;
-    let avail_h = h.saturating_sub(margin * 2 + 40);
-    let visible = (avail_h / (row_h + gap)) as usize;
-    let start = screen.selected_game.saturating_sub(visible / 2).min(screen.games.len().saturating_sub(visible));
-    let end = (start + visible).min(screen.games.len());
-    let mut y = margin as i32 + 20;
+    let footer_top = h.saturating_sub(40) as i32;
+    let avail_h = (footer_top - (top + head_h as i32 + 8)).max(0) as u32;
+    let visible = ((avail_h / (row_h + gap)) as usize).max(1);
+    let total = screen.games.len();
+    let start = screen.selected_game.saturating_sub(visible / 2).min(total.saturating_sub(visible));
+    let end = (start + visible).min(total);
+    let mut y = top + head_h as i32 + 8;
     for (idx, g) in screen.games[start..end].iter().enumerate() {
         let abs_idx = start + idx;
         let is_sel = abs_idx == screen.selected_game;
-        let row_color = if is_sel {
-            theme.color("button_selected")
-        } else {
-            theme.color("button_idle")
-        };
-        let border = if is_sel {
-            theme.color("border_selected")
-        } else {
-            theme.color("border")
-        };
-        canvas.set_draw_color(to_color(row_color));
-        let _ = canvas.fill_rect(sdl2::rect::Rect::new(margin as i32, y, w - margin * 2, row_h));
-        canvas.set_draw_color(to_color(border));
-        let _ = canvas.draw_rect(sdl2::rect::Rect::new(margin as i32, y, w - margin * 2, row_h));
+        let row_rect = sdl2::rect::Rect::new(x0, y, list_w, row_h);
+        if is_sel {
+            // Upstream `fond_lignes` (0,255,0) yeşil dolgu + koyu metin.
+            canvas.set_draw_color(to_color(theme.color("fond_lignes")));
+            let _ = canvas.fill_rect(row_rect);
+        }
         if let Some(p) = screen.progress.get(&g.url) {
             if let Some(pct) = p.get("progress").and_then(|v| v.as_f64()) {
-                let fill_w = ((w - margin * 2) as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
+                let fill_w = (list_w as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
                 if fill_w > 0 {
                     canvas.set_draw_color(to_color(theme.color("neon")));
-                    let _ = canvas.fill_rect(sdl2::rect::Rect::new(margin as i32, y, fill_w, row_h));
+                    let _ = canvas.fill_rect(sdl2::rect::Rect::new(x0, y, fill_w, 4));
                 }
             }
         }
-        // stale ttf guard kaldırıldı — fontdue dahili fallback kullanıyor
-            let label = format!("{}  {}", g.name, g.size);
-            let truncated = if label.chars().count() > 70 { label.chars().take(67).collect::<String>() + "..." } else { label };
-            let text_color = if is_sel { theme.color("neon") } else { theme.color("neon") };
-            let _ = crate::text::draw_text(canvas, tc, &truncated, text_color, margin as i32 + 8, y + 8, 11, font_scale);
-
+        let row_text = if is_sel { (10, 25, 10, 255) } else { text_c };
+        // Upstream: Name kolonunda uzantı YOK (Ext ayrı kolonda).
+        let bare = g.name.strip_suffix(g.ext.as_str()).unwrap_or(g.name.as_str());
+        let max_name = ((name_w.saturating_sub(16)) / 7).max(10) as usize;
+        let name_disp = if bare.chars().count() > max_name {
+            bare.chars().take(max_name.saturating_sub(3)).collect::<String>() + "..."
+        } else {
+            bare.to_string()
+        };
+        let _ = crate::text::draw_text(canvas, tc, &name_disp, row_text, x0 + 8, y + 7, 12, font_scale);
+        let _ = crate::text::draw_text(canvas, tc, &g.ext, row_text, ext_x, y + 7, 12, font_scale);
+        let _ = crate::text::draw_text(canvas, tc, &g.size, row_text, size_x, y + 7, 12, font_scale);
         y += (row_h + gap) as i32;
+    }
+    // Scrollbar (taşmada): sağda yeşil başparmak.
+    if total > visible {
+        let track_x = x0 + list_w as i32 + 6;
+        let track_y = top + head_h as i32 + 8;
+        let track_h = (visible as u32 * (row_h + gap)) as i32;
+        canvas.set_draw_color(to_color(theme.color("border")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(track_x, track_y, 6, track_h as u32));
+        let frac = total as f32;
+        let thumb_h = ((visible as f32 / frac) * track_h as f32) as u32;
+        let thumb_y = track_y + ((start as f32 / frac) * track_h as f32) as i32;
+        canvas.set_draw_color(to_color(theme.color("fond_lignes")));
+        let _ = canvas.fill_rect(sdl2::rect::Rect::new(track_x, thumb_y, 6, thumb_h.max(12)));
+    }
+}
+/// Footer — tek satır kontrol ipuçları (Python `draw_controls` parity).
+/// Format: `[H] : History / Downloads  [F] : Filter/Search ...` (beyaz metin,
+/// kutusuz). Metinler `t()` ile yerelleşir (upstream default EN).
+fn footer_line(menu: &MenuState) -> String {
+    use crate::i18n::tcached as t;
+    let item = |cap: &str, label: String| format!("[{cap}] : {label}");
+    match menu {
+        MenuState::PlatformGrid => [
+            item("H", t("controls_action_history")),
+            item("F", t("controls_filter_search")),
+            item("Enter", t("controls_confirm_select")),
+            item("Enter", t("controls_longpress_confirm")),
+            item("AltGR", t("controls_action_start")),
+        ]
+        .join("  "),
+        MenuState::GameList => [
+            item("Enter", t("controls_confirm_select")),
+            item("X", t("controls_action_queue")),
+            format!("[Page+][Page-] : {}", t("controls_pages")),
+            item("F", t("controls_filter_search")),
+            item("H", t("controls_action_history")),
+        ]
+        .join("  "),
+        MenuState::Loading => "[R] : Retry  [Enter] : Offline".to_string(),
+        MenuState::Error(_) => format!(
+            "[R] : Retry  [Enter] : Offline  [Esc] : {}",
+            t("controls_cancel_back")
+        ),
+        MenuState::Progress => format!("[Esc] : {}", t("controls_cancel_back")),
+        MenuState::ConfirmExit => format!(
+            "[Enter] : {}  [Esc] : {}",
+            t("controls_confirm_select"),
+            t("controls_cancel_back")
+        ),
     }
 }
 
-/// Footer — tuş atamaları (Python display/footer.py parity).
-/// gap-04 sonrası fontdue metin aktif: her hint kutusuna ortalanmış etiket basılır.
+/// Footer satırını alta çizer (kabusuz, sola yaslı). Genişliği aşarsa kırpar.
 fn draw_footer(
     canvas: &mut Canvas<Window>,
     theme: &Theme,
@@ -583,38 +735,24 @@ fn draw_footer(
     tc: &TextureCreator<WindowContext>,
     font_scale: f32,
 ) {
-    let bh: u32 = 36;
-    let y = h.saturating_sub(bh) as i32;
-    // Footer bar
-    canvas.set_draw_color(to_color(theme.color("button_idle")));
-    let _ = canvas.fill_rect(sdl2::rect::Rect::new(0, y, w, bh));
-    canvas.set_draw_color(to_color(theme.color("border")));
-    let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, y, w, bh));
-    // Seçili menüye göre hint renkleri (metin yerine renk blokları — TTF ile sonra metin)
-    let hints: &[&str] = match screen.menu {
-        MenuState::PlatformGrid => &["↑↓←→ Gezin", "Enter Seç", "M Menü", "Esc Çık"],
-        MenuState::GameList => &["↑↓ Seç", "Enter İndir", "Bksp Geri", "M Menü"],
-        MenuState::Loading => &["R Retry", "Enter Çevrimdışı"],
-        MenuState::Error(_) => &["R Retry", "Enter Çevrimdışı", "Esc Çık"],
-        MenuState::Progress => &["Esc Geri"],
-        MenuState::ConfirmExit => &["Enter Çık", "Esc İptal"],
-    };
-    // Her hint için küçük renkli kutu + ortalanmış metin etiketi.
-    let mut x = 20;
-    for hint in hints {
-        let is_sel = hint.contains("Enter");
-        let bg = if is_sel { theme.color("border_selected") } else { theme.color("button_selected") };
-        canvas.set_draw_color(to_color(bg));
-        // Hint genişliği metin uzunluğuna göre kabaca
-        let hw = (hint.len() as u32 * 7 + 12).min(w.saturating_sub(40) / hints.len() as u32);
-        if x + hw as i32 > w as i32 - 10 { break; }
-        let r = sdl2::rect::Rect::new(x, y + 6, hw, bh - 12);
-        let _ = canvas.fill_rect(r);
-        canvas.set_draw_color(to_color(theme.color("neon")));
-        let _ = canvas.draw_rect(r);
-        let _ = crate::text::draw_text_centered(canvas, tc, hint, theme.color("neon"), r, 10, font_scale);
-        x += hw as i32 + 12;
+    let mut line = footer_line(&screen.menu);
+    // Kaba sığdırma: ~7px/karakter (14px DejaVu ortalaması).
+    let max_chars = ((w.saturating_sub(40)) / 7).max(20) as usize;
+    if line.chars().count() > max_chars {
+        line = line.chars().take(max_chars.saturating_sub(3)).collect::<String>() + "...";
     }
+    let bh: u32 = 30;
+    let y = h.saturating_sub(bh) as i32;
+    let _ = crate::text::draw_text(
+        canvas,
+        tc,
+        &line,
+        theme.color("text"),
+        20,
+        y,
+        14,
+        font_scale,
+    );
 }
 
 /// Faz 4: progress ekranı — seçili oyunun indirme ilerlemesi (SSE progress map).
@@ -770,7 +908,7 @@ fn draw_update_banner(
     };
     let stage = stage.unwrap_or_else(|| "available".to_string());
     let color_key = match stage.as_str() {
-        "ready" => "success",
+        "ready" => "fond_lignes",
         "downloading" => "neon",
         "failed" => "error_text",
         _ => "warning_text",
@@ -1126,33 +1264,56 @@ mod tests {
 
     #[test]
     fn format_disk_gb_matches_python_tiers() {
-        assert_eq!(format_disk_gb(349 * 1024 * 1024 * 1024), "349GB");
-        assert_eq!(format_disk_gb((12.5 * 1024.0 * 1024.0 * 1024.0) as u64), "12.5GB");
-        assert_eq!(format_disk_gb((1.23 * 1024.0 * 1024.0 * 1024.0) as u64), "1.23GB");
+        assert_eq!(format_disk_gb(349 * 1024 * 1024 * 1024), "349 GB");
+        assert_eq!(format_disk_gb((12.5 * 1024.0 * 1024.0 * 1024.0) as u64), "12.5 GB");
+        assert_eq!(format_disk_gb((1.23 * 1024.0 * 1024.0 * 1024.0) as u64), "1.23 GB");
     }
 
     #[test]
     fn app_version_matches_version_json() {
-        assert_eq!(app_version(), "2.6.5.6");
+        assert_eq!(app_version(), "2.6.5.8");
     }
 
     #[test]
-    fn header_data_shapes_three_badges() {
-        let (l, m, r) = header_data("BIOS", 12, 0, 13, 1280, 720, "349GB/446GB", "2.6.5.6", "10.0.0.36", 5000);
-        assert_eq!(l, "Sayfa 1/13 [HDD] 349GB/446GB");
-        assert_eq!(m, "-- BIOS -- (12)");
-        assert_eq!(r, "v2.6.5.6 10.0.0.36:5000");
-        // Tek sayfa: sol rozet disk+çözünürlük; boş platform → RGSX fallback.
-        let (l2, m2, _) = header_data("", 0, 0, 1, 800, 600, "", "2.6.5.6", "127.0.0.1", 5000);
-        assert_eq!(l2, "Res: 800x600");
-        assert_eq!(m2, "-- RGSX -- (0)");
-        let (l3, _, _) = header_data("NES", 5, 0, 1, 800, 600, "10GB/20GB", "2.6.5.6", "127.0.0.1", 5000);
-        assert_eq!(l3, "[HDD] 10GB/20GB Res: 800x600");
+    fn format_page_with_pattern() {
+        assert_eq!(format_page_with("Page {0}/{1}", 0, 13), "Page 1/13");
+        assert_eq!(format_page_with("Sayfa {0}/{1}", 2, 5), "Sayfa 3/5");
+        assert_eq!(format_page_with("no-placeholders", 0, 1), "Page 1/1");
     }
 
     #[test]
-    fn disk_free_total_empty_path_is_empty() {
-        assert_eq!(disk_free_total(""), "");
+    fn header_data_shapes_upstream_badges() {
+        let disk = "[HDD] 241 GB/446 GB (54% free)";
+        let (l, m, r) = header_data("BIOS", 13, Some("Page 1/13"), None, 1600, 900, disk, "2.6.5.8", "10.0.0.36");
+        assert_eq!(l, vec!["Page 1/13".to_string(), disk.to_string(), "Res : 1600x900".to_string()]);
+        assert_eq!(m, "BIOS  (13)");
+        assert_eq!(r, vec!["v2.6.5.8".to_string(), "10.0.0.36".to_string()]);
+        // Tek sayfa: Page satırı yok; boş platform → RGSX fallback.
+        let (l2, m2, _) = header_data("", 0, None, None, 800, 600, "", "2.6.5.8", "127.0.0.1");
+        assert_eq!(l2, vec!["Res : 800x600".to_string()]);
+        assert_eq!(m2, "RGSX  (0)");
+        // Oyun listesi: "(N games)" eki.
+        let (_, m3, _) = header_data("Archimedes (Archive)", 72, None, Some("games"), 1600, 900, disk, "2.6.5.8", "10.0.0.36");
+        assert_eq!(m3, "Archimedes (Archive) (72 games)");
+    }
+
+    #[test]
+    fn disk_line_empty_path_is_empty() {
+        assert_eq!(disk_line(""), "");
+    }
+
+    #[test]
+    fn footer_line_has_keycaps_per_menu() {
+        // Tuş başlıkları yerelden bağımsız; etiketler t() ile gelir.
+        let grid = footer_line(&MenuState::PlatformGrid);
+        for cap in ["[H] :", "[F] :", "[Enter] :", "[AltGR] :"] {
+            assert!(grid.contains(cap), "yok: {cap} ({grid})");
+        }
+        let game = footer_line(&MenuState::GameList);
+        for cap in ["[Enter] :", "[X] :", "[Page+][Page-] :", "[F] :", "[H] :"] {
+            assert!(game.contains(cap), "yok: {cap} ({game})");
+        }
+        assert!(footer_line(&MenuState::Progress).contains("[Esc] :"));
     }
 
     #[test]
