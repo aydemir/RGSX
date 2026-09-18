@@ -158,35 +158,33 @@ pub const TRANSIENT_MARKERS: &[&str] = &[
 ];
 
 /// Metinden 400..=599 arası 3 haneli HTTP kodlarını çıkarır (Python
-/// `_extract_http_status_codes` eşleniği).
+/// `_extract_http_status_codes` eşleniği). Kodun iki yanı da sınır olmalı
+/// (rakam/nokta değil ya da metin başı/sonu) — `1404` içindeki `404` ve
+/// `503.` gibi yapışıklar alınmaz.
 fn extract_http_status_codes(text: &str) -> HashSet<u16> {
-    let bytes: Vec<char> = text.chars().collect();
+    let chars: Vec<char> = text.chars().collect();
     let mut codes: HashSet<u16> = HashSet::new();
-    if bytes.len() < 3 {
+    if chars.len() < 3 {
         return codes;
     }
-    for w in bytes.windows(3) {
-        if let (Some(a), Some(b), Some(c)) =
+    let is_boundary = |c: Option<char>| match c {
+        None => true,
+        Some(ch) => !(ch.is_ascii_digit() || ch == '.'),
+    };
+    for (i, w) in chars.windows(3).enumerate() {
+        let (Some(a), Some(b), Some(c)) =
             (w[0].to_digit(10), w[1].to_digit(10), w[2].to_digit(10))
-        {
-            let before_ok = w[0] == w[0] && (w[0].is_numeric() || true);
-            // Önceki karakter rakam/nokta değilse ve sonraki karakter rakam/nokta değilse
-            let prev = if w[0] == bytes[0] {
-                None
-            } else {
-                Some(bytes[bytes.len() - 3])
-            };
-            let _ = (before_ok, prev);
-            let val = (a * 100 + b * 10 + c) as u16;
-            if (400..=599).contains(&val) {
-                let prev_is_digit = w[0] != bytes[0] && bytes[bytes.len() - 4].is_ascii_digit();
-                let next_is_digit = bytes
-                    .get(bytes.len() - 3 + 3)
-                    .map_or(false, |c| c.is_ascii_digit());
-                if !prev_is_digit && !next_is_digit {
-                    codes.insert(val);
-                }
-            }
+        else {
+            continue;
+        };
+        let val = (a * 100 + b * 10 + c) as u16;
+        if !(400..=599).contains(&val) {
+            continue;
+        }
+        let prev = if i == 0 { None } else { Some(chars[i - 1]) };
+        let next = chars.get(i + 3).copied();
+        if is_boundary(prev) && is_boundary(next) {
+            codes.insert(val);
         }
     }
     codes
@@ -356,5 +354,12 @@ mod tests {
         // 200 gibi kodlar 400-599 dışında → yok.
         let codes2 = extract_http_status_codes("HTTP 200 OK");
         assert!(codes2.is_empty());
+        // Yapışık rakam/nokta sınır sayılmaz: `1404`teki `404`, `503.` alınmaz.
+        assert!(extract_http_status_codes("err 1404x").is_empty());
+        assert!(extract_http_status_codes("code 503.").is_empty());
+        // Metin başı/sonu sınırdır; kısa metin panic çıkarmaz.
+        assert!(extract_http_status_codes("500").contains(&500));
+        assert!(extract_http_status_codes("40").is_empty());
+        assert!(extract_http_status_codes("4a9").is_empty());
     }
 }
