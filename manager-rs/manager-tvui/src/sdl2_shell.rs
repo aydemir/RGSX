@@ -982,6 +982,102 @@ fn draw_game_list(
         let _ = canvas.fill_rect(sdl2::rect::Rect::new(track_x, thumb_y, 6, thumb_h.max(12)));
     }
 }
+/// Faz Q: kuyruk ekranı — `GET /api/queue` listesi + canlı `%` barı.
+/// Başlık `Name | Status`, satırlar kutusuz metin, seçili satır yeşil dolgu.
+/// Boşsa kısa mesaj; alt satırda son aksiyon geri bildirimi (`queue_note`).
+/// Tablo oyun listesindeki panel dilini kullanır (teknoloji gerilemesi yok).
+fn draw_queue_screen(
+    canvas: &mut Canvas<Window>,
+    theme: &Theme,
+    screen: &TvuiScreen,
+    (w, h): (u32, u32),
+    tc: &TextureCreator<WindowContext>,
+    font_scale: f32,
+) {
+    let text_c = theme.color("text");
+    let margin = ((w as f32 * 0.026) as u32).max(20);
+    let top = (8 + HEADER_BLOCK_H + 8) as i32;
+    let status_w: u32 = 150;
+    let list_w = w.saturating_sub(margin * 2);
+    let x0 = margin as i32;
+    let panel = sdl2::rect::Rect::new(
+        x0 - 10,
+        top - 10,
+        list_w + 20,
+        (h.saturating_sub(margin + 40) as i32 - (top - 10)).max(60) as u32,
+    );
+    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), panel, 12);
+    draw_rounded_rect(canvas, to_color(theme.color("border")), panel, 12);
+    let name_w = list_w.saturating_sub(status_w + 16);
+    let status_x = x0 + name_w as i32 + 8;
+    let head_h: u32 = 30;
+    let _ = crate::text::draw_text(canvas, tc, "Name", text_c, x0 + 8, top + 6, 13, font_scale);
+    let _ = crate::text::draw_text(canvas, tc, "Status", text_c, status_x, top + 6, 13, font_scale);
+    canvas.set_draw_color(to_color(theme.color("border")));
+    let _ = canvas.draw_line(
+        (x0, top + head_h as i32),
+        (x0 + list_w as i32, top + head_h as i32),
+    );
+    if screen.queue.is_empty() {
+        let msg = if screen.net.queue_ready { "queue empty" } else { "loading queue..." };
+        let _ = crate::text::draw_text_centered(
+            canvas, tc, msg, theme.color("neon"),
+            sdl2::rect::Rect::new(x0, top + head_h as i32 + 20, list_w, 30), 13, font_scale,
+        );
+    }
+    let row_h: u32 = 32;
+    let gap: u32 = 4;
+    let footer_top = h.saturating_sub(70) as i32;
+    let avail_h = (footer_top - (top + head_h as i32 + 8)).max(0) as u32;
+    let visible = ((avail_h / (row_h + gap)) as usize).max(1);
+    let total = screen.queue.len();
+    let sel = screen.queue_selected.min(total.saturating_sub(1));
+    let start = sel.saturating_sub(visible / 2).min(total.saturating_sub(visible));
+    let end = (start + visible).min(total);
+    let mut y = top + head_h as i32 + 8;
+    for (idx, q) in screen.queue[start..end].iter().enumerate() {
+        let abs_idx = start + idx;
+        let is_sel = abs_idx == sel;
+        let row_rect = sdl2::rect::Rect::new(x0, y, list_w, row_h);
+        if is_sel {
+            canvas.set_draw_color(to_color(theme.color("fond_lignes")));
+            let _ = canvas.fill_rect(row_rect);
+        }
+        // Canlı bar: yalnız aktif durumlarda (satır marker sözleşmesiyle aynı).
+        if let Some(p) = screen.progress.get(&q.url) {
+            let active = matches!(
+                p.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                "Downloading" | "Extracting" | "Connecting" | "Verifying" | "Seeding"
+            );
+            if active {
+                if let Some(pct) = p.get("progress").and_then(|v| v.as_f64()) {
+                    let fill_w = (list_w as f64 * (pct / 100.0).clamp(0.0, 1.0)) as u32;
+                    if fill_w > 0 {
+                        canvas.set_draw_color(to_color(theme.color("neon")));
+                        let _ = canvas.fill_rect(sdl2::rect::Rect::new(x0, y, fill_w, 4));
+                    }
+                }
+            }
+        }
+        let row_text = if is_sel { (10, 25, 10, 255) } else { text_c };
+        let max_name = ((name_w.saturating_sub(8)) / 7).max(10) as usize;
+        let name_disp = if q.name.chars().count() > max_name {
+            q.name.chars().take(max_name.saturating_sub(3)).collect::<String>() + "..."
+        } else {
+            q.name.clone()
+        };
+        let _ = crate::text::draw_text(canvas, tc, &name_disp, row_text, x0 + 8, y + 7, 12, font_scale);
+        let _ = crate::text::draw_text(canvas, tc, &q.status, row_text, status_x, y + 7, 12, font_scale);
+        y += (row_h + gap) as i32;
+    }
+    if !screen.queue_note.trim().is_empty() {
+        let _ = crate::text::draw_text_centered(
+            canvas, tc, &screen.queue_note, theme.color("neon"),
+            sdl2::rect::Rect::new(x0, footer_top, list_w, 24), 12, font_scale,
+        );
+    }
+}
+
 /// Footer öğesi — gamepad/keycap parity için yapısal form.
 /// `cap` tuş başlığı (H/F/Enter/Esc), `label` yerelleşmiş eylem.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1003,6 +1099,7 @@ pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
         // Geçmiş ekranı yok → H maddesi yok; long-press yok → ikinci Enter yok.
         MenuState::PlatformGrid => vec![
             item("Enter", t("controls_confirm_select")),
+            item("Q", t("controls_action_queue")),
             item("AltGR", t("controls_action_start")),
         ],
         MenuState::GameList => vec![
@@ -1013,7 +1110,13 @@ pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
                 label: t("controls_pages"),
             },
             item("F", t("controls_filter_search")),
+            item("Q", t("controls_action_queue")),
             item("M", t("controls_action_start")),
+        ],
+        MenuState::Queue => vec![
+            item("P", "Pause all".to_string()),
+            item("R", "Resume all".to_string()),
+            item("Esc", t("controls_cancel_back")),
         ],
         MenuState::Loading => vec![
             item("R", "Retry".to_string()),
@@ -1427,13 +1530,18 @@ pub fn run_native_shell(
                         _ => None,
                     };
                     if let Some(k) = net_key {
-                        let action = {
-                            let s = tvui_lock(state);
-                            ui_decision(&s, k)
-                        };
-                        if let Some(action) = action {
-                            apply_ui_action(state, action);
-                            continue;
+                        // Kuyruk ekranında R = tümü-sürdür (katalog retry değil).
+                        let shadowed = matches!(screen.menu, MenuState::Queue)
+                            && matches!(k, UiKey::Retry);
+                        if !shadowed {
+                            let action = {
+                                let s = tvui_lock(state);
+                                ui_decision(&s, k)
+                            };
+                            if let Some(action) = action {
+                                apply_ui_action(state, action);
+                                continue;
+                            }
                         }
                     }
                     // Nav/page/Back/Menu/Queue → state reducer (Faz 3+4+012i)
@@ -1450,6 +1558,9 @@ pub fn run_native_shell(
                         Keycode::Backspace => Some(UiKey::Back),
                         Keycode::M | Keycode::RAlt | Keycode::Mode => Some(UiKey::Menu),
                         Keycode::F => Some(UiKey::Search),
+                        Keycode::Q => Some(UiKey::QueueView),
+                        Keycode::P => Some(UiKey::QueuePause),
+                        Keycode::R => Some(UiKey::QueueResume),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
                         Keycode::X => Some(UiKey::Queue),
                         _ => None,
@@ -1492,6 +1603,13 @@ pub fn run_native_shell(
                                 });
                             }
                         }
+                        // Faz Q: kuyruk ekranına girişte tazele (bayat kuyruk
+                        // gösterilmez). Periyodik tazeleme ana döngüdedir.
+                        if matches!(screen.menu, MenuState::Queue)
+                            && !matches!(prev_menu, MenuState::Queue)
+                        {
+                            screen.queue_fetched_at = None;
+                        }
                     }
                 }
                 _ => {}
@@ -1501,6 +1619,27 @@ pub fn run_native_shell(
         {
             let mut s = tvui_lock(state);
             expire_stale_restart_at(&mut s, std::time::Instant::now());
+        }
+        // Faz Q: kuyruk ekranında 5 sn oto-tazeleme (tuşa basılmasa da sürer).
+        if matches!(screen.menu, MenuState::Queue)
+            && screen
+                .queue_fetched_at
+                .map(|t| t.elapsed() > Duration::from_secs(5))
+                .unwrap_or(true)
+        {
+            screen.queue_fetched_at = Some(Instant::now());
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                tvui_lock(&st).queue_ready = false;
+                if let Some(rows) = crate::net::fetch_queue(tvui_lock(&st).port) {
+                    let mut s = tvui_lock(&st);
+                    s.queue = rows;
+                    s.queue_ready = true;
+                } else {
+                    // Hata: eski liste korunur, bayrak kalkmaz.
+                    tvui_lock(&st).queue_ready = true;
+                }
+            });
         }
         let dims = draw_background(&mut canvas, &texture_creator, &mut bg_cache, theme, &screen, &preset);
         draw_update_banner(&mut canvas, theme, state, dims);
@@ -1517,6 +1656,7 @@ pub fn run_native_shell(
                     draw_grid(&mut canvas, theme, state, &screen, dims, &texture_creator, font_scale, &mut art_cache)
                 },
                 MenuState::GameList => draw_game_list(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
+                MenuState::Queue => draw_queue_screen(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
                 MenuState::Loading | MenuState::Error(_) => draw_loading(&mut canvas, theme, state, dims, &texture_creator, font_scale),
                 MenuState::ConfirmExit => {
                     art_cache.sync_icons_path(&theme.icons.path);
@@ -1720,13 +1860,20 @@ mod tests {
     #[test]
     fn footer_items_structured_per_menu() {
         let grid = footer_items(&MenuState::PlatformGrid);
-        assert_eq!(grid.len(), 2);
+        assert_eq!(grid.len(), 3);
         assert_eq!(grid[0].cap, "Enter");
-        assert_eq!(grid[1].cap, "AltGR");
+        assert_eq!(grid[1].cap, "Q");
+        assert_eq!(grid[2].cap, "AltGR");
         let gl = footer_items(&MenuState::GameList);
         assert!(gl.iter().any(|it| it.cap == "F"));
         assert!(gl.iter().any(|it| it.cap == "M"));
+        assert!(gl.iter().any(|it| it.cap == "Q"));
         assert!(!gl.iter().any(|it| it.cap == "H"));
+        let q = footer_items(&MenuState::Queue);
+        assert_eq!(q.len(), 3);
+        assert_eq!(q[0].cap, "P");
+        assert_eq!(q[1].cap, "R");
+        assert_eq!(q[2].cap, "Esc");
         assert_eq!(footer_items(&MenuState::ConfirmExit).len(), 2);
         assert_eq!(footer_items(&MenuState::ConfirmExit)[0].cap, "Enter");
         // Esc cap'i çizimde rozet olur; veri burada doğrulanır.

@@ -22,11 +22,13 @@ pub const GRID_PER_PAGE: usize = GRID_COLS * GRID_ROWS;
 
 /// Menu state — `tvui.py` `config.menu_state` değerlerinin tip-güvenli karşılığı.
 /// İndirme listede kalır (kuyruk + satır marker); ayrı progress sayfası YOK.
+/// Kuyruk ayrı ekrandır (`Queue`, Q tuşu — duraklat/sürdür buradan).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuState {
     Loading,
     PlatformGrid,
     GameList,
+    Queue,
     Error(String),
     ConfirmExit,
 }
@@ -68,6 +70,15 @@ pub struct TvuiScreen {
     /// WebUI parity (`gameStatuses`): indirilen oyun anahtarları
     /// (`net.downloaded` ile senkron; satır `[>]` marker'ı).
     pub downloaded: HashSet<String>,
+    /// Faz Q: kuyruk ekranı listesi (`net.queue` ile senkron).
+    pub queue: Vec<crate::net::QueueRow>,
+    pub queue_selected: usize,
+    /// Kuyruktan dönüş hedefi (girilen ekran — Grid ya da GameList).
+    pub queue_from: MenuState,
+    /// Son kuyruk çekme anı (5 sn oto-tazeleme eşiği shell'de).
+    pub queue_fetched_at: Option<Instant>,
+    /// Kuyruk son aksiyon geri bildirimi (duraklat/sürdür sonucu).
+    pub queue_note: String,
     /// Faz 5: platform seçim transition'ı (scale+alpha, theme.json ile).
     pub transition: Option<Transition>,
     /// TASK-012i: menü overlay (pause/display/filter/sort/search).
@@ -101,6 +112,11 @@ impl Default for TvuiScreen {
             visible_games: 15,
             progress: HashMap::new(),
             downloaded: HashSet::new(),
+            queue: Vec::new(),
+            queue_selected: 0,
+            queue_from: MenuState::PlatformGrid,
+            queue_fetched_at: None,
+            queue_note: String::new(),
             transition: None,
             overlay: None,
             filters: HashMap::new(),
@@ -168,6 +184,14 @@ impl TvuiScreen {
         // İndirilen anahtarları yalnız taze + eşleşen çekmede kopyala.
         if self.net.statuses_ready && self.net.statuses_platform == self.games_platform {
             self.downloaded = self.net.downloaded.clone();
+        }
+        // Faz Q: kuyruk globaldir (platform el sıkışması yok); taze çekmede kopyala.
+        if self.net.queue_ready {
+            self.queue = self.net.queue.clone();
+            if self.queue_selected >= self.queue.len() {
+                self.queue_selected = 0;
+            }
+            self.queue_note = self.net.queue_note.clone();
         }
     }
 
@@ -570,6 +594,15 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
         open_overlay(screen, MenuKind::GlobalSearch);
         return None;
     }
+    if key == UiKey::QueueView
+        && matches!(screen.menu, MenuState::PlatformGrid | MenuState::GameList)
+    {
+        // Q: kuyruk ekranı (duraklat/sürdür buradan; dönüş girilen ekrana).
+        screen.queue_from = screen.menu.clone();
+        screen.queue_selected = 0;
+        screen.menu = MenuState::Queue;
+        return None;
+    }
 
     match screen.menu.clone() {
         MenuState::Loading => {
@@ -777,6 +810,31 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             }
             UiKey::Back => {
                 screen.menu = MenuState::PlatformGrid;
+                None
+            }
+            _ => None,
+        },
+        MenuState::Queue => match key {
+            // Kuyruk ekranı: gezinme wrap'li, P tümü-durdur, R tümü-sürdür,
+            // Esc dönüş (girilen ekrana). Liste shell'de tazelenir (5 sn).
+            UiKey::NavUp => {
+                if !screen.queue.is_empty() {
+                    let n = screen.queue.len();
+                    screen.queue_selected = (screen.queue_selected.min(n - 1) + n - 1) % n;
+                }
+                None
+            }
+            UiKey::NavDown => {
+                if !screen.queue.is_empty() {
+                    let n = screen.queue.len();
+                    screen.queue_selected = (screen.queue_selected.min(n - 1) + 1) % n;
+                }
+                None
+            }
+            UiKey::QueuePause => Some(UiAction::QueuePauseAll),
+            UiKey::QueueResume => Some(UiAction::QueueResumeAll),
+            UiKey::Back => {
+                screen.menu = screen.queue_from.clone();
                 None
             }
             _ => None,
@@ -1363,5 +1421,63 @@ mod tests {
         let mut g = make_grid(1);
         reduce(&mut g, UiKey::Search, now());
         assert!(g.overlay.is_none());
+    }
+
+    #[test]
+    fn queue_view_enter_back_and_actions() {
+        // Q grid'den kuyruğa girer, Esc geri döner (girilen ekrana).
+        let mut s = make_grid(2);
+        reduce(&mut s, UiKey::QueueView, now());
+        assert_eq!(s.menu, MenuState::Queue);
+        assert_eq!(s.queue_from, MenuState::PlatformGrid);
+        reduce(&mut s, UiKey::Back, now() + Duration::from_millis(200));
+        assert_eq!(s.menu, MenuState::PlatformGrid);
+        // Oyun listesinden girişte dönüş listeye.
+        let mut g = TvuiScreen::default();
+        g.menu = MenuState::GameList;
+        reduce(&mut g, UiKey::QueueView, now());
+        assert_eq!(g.queue_from, MenuState::GameList);
+        reduce(&mut g, UiKey::Back, now() + Duration::from_millis(200));
+        assert_eq!(g.menu, MenuState::GameList);
+        // P/R aksiyon üretir (arka plan HTTP shell'de).
+        let mut q = TvuiScreen::default();
+        q.menu = MenuState::Queue;
+        assert_eq!(
+            reduce(&mut q, UiKey::QueuePause, now()),
+            Some(UiAction::QueuePauseAll)
+        );
+        assert_eq!(
+            reduce(&mut q, UiKey::QueueResume, now() + Duration::from_millis(200)),
+            Some(UiAction::QueueResumeAll)
+        );
+        assert_eq!(q.menu, MenuState::Queue); // ekranda kalır
+    }
+
+    #[test]
+    fn queue_nav_wraps_and_sync_copies_when_ready() {
+        let mut s = TvuiScreen::default();
+        s.menu = MenuState::Queue;
+        s.queue = vec![
+            crate::net::QueueRow { name: "A".into(), url: "u1".into(), status: "Queued".into() },
+            crate::net::QueueRow { name: "B".into(), url: "u2".into(), status: "Downloading".into() },
+        ];
+        reduce(&mut s, UiKey::NavUp, now());
+        assert_eq!(s.queue_selected, 1); // wrap
+        reduce(&mut s, UiKey::NavDown, now() + Duration::from_millis(200));
+        assert_eq!(s.queue_selected, 0);
+        // Senkron: hazır değilse eski liste korunur.
+        let mut n = TvuiScreen::default();
+        n.queue = vec![crate::net::QueueRow {
+            name: "Eski".into(), url: "ux".into(), status: "Queued".into(),
+        }];
+        n.sync_from_net();
+        assert_eq!(n.queue.len(), 1);
+        // Hazırsa kopyalanır + seçim clamp'lenir.
+        n.net.queue_ready = true;
+        n.net.queue = vec![];
+        n.queue_selected = 5;
+        n.sync_from_net();
+        assert!(n.queue.is_empty());
+        assert_eq!(n.queue_selected, 0);
     }
 }

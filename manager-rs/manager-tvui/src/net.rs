@@ -82,6 +82,12 @@ pub struct TvuiState {
     /// `downloaded` en az bir kez başarıyla çekildiyse true (boş küme ile
     /// çekme-hatası ayırt edilir — hatada eski veri korunur).
     pub statuses_ready: bool,
+    /// Faz Q: kuyruk ekranı listesi (`GET /api/queue`, global — platformsuz).
+    pub queue: Vec<QueueRow>,
+    /// Son kuyruk çekme tamamlandıysa true (hata halinde eski liste korunur).
+    pub queue_ready: bool,
+    /// Kuyruk ekranı son aksiyon geri bildirimi (duraklat/sürdür sonucu).
+    pub queue_note: String,
     /// TASK-012m — manager self-update mevcutsa versiyon (placeholder prompt için).
     pub update_available: Option<String>,
     /// TASK-012m Faz 5 — self-update akış aşaması:
@@ -343,6 +349,98 @@ fn apply_progress(state: &SharedTvuiState, data: &serde_json::Value) {
     }
 }
 
+/// Kuyruk satırı (Faz Q: `GET /api/queue` → `{queue:[{name,url,status}]}`).
+/// Canlı yüzde SSE `progress` map'inden (`url` anahtarıyla) okunur.
+#[derive(Debug, Clone, Default)]
+pub struct QueueRow {
+    pub name: String,
+    pub url: String,
+    pub status: String,
+}
+
+/// `/api/queue` yanıtını satırlara çözer. Hata/boş → boş liste.
+pub fn parse_queue(v: &serde_json::Value) -> Vec<QueueRow> {
+    v.get("queue")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|q| QueueRow {
+                    name: q
+                        .get("name")
+                        .or_else(|| q.get("game_name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    url: q.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    status: q
+                        .get("status")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("Queued")
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Kuyruğu çeker (kuyruk ekranı + 5 sn oto-tazeleme). Hata → `None`
+/// (çağıran eski listeyi korur).
+pub fn fetch_queue(port: u16) -> Option<Vec<QueueRow>> {
+    let url = format!("http://127.0.0.1:{port}/api/queue");
+    match api_agent().get(&url).call() {
+        Ok(r) => r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .map(|v| parse_queue(&v)),
+        Err(_) => None,
+    }
+}
+
+/// POST gövdeli tetikleyici (`/api/pause`, `/api/resume`).
+fn trigger_post_empty(port: u16, route: &str, ok_msg: &str) -> TriggerResult {
+    let url = format!("http://127.0.0.1:{port}{route}");
+    match api_agent()
+        .post(&url)
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+    {
+        Ok(r) => match r
+            .into_string()
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            Some(v) => {
+                let ok = v.get("success").and_then(|x| x.as_bool()).unwrap_or(false)
+                    || v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+                if ok {
+                    TriggerResult::new(true, ok_msg)
+                } else {
+                    TriggerResult::new(
+                        false,
+                        format!(
+                            "hata: {}",
+                            v.get("error").and_then(|x| x.as_str()).unwrap_or("bilinmiyor")
+                        ),
+                    )
+                }
+            }
+            None => TriggerResult::new(false, "yanıt çözülemedi"),
+        },
+        Err(e) => TriggerResult::new(false, format!("istek hatası: {e}")),
+    }
+}
+
+/// Tüm kuyruğu durdurur (`POST /api/pause`, WebUI `pauseAll` parity).
+pub fn trigger_queue_pause(port: u16) -> TriggerResult {
+    trigger_post_empty(port, "/api/pause", "tümü duraklatıldı")
+}
+
+/// Durdurulan kuyruğu sürdürür (`POST /api/resume`, WebUI `resumeAll` parity).
+pub fn trigger_queue_resume(port: u16) -> TriggerResult {
+    trigger_post_empty(port, "/api/resume", "sürdürülüyor")
+}
+
 // ===== TASK-012-gap-01 Faz B — SDL'siz UI karar katmanı (bulgu 15) =====
 
 /// Shell'in üretebileceği yüksek seviye aksiyonlar.
@@ -353,6 +451,8 @@ pub enum UiAction {
     UpdateDownload,
     UpdateApply,
     UpdateCancel,
+    QueuePauseAll,
+    QueueResumeAll,
     DownloadGame {
         url: String,
         platform: String,
@@ -371,6 +471,9 @@ pub enum UiKey {
     Confirm,
     Queue,
     Search,
+    QueueView,
+    QueuePause,
+    QueueResume,
     CancelUpdate,
     NavUp,
     NavDown,
@@ -489,6 +592,24 @@ pub fn apply_ui_action(state: &SharedTvuiState, action: UiAction) {
                 let port = tvui_lock(&st).port;
                 let r = trigger_game_download(port, &u, &p, &g);
                 eprintln!("TVUI game download: {}", r.message);
+            });
+        }
+        UiAction::QueuePauseAll => {
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_queue_pause(port);
+                tvui_lock(&st).queue_note = r.message.clone();
+                eprintln!("TVUI kuyruk duraklat: {}", r.message);
+            });
+        }
+        UiAction::QueueResumeAll => {
+            let st = Arc::clone(state);
+            std::thread::spawn(move || {
+                let port = tvui_lock(&st).port;
+                let r = trigger_queue_resume(port);
+                tvui_lock(&st).queue_note = r.message.clone();
+                eprintln!("TVUI kuyruk sürdür: {}", r.message);
             });
         }
     }
@@ -1276,6 +1397,31 @@ mod tests {
         assert!(!dl.contains("zelda.zip"));
         // Boş/şekilsiz yanıt → boş küme (çökme yok).
         assert!(parse_game_statuses(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_queue_reads_rows_with_fallbacks() {
+        let v = serde_json::json!({"queue": [
+            {"name": "Sonic.zip", "url": "http://x/1", "status": "Downloading"},
+            {"game_name": "Zelda.zip", "url": "http://x/2"},
+        ]});
+        let rows = parse_queue(&v);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "Sonic.zip");
+        assert_eq!(rows[0].status, "Downloading");
+        assert_eq!(rows[1].name, "Zelda.zip");
+        assert_eq!(rows[1].status, "Queued"); // varsayılan (boş bar yok)
+        assert!(parse_queue(&serde_json::json!({})).is_empty());
+        assert!(parse_queue(&serde_json::json!({"queue": []})).is_empty());
+    }
+
+    #[test]
+    fn ui_decision_ignores_queue_keys() {
+        // Kuyruk tuşları reducer'ındır; net karar katmanı nötrdür.
+        let base = TvuiState::default();
+        assert_eq!(ui_decision(&base, UiKey::QueueView), None);
+        assert_eq!(ui_decision(&base, UiKey::QueuePause), None);
+        assert_eq!(ui_decision(&base, UiKey::QueueResume), None);
     }
 
     #[test]
