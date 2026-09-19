@@ -985,8 +985,7 @@ pub struct FooterItem {
 }
 
 /// SDL'siz footer öğeleri (Python `render_combined_footer_controls` parity).
-/// Çizim `draw_footer`'da keycap rozeti + etiket olarak dizilir;
-/// `footer_line` geriye uyumluluk için aynı veriden tek satır üretir.
+/// Çizim `draw_footer`'da keycap rozeti + etiket olarak dizilir.
 pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
     use crate::i18n::tcached as t;
     let item = |cap: &str, label: String| FooterItem {
@@ -1020,7 +1019,6 @@ pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
             item("Enter", "Offline".to_string()),
             item("Esc", t("controls_cancel_back")),
         ],
-        MenuState::Progress => vec![item("Esc", t("controls_cancel_back"))],
         MenuState::ConfirmExit => vec![
             item("Enter", t("controls_confirm_select")),
             item("Esc", t("controls_cancel_back")),
@@ -1060,17 +1058,6 @@ pub fn footer_layout(
         out.push(items[0].clone());
     }
     out
-}
-
-/// Footer — tek satır kontrol ipuçları (Python `draw_controls` parity).
-/// Format: `[H] : History / Downloads  [F] : Filter/Search ...` (beyaz metin,
-/// kutusuz). Metinler `t()` ile yerelleşir (upstream default EN).
-fn footer_line(menu: &MenuState) -> String {
-    footer_items(menu)
-        .iter()
-        .map(|it| format!("[{}] : {}", it.cap.trim_matches(|c| c == '[' || c == ']'), it.label))
-        .collect::<Vec<_>>()
-        .join("  ")
 }
 
 /// Footer satırını alta çizer — gamepad/keycap rozetleri + etiket.
@@ -1124,97 +1111,6 @@ fn draw_footer(
             break;
         }
     }
-}
-
-/// Progress metni — SDL'siz, test edilebilir.
-/// `progress` 0-100, `status` boş olabilir (SSE `status` alanı).
-/// Dönüş: `(başlık, alt_satır)` — başlık oyun adı, alt satır `% + status`.
-pub fn progress_texts(game_name: &str, progress_0_100: f64, status: &str) -> (String, String) {
-    let pct = progress_0_100.clamp(0.0, 100.0) as i32;
-    let title: String = if game_name.trim().is_empty() {
-        "indirme bekleniyor...".to_string()
-    } else {
-        game_name.chars().take(48).collect()
-    };
-    let sub = if status.trim().is_empty() {
-        format!("{pct}%")
-    } else {
-        format!("{pct}% - {}", status.chars().take(32).collect::<String>())
-    };
-    (title, sub)
-}
-
-/// Faz 4: progress ekranı — seçili oyunun indirme ilerlemesi (SSE progress map).
-/// Yuvarlak panel + başlık (oyun adı) + bar + alt satır (`% - status`).
-fn draw_progress_screen(
-    canvas: &mut Canvas<Window>,
-    theme: &Theme,
-    screen: &TvuiScreen,
-    (w, h): (u32, u32),
-    tc: &TextureCreator<WindowContext>,
-    font_scale: f32,
-) {
-    let bar_w = ((w as i32) * 70 / 100).max(40) as u32;
-    let bar_h: u32 = 28;
-    let x = ((w as i32 - bar_w as i32) / 2).max(0) as i32;
-    let y = (h as i32 / 2).max(0) as i32;
-    let pad: i32 = 20;
-    let panel = sdl2::rect::Rect::new(
-        (x - pad).max(0),
-        (y - 52).max(0),
-        bar_w + (pad * 2) as u32,
-        118,
-    );
-    fill_rounded_rect(canvas, to_color(theme.color("button_idle")), panel, 12);
-    draw_rounded_rect(canvas, to_color(theme.color("border")), panel, 12);
-    if let Some(g) = screen.games.get(screen.selected_game) {
-        if let Some(p) = screen.progress.get(&g.url) {
-            let pct_raw = p.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 100.0);
-            let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            let pct = pct_raw as f32 / 100.0;
-            let (title, sub) = progress_texts(&g.name, pct_raw, status);
-            let _ = crate::text::draw_text_centered(
-                canvas,
-                tc,
-                &title,
-                theme.color("text"),
-                sdl2::rect::Rect::new(panel.x(), panel.y() + 10, panel.width(), 26),
-                13,
-                font_scale,
-            );
-            let bar_rect = sdl2::rect::Rect::new(x, y, bar_w, bar_h);
-            draw_rounded_rect(canvas, to_color(theme.color("border")), bar_rect, 8);
-            let fill_w = (bar_w as f32 * pct) as u32;
-            if fill_w > 4 {
-                let inner = sdl2::rect::Rect::new(
-                    x + 2,
-                    y + 2,
-                    fill_w.saturating_sub(4).min(bar_w.saturating_sub(4)),
-                    bar_h.saturating_sub(4),
-                );
-                if inner.width() > 0 && inner.height() > 0 {
-                    fill_rounded_rect(canvas, to_color(theme.color("neon")), inner, 6);
-                }
-            }
-            let _ = crate::text::draw_text_centered(canvas, tc, &sub, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
-
-            return;
-        }
-    }
-    let (title, sub) = progress_texts("", 0.0, "");
-    let _ = crate::text::draw_text_centered(
-        canvas,
-        tc,
-        &title,
-        theme.color("text"),
-        sdl2::rect::Rect::new(panel.x(), panel.y() + 10, panel.width(), 26),
-        13,
-        font_scale,
-    );
-    let bar_rect = sdl2::rect::Rect::new(x, y, bar_w, bar_h);
-    draw_rounded_rect(canvas, to_color(theme.color("neon")), bar_rect, 8);
-    let _ = crate::text::draw_text_centered(canvas, tc, &sub, theme.color("neon"), sdl2::rect::Rect::new(x, y + bar_h as i32 + 8, bar_w, 24), 12, font_scale);
-
 }
 
 /// TASK-012i — pause menu overlay (Faz 1: rect + highlight, metin TTF ile sonra).
@@ -1537,6 +1433,8 @@ pub fn run_native_shell(
                     }
                     // Nav/page/Back/Menu/Queue → state reducer (Faz 3+4+012i)
                     // WebUI parity: X tek-buton indirmenin ikinci tetikleyicisidir.
+                    // AltGr (Windows: RAlt; bazı layoutlarda Mode) gamepad Start
+                    // ile aynıdır → pause/ayar menüsü (`native_input` "start").
                     let nav_key = match kc {
                         Keycode::Up => Some(UiKey::NavUp),
                         Keycode::Down => Some(UiKey::NavDown),
@@ -1545,7 +1443,7 @@ pub fn run_native_shell(
                         Keycode::PageUp => Some(UiKey::PageUp),
                         Keycode::PageDown => Some(UiKey::PageDown),
                         Keycode::Backspace => Some(UiKey::Back),
-                        Keycode::M => Some(UiKey::Menu),
+                        Keycode::M | Keycode::RAlt | Keycode::Mode => Some(UiKey::Menu),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
                         Keycode::X => Some(UiKey::Queue),
                         _ => None,
@@ -1613,7 +1511,6 @@ pub fn run_native_shell(
                     canvas.set_draw_color(to_color(theme.color("warning_text")));
                     let _ = canvas.draw_rect(sdl2::rect::Rect::new(0, 0, dims.0, dims.1));
                 }
-                MenuState::Progress => draw_progress_screen(&mut canvas, theme, &screen, dims, &texture_creator, font_scale),
             }
             draw_header(&mut canvas, theme, &screen, dims, &texture_creator, font_scale);
             let footer_scale = screen.a11y.footer_font_scale().max(0.5).min(3.0);
@@ -1774,15 +1671,23 @@ mod tests {
     #[test]
     fn footer_line_has_keycaps_per_menu() {
         // Tuş başlıkları yerelden bağımsız; etiketler t() ile gelir.
-        let grid = footer_line(&MenuState::PlatformGrid);
+        // Tek-satır gösterim `footer_items`'tan türetilir (çizimle aynı kaynak).
+        let line = |menu: &MenuState| {
+            footer_items(menu)
+                .iter()
+                .map(|it| format!("[{}] : {}", it.cap.trim_matches(|c| c == '[' || c == ']'), it.label))
+                .collect::<Vec<_>>()
+                .join("  ")
+        };
+        let grid = line(&MenuState::PlatformGrid);
         for cap in ["[H] :", "[F] :", "[Enter] :", "[AltGR] :"] {
             assert!(grid.contains(cap), "yok: {cap} ({grid})");
         }
-        let game = footer_line(&MenuState::GameList);
+        let game = line(&MenuState::GameList);
         for cap in ["[Enter] :", "[X] :", "[Page+][Page-] :", "[F] :", "[H] :"] {
             assert!(game.contains(cap), "yok: {cap} ({game})");
         }
-        assert!(footer_line(&MenuState::Progress).contains("[Esc] :"));
+        assert!(line(&MenuState::ConfirmExit).contains("[Esc] :"));
     }
 
     #[test]
@@ -1802,11 +1707,10 @@ mod tests {
         let grid = footer_items(&MenuState::PlatformGrid);
         assert_eq!(grid.len(), 5);
         assert_eq!(grid[0].cap, "H");
-        assert_eq!(footer_items(&MenuState::Progress).len(), 1);
-        assert_eq!(footer_items(&MenuState::Progress)[0].cap, "Esc");
-        // footer_line aynı veriden türemeli (geri uyumluluk).
-        let line = footer_line(&MenuState::Progress);
-        assert!(line.contains("[Esc] :"));
+        assert_eq!(footer_items(&MenuState::ConfirmExit).len(), 2);
+        assert_eq!(footer_items(&MenuState::ConfirmExit)[0].cap, "Enter");
+        // Esc cap'i çizimde rozet olur; veri burada doğrulanır.
+        assert!(footer_items(&MenuState::ConfirmExit).iter().any(|it| it.cap == "Esc"));
     }
 
     #[test]
@@ -1834,15 +1738,5 @@ mod tests {
         assert!(pw > bw && ph > bh && px >= 0 && py >= 0);
         assert_eq!((bx, by), ((1280i32 - bw as i32) / 2, 720 / 2));
         let _ = (px, py);
-    }
-
-    #[test]
-    fn progress_texts_show_status() {
-        let (title, sub) = progress_texts("Sonic", 55.0, "downloading");
-        assert_eq!(title, "Sonic");
-        assert!(sub.contains("55%") && sub.contains("downloading"));
-        let (t2, s2) = progress_texts("", 0.0, "");
-        assert!(t2.contains("bekleniyor"));
-        assert_eq!(s2, "0%");
     }
 }

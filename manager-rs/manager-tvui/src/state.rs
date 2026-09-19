@@ -21,12 +21,12 @@ pub const GRID_ROWS: usize = 4;
 pub const GRID_PER_PAGE: usize = GRID_COLS * GRID_ROWS;
 
 /// Menu state — `tvui.py` `config.menu_state` değerlerinin tip-güvenli karşılığı.
+/// İndirme listede kalır (kuyruk + satır marker); ayrı progress sayfası YOK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuState {
     Loading,
     PlatformGrid,
     GameList,
-    Progress,
     Error(String),
     ConfirmExit,
 }
@@ -481,7 +481,6 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                                 _ => close = true,
                             }
                         }
-                        _ => close = true,
                     }
                 }
                 UiKey::Back | UiKey::Menu => close = true,
@@ -679,10 +678,10 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             UiKey::Confirm | UiKey::Queue => {
                 // WebUI parity (`downloadGame`): tek-buton indirme —
                 // Enter ve X aynı `POST /api/download {url, platform, game_name}`
-                // aksiyonunu üretir. `platform` görünen ad (platform_name);
-                // backend `platform_folder_for` ile klasöre eşler.
-                // Progress'e geçilir (TVUI 10-foot geri bildirimi; WebUI'de
-                // toast + satır marker'ıdır).
+                // aksiyonunu üretir ve LİSTEDE KALINIR (kuyruğa atıp indirir;
+                // ilerleme satır `[~] %` marker'ından izlenir). `platform`
+                // görünen ad (platform_name); backend `platform_folder_for`
+                // ile klasöre eşler.
                 let list = screen.filtered_games();
                 if list.is_empty() {
                     return None;
@@ -693,7 +692,6 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                     .get(screen.selected_platform)
                     .map(|p| p.name.clone())
                     .unwrap_or_default();
-                screen.menu = MenuState::Progress;
                 return Some(UiAction::DownloadGame {
                     url: g.url.clone(),
                     platform: plat,
@@ -702,13 +700,6 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
             }
             UiKey::Back => {
                 screen.menu = MenuState::PlatformGrid;
-                None
-            }
-            _ => None,
-        },
-        MenuState::Progress => match key {
-            UiKey::Back => {
-                screen.menu = MenuState::GameList;
                 None
             }
             _ => None,
@@ -848,11 +839,11 @@ mod tests {
         assert_eq!(s.selected_game, 1);
         reduce(&mut s, UiKey::PageDown, now() + Duration::from_millis(200));
         assert_eq!(s.selected_game, 4); // clamp
-        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(400));
-        assert_eq!(s.menu, MenuState::Progress);
-        reduce(&mut s, UiKey::Back, now() + Duration::from_millis(600));
+        // Confirm indirir ama LİSTEDE KALIR (ayrı progress sayfası yok).
+        let a = reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(400));
         assert_eq!(s.menu, MenuState::GameList);
-        reduce(&mut s, UiKey::Back, now() + Duration::from_millis(800));
+        assert!(matches!(a, Some(UiAction::DownloadGame { .. })));
+        reduce(&mut s, UiKey::Back, now() + Duration::from_millis(600));
         assert_eq!(s.menu, MenuState::PlatformGrid);
     }
 
@@ -1130,7 +1121,7 @@ mod tests {
             ext: ".zip".into(),
         }];
         let a = reduce(&mut s, UiKey::Queue, now());
-        assert_eq!(s.menu, MenuState::Progress);
+        assert_eq!(s.menu, MenuState::GameList); // listede kalır
         match a {
             Some(UiAction::DownloadGame { url, platform, game_name }) => {
                 assert_eq!(url, "http://x/zelda");
