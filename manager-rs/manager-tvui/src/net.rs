@@ -64,12 +64,21 @@ pub struct TvuiState {
     pub platforms: Vec<PlatformTile>,
     /// Faz 4: seçili platformun oyun listesi (`/api/games`).
     pub games: Vec<GameRow>,
+    /// `games` hangi platform klasörüne ait (`folder`). Platform değişiminde
+    /// eski liste ASLA gösterilmez — eşleşme `sync_from_net`'te denetlenir.
+    pub games_platform: String,
+    /// Son oyun çekme tamamlandıysa true (boş liste ile çekme-hatası ayırt
+    /// edilir; yeni çekme başında false yapılır).
+    pub games_ready: bool,
     /// Faz 4: canlı ilerleme haritası (`progress` SSE: url → {progress,status}).
     pub progress: HashMap<String, serde_json::Value>,
     /// WebUI parity (`gameStatuses`): `/api/game-status`'tan indirilen oyun
     /// anahtarları (`stem` + küçük harf, `App.vue:stem` ile aynı formül).
     /// Platform seçiminde bir kez çekilir; satır `[>]` marker'ı buradan gelir.
     pub downloaded: HashSet<String>,
+    /// `downloaded` hangi platform klasörüne ait (`games_platform` ile aynı
+    /// el sıkışma — platform değişiminde eski marker'lar gösterilmez).
+    pub statuses_platform: String,
     /// `downloaded` en az bir kez başarıyla çekildiyse true (boş küme ile
     /// çekme-hatası ayırt edilir — hatada eski veri korunur).
     pub statuses_ready: bool,
@@ -361,6 +370,7 @@ pub enum UiKey {
     Retry,
     Confirm,
     Queue,
+    Search,
     CancelUpdate,
     NavUp,
     NavDown,

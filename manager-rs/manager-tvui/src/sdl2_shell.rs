@@ -872,7 +872,13 @@ fn draw_game_list(
         let y = (h as i32 / 2).max(0) as i32;
         canvas.set_draw_color(to_color(theme.color("button_idle")));
         let _ = canvas.draw_rect(sdl2::rect::Rect::new(x, y, bw, bh));
-        let _ = crate::text::draw_text_centered(canvas, tc, &crate::i18n::tcached("game_no_games"), text_c, sdl2::rect::Rect::new(x, y, bw, bh), 12, font_scale);
+        // Çekme sürüyorsa "yükleniyor", bittiyse "oyun yok" (dürüst boş durum).
+        let msg = if screen.games_loading() {
+            crate::i18n::tcached("loading_load_systems")
+        } else {
+            crate::i18n::tcached("game_no_games")
+        };
+        let _ = crate::text::draw_text_centered(canvas, tc, &msg, text_c, sdl2::rect::Rect::new(x, y, bw, bh), 12, font_scale);
 
         return;
     }
@@ -993,11 +999,10 @@ pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
         label,
     };
     match menu {
+        // Dürüst sözleşme: yalnız GERÇEKTEN çalışan tuşlar yazılır.
+        // Geçmiş ekranı yok → H maddesi yok; long-press yok → ikinci Enter yok.
         MenuState::PlatformGrid => vec![
-            item("H", t("controls_action_history")),
-            item("F", t("controls_filter_search")),
             item("Enter", t("controls_confirm_select")),
-            item("Enter", t("controls_longpress_confirm")),
             item("AltGR", t("controls_action_start")),
         ],
         MenuState::GameList => vec![
@@ -1008,7 +1013,7 @@ pub fn footer_items(menu: &MenuState) -> Vec<FooterItem> {
                 label: t("controls_pages"),
             },
             item("F", t("controls_filter_search")),
-            item("H", t("controls_action_history")),
+            item("M", t("controls_action_start")),
         ],
         MenuState::Loading => vec![
             item("R", "Retry".to_string()),
@@ -1444,6 +1449,7 @@ pub fn run_native_shell(
                         Keycode::PageDown => Some(UiKey::PageDown),
                         Keycode::Backspace => Some(UiKey::Back),
                         Keycode::M | Keycode::RAlt | Keycode::Mode => Some(UiKey::Menu),
+                        Keycode::F => Some(UiKey::Search),
                         Keycode::Return | Keycode::KpEnter => Some(UiKey::Confirm),
                         Keycode::X => Some(UiKey::Queue),
                         _ => None,
@@ -1453,27 +1459,34 @@ pub fn run_native_shell(
                         if let Some(action) = crate::state::reduce(&mut screen, k, now) {
                             apply_ui_action(state, action);
                         }
-                        // Faz 4: PlatformGrid→GameList geçişinde oyunları çek
+                        // Faz 4: PlatformGrid→GameList geçişinde oyunları HER ZAMAN
+                        // taze çek (koşulsuz — bayat liste gösterilmez; el sıkışma
+                        // `games_platform` ile eşleşene kadar liste boş+loading).
                         if matches!(prev_menu, MenuState::PlatformGrid)
                             && matches!(screen.menu, MenuState::GameList)
-                            && screen.games.is_empty()
                         {
-                            let plat = screen
-                                .platforms
-                                .get(screen.selected_platform)
-                                .map(|p| p.folder.clone())
-                                .unwrap_or_default();
+                            let plat = screen.games_platform.clone();
                             if !plat.is_empty() {
                                 let st = Arc::clone(state);
                                 std::thread::spawn(move || {
-                                    // WebUI `selectPlatform` parity: oyunlar +
+                                    // Önce bayrakları düşür (çekme-sürüyor durumu),
+                                    // sonra WebUI `selectPlatform` parity: oyunlar +
                                     // indirilen durumları birlikte çekilir.
+                                    {
+                                        let mut s = tvui_lock(&st);
+                                        s.games_ready = false;
+                                        s.statuses_ready = false;
+                                        s.games.clear();
+                                    }
                                     let games = crate::net::fetch_games(tvui_lock(&st).port, &plat);
                                     let statuses = crate::net::fetch_game_statuses(tvui_lock(&st).port);
                                     let mut s = tvui_lock(&st);
                                     s.games = games;
+                                    s.games_platform = plat.clone();
+                                    s.games_ready = true;
                                     if let Some(dl) = statuses {
                                         s.downloaded = dl;
+                                        s.statuses_platform = plat;
                                         s.statuses_ready = true;
                                     }
                                 });
@@ -1680,13 +1693,15 @@ mod tests {
                 .join("  ")
         };
         let grid = line(&MenuState::PlatformGrid);
-        for cap in ["[H] :", "[F] :", "[Enter] :", "[AltGR] :"] {
+        for cap in ["[Enter] :", "[AltGR] :"] {
             assert!(grid.contains(cap), "yok: {cap} ({grid})");
         }
+        assert!(!grid.contains("[H] :"), "ölü H maddesi: {grid}");
         let game = line(&MenuState::GameList);
-        for cap in ["[Enter] :", "[X] :", "[Page+][Page-] :", "[F] :", "[H] :"] {
+        for cap in ["[Enter] :", "[X] :", "[Page+][Page-] :", "[F] :", "[M] :"] {
             assert!(game.contains(cap), "yok: {cap} ({game})");
         }
+        assert!(!game.contains("[H] :"), "ölü H maddesi: {game}");
         assert!(line(&MenuState::ConfirmExit).contains("[Esc] :"));
     }
 
@@ -1705,8 +1720,13 @@ mod tests {
     #[test]
     fn footer_items_structured_per_menu() {
         let grid = footer_items(&MenuState::PlatformGrid);
-        assert_eq!(grid.len(), 5);
-        assert_eq!(grid[0].cap, "H");
+        assert_eq!(grid.len(), 2);
+        assert_eq!(grid[0].cap, "Enter");
+        assert_eq!(grid[1].cap, "AltGR");
+        let gl = footer_items(&MenuState::GameList);
+        assert!(gl.iter().any(|it| it.cap == "F"));
+        assert!(gl.iter().any(|it| it.cap == "M"));
+        assert!(!gl.iter().any(|it| it.cap == "H"));
         assert_eq!(footer_items(&MenuState::ConfirmExit).len(), 2);
         assert_eq!(footer_items(&MenuState::ConfirmExit)[0].cap, "Enter");
         // Esc cap'i çizimde rozet olur; veri burada doğrulanır.

@@ -56,6 +56,9 @@ pub struct TvuiScreen {
     pub selected_platform: usize,
     /// Seçili platformun oyun listesi (net.games ile senkron).
     pub games: Vec<GameRow>,
+    /// İstenen platform klasörü (`folder`). `net.games_platform` ile
+    /// eşleşmeyen veri ekrana ASLA kopyalanmaz (bayat liste koruması).
+    pub games_platform: String,
     pub selected_game: usize,
     /// Sayfa adımı (Python `config.visible_games` parity — default 15,
     /// `config.py:494`; Python'da da layout'tan güncellenmez, sabit).
@@ -93,6 +96,7 @@ impl Default for TvuiScreen {
             platforms: Vec::new(),
             selected_platform: 0,
             games: Vec::new(),
+            games_platform: String::new(),
             selected_game: 0,
             visible_games: 15,
             progress: HashMap::new(),
@@ -138,8 +142,11 @@ impl TvuiScreen {
         } else if self.net.loading {
             self.menu = MenuState::Loading;
         }
-        // Faz 4: oyun listesi ve progress senkronu (net → screen)
-        if !self.net.games.is_empty() {
+        // Faz 4: oyun listesi ve progress senkronu (net → screen).
+        // Platform el sıkışması: yalnız İSTENEN platformun verisi kopyalanır.
+        // Böylece platform değişiminde önceki platformun listesi/marker'ı
+        // bir kare bile gösterilmez; çekme bitmeden liste boş + "yükleniyor"dur.
+        if self.net.games_ready && self.net.games_platform == self.games_platform {
             self.games = self
                 .net
                 .games
@@ -158,11 +165,17 @@ impl TvuiScreen {
         if !self.net.progress.is_empty() {
             self.progress = self.net.progress.clone();
         }
-        // İndirilen anahtarları yalnız taze çekme varsa kopyala (hata halinde
-        // eski platform verisi korunur; `statuses_ready` boş/hatayı ayırt eder).
-        if self.net.statuses_ready {
+        // İndirilen anahtarları yalnız taze + eşleşen çekmede kopyala.
+        if self.net.statuses_ready && self.net.statuses_platform == self.games_platform {
             self.downloaded = self.net.downloaded.clone();
         }
+    }
+
+    /// Oyun listesi çekme sürüyor mu? (boş liste + taze veri yok = yükleniyor;
+    /// boş liste + taze veri = gerçekten oyun yok).
+    pub fn games_loading(&self) -> bool {
+        self.games.is_empty()
+            && !(self.net.games_ready && self.net.games_platform == self.games_platform)
     }
 
     /// Filtrelenmiş + sıralanmış oyun listesi (display/menus.py parity, SDL'siz).
@@ -317,6 +330,16 @@ pub fn active_download_marker(p: Option<&serde_json::Value>) -> Option<String> {
     Some(format!("[~] {pct}%"))
 }
 
+/// Dürüst menü sözleşmesi (footer'da yazan her tuş GERÇEKTEN çalışır):
+/// - M / AltGr → pause menüsü (sürdür, görünüm, filtre, sıralama, arama, çıkış)
+/// - F (oyun listesi) → arama overlay'i (sorgu listeyi anında filtreler)
+/// - H (geçmiş) YOKTUR — geçmiş ekranı henüz yok, footer'da da yazmaz.
+fn open_overlay(screen: &mut TvuiScreen, kind: MenuKind) {
+    let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+    let en = crate::i18n::load_lang("en");
+    screen.overlay = Some(MenuNav::new(kind, &lang, &en));
+}
+
 /// SAF reducer: mevcut screen + semantik tuş → (menu geçişi + opsiyonel UiAction).
 /// HTTP/SDL içermez; tüm geçiş kuralları burada, unit-test edilir.
 pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAction> {
@@ -417,6 +440,14 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                         MenuKind::Pause => {
                             if let Some(pa) = crate::menus::pause_action_for(ov) {
                                 match pa {
+                                    crate::menus::PauseAction::OpenDisplay => {
+                                        next_overlay = Some({
+                                            let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+                                            let en = crate::i18n::load_lang("en");
+                                            MenuNav::new(MenuKind::Display, &lang, &en)
+                                        });
+                                        close = true;
+                                    }
                                     crate::menus::PauseAction::OpenFilter => {
                                         let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
                                         let en = crate::i18n::load_lang("en");
@@ -429,15 +460,48 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                                         next_overlay = Some(MenuNav::new(MenuKind::GlobalSort, &lang, &en));
                                         close = true;
                                     }
+                                    crate::menus::PauseAction::Quit => {
+                                        screen.menu = MenuState::ConfirmExit;
+                                        close = true;
+                                    }
                                     _ => close = true,
                                 }
                             } else {
                                 close = true;
                             }
                         }
-                        MenuKind::FilterMain | MenuKind::FilterAdvanced => {
-                            crate::menus::apply_filter_key(key, &mut screen.filters);
-                            // filtrede kal, kapatma yok (çoklu toggle)
+                        MenuKind::FilterMain => {
+                            match key {
+                                // Alt menüye in / geri çık / sıfırla-kapat.
+                                "filter_advanced" => {
+                                    let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+                                    let en = crate::i18n::load_lang("en");
+                                    next_overlay = Some(MenuNav::new(MenuKind::FilterAdvanced, &lang, &en));
+                                    close = true;
+                                }
+                                "filter_back" | "filter_reset" => {
+                                    crate::menus::apply_filter_key(key, &mut screen.filters);
+                                    close = true;
+                                }
+                                _ => {
+                                    crate::menus::apply_filter_key(key, &mut screen.filters);
+                                    // bölge anahtarında açık kal (çoklu toggle)
+                                }
+                            }
+                        }
+                        MenuKind::FilterAdvanced => {
+                            match key {
+                                // Üst menüye dön; bölge anahtarında açık kal.
+                                "filter_back" => {
+                                    let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
+                                    let en = crate::i18n::load_lang("en");
+                                    next_overlay = Some(MenuNav::new(MenuKind::FilterMain, &lang, &en));
+                                    close = true;
+                                }
+                                _ => {
+                                    crate::menus::apply_filter_key(key, &mut screen.filters);
+                                }
+                            }
                         }
                         MenuKind::GlobalSort => {
                             screen.sort_mode = match key {
@@ -496,9 +560,14 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
         return None;
     }
     if key == UiKey::Menu {
-        let lang = crate::i18n::load_lang(&crate::i18n::detect_lang());
-        let en = crate::i18n::load_lang("en");
-        screen.overlay = Some(MenuNav::new(MenuKind::Pause, &lang, &en));
+        open_overlay(screen, MenuKind::Pause);
+        return None;
+    }
+    if key == UiKey::Search
+        && matches!(screen.menu, MenuState::GameList)
+    {
+        // F: oyun listesinde arama overlay'i (sorgu listeyi filtreler).
+        open_overlay(screen, MenuKind::GlobalSearch);
         return None;
     }
 
@@ -626,7 +695,15 @@ pub fn reduce(screen: &mut TvuiScreen, key: UiKey, now: Instant) -> Option<UiAct
                 }
                 // Faz 5: transition başlat (theme.json platform_select)
                 screen.transition = Some(Transition::new(now, 1000, 1.5, 2.5));
-                // Platform seç → GameList'e geç (oyunlar SSE/HTTP ile sonra dolar)
+                // Platform seç → GameList'e geç. Eski liste ANINDA temizlenir +
+                // istenen platform kaydedilir; el sıkışma eşleşene kadar liste
+                // boş + "yükleniyor" gösterilir (bayat liste asla gösterilmez).
+                screen.games_platform = screen
+                    .platforms
+                    .get(screen.selected_platform)
+                    .map(|p| p.folder.clone())
+                    .unwrap_or_default();
+                screen.games.clear();
                 screen.menu = MenuState::GameList;
                 screen.selected_game = 0;
                 None
@@ -1189,5 +1266,102 @@ mod tests {
         s2.downloaded.insert("zelda".to_string());
         s2.sync_from_net();
         assert!(s2.downloaded.contains("zelda"));
+    }
+
+    #[test]
+    fn platform_switch_never_shows_stale_list() {
+        // Platform girişi eski listeyi ANINDA temizler + platformu kaydeder.
+        let mut s = make_grid(2);
+        s.games = vec![GameRow {
+            name: "Eski".into(), size: "1".into(), url: "x".into(), ext: String::new(),
+        }];
+        s.selected_platform = 1; // folder p1
+        reduce(&mut s, UiKey::Confirm, now());
+        assert_eq!(s.menu, MenuState::GameList);
+        assert!(s.games.is_empty(), "bayat liste temizlenmeli");
+        assert_eq!(s.games_platform, "p1");
+        // Ağda hâlâ eski platform verisi: kopyalanMAZ, yükleniyor gösterilir.
+        s.net.games = vec![crate::net::GameRow {
+            name: "Eski".into(), size: "1".into(), url: "x".into(), ext: String::new(),
+        }];
+        s.net.games_platform = "p0".to_string();
+        s.net.games_ready = true;
+        s.sync_from_net();
+        assert!(s.games.is_empty());
+        assert!(s.games_loading());
+        // Eşleşen çekme gelince kopyalanır (boş bile olsa — gerçekten oyun yok).
+        s.net.games.clear();
+        s.net.games_platform = "p1".to_string();
+        s.sync_from_net();
+        assert!(!s.games_loading());
+        s.net.games = vec![crate::net::GameRow {
+            name: "Yeni".into(), size: "2".into(), url: "y".into(), ext: String::new(),
+        }];
+        s.sync_from_net();
+        assert_eq!(s.games.len(), 1);
+        assert_eq!(s.games[0].name, "Yeni");
+        // Başka platformun marker'ı bulaşmaz.
+        s.net.downloaded.insert("eski".to_string());
+        s.net.statuses_platform = "p0".to_string();
+        s.net.statuses_ready = true;
+        s.sync_from_net();
+        assert!(!s.downloaded.contains("eski"));
+        s.net.statuses_platform = "p1".to_string();
+        s.sync_from_net();
+        assert!(s.downloaded.contains("eski"));
+    }
+
+    #[test]
+    fn pause_display_and_quit_are_real() {
+        // Display girdisi Display alt menüsünü AÇAR (eskiden sessizce kapanırdı).
+        let mut s = make_grid(1);
+        reduce(&mut s, UiKey::Menu, now());
+        s.overlay.as_mut().unwrap().selected = 1; // pause_display
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(200));
+        let ov = s.overlay.as_ref().expect("display açılmalı");
+        assert_eq!(ov.kind, MenuKind::Display);
+        // Quit çıkış onayına gider (kapanıp yutmaz).
+        let mut q = make_grid(1);
+        reduce(&mut q, UiKey::Menu, now());
+        q.overlay.as_mut().unwrap().selected = 5; // pause_quit
+        reduce(&mut q, UiKey::Confirm, now() + Duration::from_millis(200));
+        assert!(q.overlay.is_none());
+        assert_eq!(q.menu, MenuState::ConfirmExit);
+    }
+
+    #[test]
+    fn filter_submenu_navigation_is_real() {
+        // filter_advanced alt menüye iner, filter_back geri çıkar.
+        let mut s = make_grid(1);
+        reduce(&mut s, UiKey::Menu, now());
+        s.overlay.as_mut().unwrap().selected = 2; // pause_filter
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(200));
+        assert_eq!(s.overlay.as_ref().unwrap().kind, MenuKind::FilterMain);
+        // items: region, advanced, reset, back → advanced index 1
+        s.overlay.as_mut().unwrap().selected = 1;
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(400));
+        assert_eq!(s.overlay.as_ref().unwrap().kind, MenuKind::FilterAdvanced);
+        // advanced items: usa, europe, japan, other, back → back index 4
+        s.overlay.as_mut().unwrap().selected = 4;
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(600));
+        assert_eq!(s.overlay.as_ref().unwrap().kind, MenuKind::FilterMain);
+        // reset temizler VE kapatır.
+        s.filters.insert("filter_usa".into(), "exclude".into());
+        s.overlay.as_mut().unwrap().selected = 2; // filter_reset
+        reduce(&mut s, UiKey::Confirm, now() + Duration::from_millis(800));
+        assert!(s.filters.is_empty());
+        assert!(s.overlay.is_none());
+    }
+
+    #[test]
+    fn search_key_opens_search_only_in_gamelist() {
+        // F oyun listesinde arama overlay'i açar, grid'de yoksayılır.
+        let mut s = TvuiScreen::default();
+        s.menu = MenuState::GameList;
+        reduce(&mut s, UiKey::Search, now());
+        assert_eq!(s.overlay.as_ref().map(|o| o.kind.clone()), Some(MenuKind::GlobalSearch));
+        let mut g = make_grid(1);
+        reduce(&mut g, UiKey::Search, now());
+        assert!(g.overlay.is_none());
     }
 }
